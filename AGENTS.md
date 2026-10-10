@@ -32,12 +32,20 @@ those stages only when the user has authorized them.
 
 ## Console management interfaces
 
+- Do not use middle-dot separators in interface copy. Use clear labels or
+  separate lines. Channel type labels use plain QQ and localized Weixin names,
+  or OneBot followed by its transport. Do not wrap channel types or transports
+  in parentheses.
+
 - Sidebar navigation uses static Gateway and Activity section labels with direct
   resource links underneath; these sections do not collapse.
 
 - Keep Channel and Agent Host management in separate navigation panels. Share
   implementation helpers where useful, but give each resource its own list,
   search, creation flow, and labels.
+- Agent Hosts support a13n API + MCP and generic MCP clients. Keep upstream
+  credentials separate from Host MCP keys; enforce route assignment on the server.
+  Generic MCP routes have no a13n agent or connection binding fields.
 - Management pages use a search toolbar above a table. Show empty and filtered
   states inside the table; keep the layout usable on narrow screens with table
   scrolling contained in its frame.

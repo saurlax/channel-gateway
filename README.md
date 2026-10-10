@@ -15,16 +15,16 @@ Channel ingestion and Agent Host delivery have separate adapters. This allows a
 conversation to reach an agent in a13n or another Host, while the agent can consult
 other authorized channels before deciding where and how to respond.
 
-> **Project status:** An initial OneBots ↔ a13n text bridge is implemented, with
-> signed event ingestion, conversation routes, persistent delivery records,
-> scoped MCP tools, and a management console built from official shadcn blocks.
+> **Project status:** A text bridge from OneBot v11, QQ official Bot, and Weixin iLink
+> to a13n is implemented, with verified event ingestion, conversation routes, persistent delivery records,
+> scoped MCP tools, generic MCP client Hosts with independent keys, and a management console built from official shadcn blocks.
 > Cross-channel identity linking, full RBAC, moderation actions, and voice/radio
 > integrations remain planned. This is a single-process prototype.
 
 ## How it fits together
 
 The implemented bridge separates channel ingestion, host execution, and
-agent-facing communication tools. Group replies pass through administrator approval.
+agent-facing communication tools. Restricted group replies pass through administrator approval; explicit full-access routes can reply automatically.
 
 ```mermaid
 flowchart LR
@@ -37,7 +37,8 @@ flowchart LR
 ```
 
 - **Connect channels.** Receive platform events through channel adapters, starting
-  with OneBots using OneBot v11 reverse HTTP. Telephone and radio require separate media
+  with OneBot v11 HTTP/WebSocket transports, QQ official Gateway/callbacks, and
+  Weixin iLink QR pairing/long polling. Telephone and radio require separate media
   and session adapters; they are future directions.
 - **Deliver to agents.** Bind channel conversations to Agent Host threads and
   submit input through the Host's supported API. MCP notifications alone do not
@@ -61,7 +62,8 @@ container images yet.
 git clone https://github.com/saurlax/channel-gateway.git
 cd channel-gateway
 make install
-export CHANNEL_GATEWAY_ADMIN_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export CG_ADMIN_USERNAME=admin
+export CG_ADMIN_PASSWORD='replace-with-your-password'
 make serve
 ```
 
@@ -70,8 +72,11 @@ Open **<http://127.0.0.1:8310>** for the console and
 separate channel and Agent Host panels, conversation routes, received messages,
 and reply approvals. Management pages use a search toolbar and table; Add and
 row actions open dialogs. Sign in
-with the administrator token you configured. Follow the
-[OneBots and a13n setup guide](docs/onebots-a13n.md) to connect real accounts.
+with the account and password you configured. Follow the
+[OneBots and a13n setup guide](docs/onebots-a13n.md) or the
+[QQ and Weixin guide](docs/official-channels.md) to connect real accounts.
+The [Agent Host guide](docs/agent-hosts.md) covers API + MCP and generic MCP clients.
+Adding a channel starts with protocol selection; each addition binds one account.
 
 The console follows the browser's language preferences automatically. It supports
 English and Simplified Chinese, choosing the first supported language and falling
@@ -84,7 +89,8 @@ To run only the backend, without Node.js or pnpm:
 
 ```bash
 uv sync --locked
-export CHANNEL_GATEWAY_ADMIN_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export CG_ADMIN_USERNAME=admin
+export CG_ADMIN_PASSWORD='replace-with-your-password'
 uv run --locked channel-gateway serve
 ```
 
@@ -92,12 +98,39 @@ The backend exposes `GET /healthz`, `GET /api/v1/status`, and
 `GET /api/openapi.json`. It serves the console only when frontend assets are
 present. Run `uv run channel-gateway serve --help` for listen options.
 
-The service binds to loopback by default. Management requires a bearer token of
-at least 32 characters. Without one, health and status remain available but
-management is disabled. SQLite state defaults to `.channel-gateway/`; set
-`CHANNEL_GATEWAY_DATA_DIR` to a persistent private directory when hosting the service.
+The service binds to loopback by default. Management requires a configured
+administrator username and a password of at least 8 characters. When both are unset,
+health and status remain available but management is disabled; configuring only
+one refuses startup. Login uses an
+HttpOnly session cookie, survives page refresh, and expires after 12 hours or
+service restart. Sign-out revokes the session. MCP uses separate Host/route keys. SQLite state defaults to `.channel-gateway/`; set
+`CG_DATA_DIR` to a persistent private directory when hosting the service.
 Credentials and message history are stored there, without encryption at rest.
 Use one process and one replica. Expose authenticated endpoints through HTTPS.
+
+## Environment variables
+
+Channel Gateway supports exactly three environment variables:
+
+| Variable            | Purpose                                         | Default          |
+| ------------------- | ----------------------------------------------- | ---------------- |
+| `CG_ADMIN_USERNAME` | Administrator login account                     | Unset            |
+| `CG_ADMIN_PASSWORD` | Administrator login password, 8-4096 characters | Unset            |
+| `CG_DATA_DIR`       | Private persistent state directory              | `.channel-gateway` |
+
+See [.env.example](.env.example). Export these values before running Make, or
+load a private environment file explicitly:
+
+```bash
+uv run --locked --env-file .env channel-gateway serve
+```
+
+Choose your own password before starting; there is no built-in account or password.
+Passwords must contain at least 8 characters in every deployment.
+The server reads only `CG_` names; the previous `CHANNEL_GATEWAY_` variables and
+administrator token are removed. Listener host and port remain CLI options
+(`--host`, `--port`), not additional environment variables. Keep the same
+`CG_DATA_DIR` when upgrading to preserve channels, credentials, and history.
 
 ## Develop
 

@@ -15,13 +15,13 @@ import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { api, type Snapshot } from "./api";
+import { api, ApiError, type AdminSession, type Snapshot } from "./api";
 import { Connections } from "@/components/connections";
 import { Routes } from "@/components/routes";
 import { Events } from "@/components/events";
 import { Replies } from "@/components/replies";
 import { ManagementDialog } from "@/components/management";
-import { Empty } from "@/components/form-controls";
+import { Empty, FormField } from "@/components/form-controls";
 
 const titles: Record<string, MessageKey> = {
   channels: "Channels",
@@ -40,7 +40,9 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
-  const [token, setToken] = useState("");
+  const [hostCapability, setHostCapability] = useState(false);
+  const [csrfToken, setCsrfToken] = useState("");
+  const [restoringSession, setRestoringSession] = useState(true);
   const [snapshot, setSnapshot] = useState(empty);
   const [page, setPage] = useState(readPage);
   const [error, setError] = useState("");
@@ -50,14 +52,14 @@ export function App() {
   const [capabilityLabel, setCapabilityLabel] = useState("");
   const refresh = useCallback(async () => {
     const [connections, routes, events, replies] = await Promise.all([
-      api<Snapshot["connections"]>(token, "connections"),
-      api<Snapshot["routes"]>(token, "routes"),
-      api<Snapshot["events"]>(token, "events"),
-      api<Snapshot["replies"]>(token, "replies"),
+      api<Snapshot["connections"]>(csrfToken, "connections"),
+      api<Snapshot["routes"]>(csrfToken, "routes"),
+      api<Snapshot["events"]>(csrfToken, "events"),
+      api<Snapshot["replies"]>(csrfToken, "replies"),
     ]);
     setSnapshot({ connections, routes, events, replies });
     setLoaded(true);
-  }, [token]);
+  }, [csrfToken]);
   useEffect(() => {
     const change = () => {
       if (location.hash === "#connections") history.replaceState(null, "", "#channels");
@@ -69,19 +71,43 @@ export function App() {
     return () => window.removeEventListener("hashchange", change);
   }, []);
   useEffect(() => {
-    if (!token) return;
+    let active = true;
+    api<AdminSession>("", "auth/session")
+      .then((session) => {
+        if (active) setCsrfToken(session.csrf_token);
+      })
+      .catch((cause) => {
+        if (active && !(cause instanceof ApiError && cause.status === 401)) setError(cause.message);
+      })
+      .finally(() => {
+        if (active) setRestoringSession(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!csrfToken) return;
     const load = () => {
-      void refresh().catch((cause: Error) => setError(cause.message));
+      void refresh().catch((cause: Error) => {
+        if (cause instanceof ApiError && cause.status === 401) clearSession();
+        setError(cause.message);
+      });
     };
     load();
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
-  }, [token, refresh]);
+  }, [csrfToken, refresh]);
   async function action(path: string, body?: object, method = "POST") {
     setBusy(true);
     setError("");
     try {
-      const result = await api<{ agent_token?: string; name?: string }>(token, path, {
+      const result = await api<{
+        agent_token?: string;
+        mcp_key?: string;
+        name?: string;
+        id?: string;
+      }>(csrfToken, path, {
         method,
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
@@ -92,37 +118,62 @@ export function App() {
           "Saved, but the list could not refresh. Refresh the page data before trying again.",
         );
       }
-      if (result.agent_token) {
-        setCapability(result.agent_token);
+      if (result.agent_token || result.mcp_key) {
+        setHostCapability(!!result.mcp_key);
+        setCapability(result.mcp_key ?? result.agent_token ?? "");
         setCapabilityLabel(
           result.name ??
             snapshot.routes.find((route) => route.id === path.split("/")[1])?.name ??
             "",
         );
       }
-      return true;
+      return result;
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401) clearSession();
       setError(cause instanceof Error ? cause.message : "Request failed.");
       return false;
     } finally {
       setBusy(false);
     }
   }
-  function logout() {
-    setToken("");
+  function clearSession() {
+    setCsrfToken("");
     setSnapshot(empty);
     setCapability("");
     setError("");
     setLoaded(false);
   }
-  if (!token)
+  async function logout() {
+    setBusy(true);
+    try {
+      await api(csrfToken, "auth/logout", { method: "POST" });
+      clearSession();
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401) clearSession();
+      else setError(cause instanceof Error ? cause.message : "Request failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (restoringSession)
+    return (
+      <div className="flex min-h-svh items-center justify-center p-6">
+        <Empty>{t("Restoring session…")}</Empty>
+      </div>
+    );
+  if (!csrfToken)
     return (
       <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
         <div className="w-full max-w-sm">
           <LoginForm
-            onLogin={async (value) => {
-              await api(value, "connections");
-              setToken(value);
+            sessionError={error}
+            onLogin={async (username, password) => {
+              const session = await api<AdminSession>("", "auth/login", {
+                method: "POST",
+                body: JSON.stringify({ username, password }),
+              });
+              setError("");
+              setCsrfToken(session.csrf_token);
             }}
           />
         </div>
@@ -130,7 +181,7 @@ export function App() {
     );
   return (
     <SidebarProvider>
-      <AppSidebar onLogout={logout} page={page} />
+      <AppSidebar onLogout={() => void logout()} page={page} />
       <SidebarInset className="min-w-0">
         {/* Header and content layout from the official sidebar-07 block. */}
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
@@ -172,12 +223,28 @@ export function App() {
           <ManagementDialog
             open={!!capability}
             onOpenChange={(open) => !open && setCapability("")}
-            title={t("{name} · access token", { name: capabilityLabel || t("Conversation") })}
-            description={t(
-              "Use this token as the bearer credential of a dedicated a13n MCP connection. It is shown once and grants access to this route only.",
-            )}
+            title={t(hostCapability ? "{name}: MCP key" : "{name}: access token", {
+              name: capabilityLabel || t("Conversation"),
+            })}
+            description={
+              hostCapability
+                ? t(
+                    "This MCP key is shown once. It identifies the host and grants access to its enabled routes. Store it in your client’s secret configuration.",
+                  )
+                : t(
+                    "Use this token as an MCP bearer credential. It is shown once and grants access to this route. All-conversation routes include their concrete conversations.",
+                  )
+            }
           >
-            <Input aria-label={t("Conversation access token")} readOnly value={capability} />
+            <FormField
+              id="mcp-capability"
+              label={hostCapability ? t("MCP key") : t("Conversation access token")}
+            >
+              <Input id="mcp-capability" readOnly value={capability} />
+            </FormField>
+            <FormField id="mcp-endpoint" label={t("MCP URL")}>
+              <Input id="mcp-endpoint" readOnly value={`${location.origin}/mcp/`} />
+            </FormField>
             <Button variant="outline" onClick={() => setCapability("")}>
               {t("Dismiss")}
             </Button>
@@ -191,6 +258,8 @@ export function App() {
                   key={page}
                   kind={page === "channels" ? "onebots" : "a13n"}
                   connections={snapshot.connections}
+                  csrfToken={csrfToken}
+                  refresh={refresh}
                   action={action}
                   busy={busy}
                   error={error}

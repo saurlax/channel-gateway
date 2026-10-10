@@ -1,4 +1,4 @@
-"""Official MCP Streamable HTTP tools, scoped by a revocable route capability."""
+"""Official MCP Streamable HTTP tools, scoped by revocable host or route capabilities."""
 
 from contextvars import ContextVar
 
@@ -8,10 +8,10 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .bridge import Bridge
-from .models import ReplyInput
+from .models import ReplyInput, route_allows_sender
 from .storage import Store
 
-current_token: ContextVar[str] = ContextVar("channel_gateway_route_token")
+current_token: ContextVar[str] = ContextVar("channel_gateway_mcp_token")
 
 
 def create_mcp(store: Store, bridge: Bridge) -> FastMCP:
@@ -23,32 +23,67 @@ def create_mcp(store: Store, bridge: Bridge) -> FastMCP:
         # Bearer auth is enforced by the outer ASGI application. Cross-origin
         # browser requests are refused there; deployment domains need no wildcard.
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-        instructions="Tools are scoped to one authorized channel conversation. Group messages become drafts for administrator approval.",
+        instructions="List authorized conversations, then pass their route_id to read or reply. A route credential can omit route_id. Restricted group messages become drafts for administrator approval; full-access routes can reply automatically. MCP reads do not wake or complete an agent run.",
     )
 
-    async def authorized_route() -> dict:
-        route = await store.route_for_token(current_token.get())
-        if not route or not route["enabled"]:
-            raise ValueError("Channel access is disabled or revoked")
+    async def authorized_routes() -> list[dict]:
+        token = current_token.get()
+        route = await store.route_for_token(token)
+        if route and route["enabled"]:
+            if route["conversation_id"] == "*":
+                return [
+                    row for row in await store.routes() if row.get("parent_route_id") == route["id"] and row["enabled"]
+                ]
+            return [route]
+        host = await store.host_for_token(token)
+        if host:
+            return [
+                row
+                for row in await store.routes()
+                if row["host_id"] == host["id"] and row["enabled"] and row["conversation_id"] != "*"
+            ]
+        raise ValueError("Channel access is disabled or revoked")
+
+    async def authorized_route(route_id: str | None) -> dict:
+        routes = await authorized_routes()
+        credential_route = await store.route_for_token(current_token.get())
+        if route_id is None and credential_route and credential_route["conversation_id"] != "*":
+            return routes[0]
+        route = next((row for row in routes if row["id"] == route_id), None)
+        if route is None:
+            raise ValueError("Choose an authorized route_id from list_conversations")
         return route
 
     @server.tool()
-    async def read_conversation(limit: int = 20) -> dict:
+    async def list_conversations() -> dict:
+        """List enabled conversations assigned to this credential, without message content."""
+        return {
+            "conversations": [
+                {
+                    key: route[key]
+                    for key in ("id", "name", "channel_id", "conversation_kind", "conversation_id", "reply_source")
+                }
+                for route in await authorized_routes()
+            ]
+        }
+
+    @server.tool()
+    async def read_conversation(limit: int = 20, route_id: str | None = None) -> dict:
         """Read received text messages from this credential's authorized conversation."""
-        route = await authorized_route()
+        route = await authorized_route(route_id)
         messages = await store.events(route_id=route["id"], limit=max(1, min(limit, 100)))
         return {
             "conversation_kind": route["conversation_kind"],
             "conversation_id": route["conversation_id"],
             "messages": [
-                row["message"] for row in reversed(messages) if row["message"]["sender_id"] in route["allowed_user_ids"]
+                row["message"] for row in reversed(messages) if route_allows_sender(route, row["message"]["sender_id"])
             ],
         }
 
     @server.tool()
-    async def send_message(text: str) -> dict:
+    async def send_message(text: str, route_id: str | None = None) -> dict:
         """Request a text reply to this conversation. Group replies require administrator approval."""
-        route = await authorized_route()
+        route = await authorized_route(route_id)
         if route["reply_source"] != "mcp":
             raise ValueError("This route forwards final run output; return reply text from the run instead")
         validated = ReplyInput(text=text)
@@ -79,8 +114,11 @@ class RouteAuthorization:
         auth = headers.get(b"authorization", b"").decode("latin-1")
         token = auth.removeprefix("Bearer ") if auth.startswith("Bearer ") else ""
         route = await self.store.route_for_token(token) if token else None
-        if not route or not route["enabled"]:
-            await JSONResponse({"detail": "A valid route token is required"}, status_code=401)(scope, receive, send)
+        host = await self.store.host_for_token(token) if token else None
+        if not host and (not route or not route["enabled"]):
+            await JSONResponse({"detail": "A valid host key or route token is required"}, status_code=401)(
+                scope, receive, send
+            )
             return
         context = current_token.set(token)
         try:

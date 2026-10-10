@@ -12,7 +12,7 @@ def test_headless_service_exposes_health_status_and_openapi(tmp_path: Path) -> N
         assert client.get("/healthz").json() == {"status": "ok"}
         status = client.get("/api/v1/status").json()
         assert status["stage"] == "bridge"
-        assert {item["key"] for item in status["integrations"]} == {"onebots", "a13n", "mcp"}
+        assert {item["key"] for item in status["integrations"]} == {"onebots", "qq", "weixin", "a13n", "mcp"}
         assert all(item["state"] == "available" for item in status["integrations"])
         assert client.get("/api/openapi.json").status_code == 200
         assert client.get("/").status_code == 404

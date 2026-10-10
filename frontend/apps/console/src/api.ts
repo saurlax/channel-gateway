@@ -1,8 +1,13 @@
 export type Connection = {
   id: string;
   name: string;
-  kind: "onebots" | "a13n";
-  api_url: string;
+  kind: "onebots" | "qq" | "weixin" | "a13n" | "mcp";
+  transport?: string;
+  app_id?: string | null;
+  state?: string;
+  error?: string | null;
+  capabilities?: { receive: boolean; send: boolean; conversations: string[]; content: string[] };
+  api_url: string | null;
   self_id: string | null;
 };
 export type Route = {
@@ -13,7 +18,10 @@ export type Route = {
   conversation_kind: "private" | "group";
   conversation_id: string;
   allowed_user_ids: string[];
-  agent_id: string;
+  sender_policy: "allowlist" | "any";
+  access_mode: "restricted" | "full";
+  parent_route_id: string | null;
+  agent_id: string | null;
   enabled: boolean;
   auto_reply: boolean;
   reply_source: "output" | "mcp";
@@ -22,13 +30,17 @@ export type Route = {
 };
 export type ChannelEvent = {
   id: string;
-  route_id: string;
+  route_id: string | null;
   state: string;
   thread_id: string | null;
   run_id: string | null;
   error: string | null;
   created_at: string;
-  message: { sender_id: string; text: string };
+  message: {
+    sender_id: string;
+    text: string;
+    address?: { account_id: string; conversation_id: string };
+  };
 };
 export type Reply = {
   id: string;
@@ -45,20 +57,34 @@ export type Snapshot = {
   replies: Reply[];
 };
 
-export async function api<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
+export type AdminSession = { username: string; csrf_token: string };
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+export async function api<T>(csrfToken: string, path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`/api/v1/${path}`, {
       ...init,
+      credentials: "same-origin",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        "X-Channel-Gateway-Request": "1",
+        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
         ...init.headers,
       },
     });
   } catch {
     throw new Error("Network request failed. Check the connection and try again.");
   }
+  if (response.status === 204) return undefined as T;
   let value;
   try {
     value = await response.json();
@@ -67,13 +93,25 @@ export async function api<T>(token: string, path: string, init: RequestInit = {}
   }
   if (!response.ok) {
     const detail = value.detail;
-    throw new Error(
+    throw new ApiError(
       Array.isArray(detail)
         ? detail.map((item: { msg: string }) => item.msg).join("; ")
         : typeof detail === "string"
           ? detail
           : `Request failed (${response.status}).`,
+      response.status,
     );
   }
   return value as T;
+}
+
+export function eventAddress(snapshot: Snapshot, event: ChannelEvent) {
+  if (event.message.address) return event.message.address;
+  const route = snapshot.routes.find((route) => route.id === event.route_id);
+  return route && route.conversation_id !== "*"
+    ? {
+        account_id: route.channel_id,
+        conversation_id: `${route.conversation_kind}:${route.conversation_id}`,
+      }
+    : undefined;
 }

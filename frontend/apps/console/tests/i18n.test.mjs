@@ -20,10 +20,7 @@ test("UI translation preserves user data and literal replacement characters", ()
 });
 
 test("known diagnostics localize while upstream details remain readable", () => {
-  assert.equal(
-    translateDiagnostic("zh-CN", "Administrator authentication required"),
-    "需要管理员认证，请检查管理员令牌",
-  );
+  assert.equal(translateDiagnostic("zh-CN", "Administrator sign-in required"), "请登录管理员账号");
   assert.equal(
     translateDiagnostic("zh-CN", "Value error, Group replies require administrator approval"),
     "群聊回复需要管理员审核",
@@ -43,4 +40,15 @@ test("known diagnostics localize while upstream details remain readable", () => 
   );
   assert.equal(translateDiagnostic("zh-CN", "constructor"), "constructor");
   assert.equal(translateDiagnostic("en", "Route permission revoked"), "Route permission revoked");
+});
+
+test("protocol status and channel labels follow the selected locale", () => {
+  assert.equal(translate("zh-CN", "OneBot forward HTTP"), "OneBot 正向 HTTP");
+  assert.equal(translateDiagnostic("en", "callback_ready"), "Callback ready");
+  assert.equal(translateDiagnostic("zh-CN", "login_required"), "需要登录");
+  assert.equal(
+    translateDiagnostic("en", "weixin_login_need_verifycode"),
+    "Enter the verification code",
+  );
+  assert.equal(translateDiagnostic("zh-CN", "weixin_login_confirmed"), "配对成功");
 });

@@ -10,8 +10,10 @@ import { Input } from "@/components/ui/input";
 export function LoginForm({
   onLogin,
   className,
+  sessionError = "",
 }: {
-  onLogin: (token: string) => Promise<void>;
+  onLogin: (username: string, password: string) => Promise<void>;
+  sessionError?: string;
   className?: string;
 }) {
   const { t, message } = useLocale();
@@ -19,11 +21,13 @@ export function LoginForm({
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const token = String(new FormData(event.currentTarget).get("token"));
+    const form = event.currentTarget;
+    const data = new FormData(form);
     setPending(true);
     setError("");
     try {
-      await onLogin(token);
+      await onLogin(String(data.get("username")), String(data.get("password")));
+      form.reset();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to sign in.");
     } finally {
@@ -43,20 +47,32 @@ export function LoginForm({
           <form onSubmit={submit}>
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="token">{t("Administrator token")}</FieldLabel>
+                <FieldLabel htmlFor="username">{t("Username")}</FieldLabel>
                 <Input
-                  id="token"
-                  name="token"
-                  type="password"
-                  autoComplete="current-password"
+                  id="username"
+                  name="username"
+                  autoComplete="username"
                   required
+                  maxLength={128}
                   disabled={pending}
                 />
-                <FieldDescription>
-                  {t("Your token is kept in memory until you sign out or close this page.")}
-                </FieldDescription>
               </Field>
-              {error && <FieldDescription role="alert">{message(error)}</FieldDescription>}
+              <Field>
+                <FieldLabel htmlFor="password">{t("Password")}</FieldLabel>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  minLength={8}
+                  required
+                  maxLength={4096}
+                  disabled={pending}
+                />
+              </Field>
+              {(error || sessionError) && (
+                <FieldDescription role="alert">{message(error || sessionError)}</FieldDescription>
+              )}
               <Field>
                 <Button type="submit" disabled={pending}>
                   {pending ? t("Signing in…") : t("Sign in")}

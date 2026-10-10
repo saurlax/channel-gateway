@@ -1,4 +1,4 @@
-import { chinese, diagnostics, type MessageKey } from "./messages.ts";
+import { chinese, diagnostics, protocolLabels, type MessageKey } from "./messages.ts";
 
 export type Locale = "en" | "zh-CN";
 type Parameters = Record<string, string | number>;
@@ -21,6 +21,7 @@ export function translate(locale: Locale, key: MessageKey, parameters: Parameter
 
 // Preserve unknown upstream diagnostics. Never translate conversation content or user names.
 export function translateDiagnostic(locale: Locale, message: string): string {
+  if (Object.hasOwn(protocolLabels, message)) return translate(locale, protocolLabels[message]);
   if (locale === "en") return message;
   if (Object.hasOwn(chinese, message)) return chinese[message as MessageKey];
   if (Object.hasOwn(diagnostics, message)) return diagnostics[message];

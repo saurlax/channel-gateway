@@ -18,8 +18,10 @@ runtime scope. These standards govern how components are implemented.
 - **Console** calls the management API and contains no channel credentials or
   independent routing rules.
 
-The initial bridge implements OneBot v11 text ingestion and sending, an a13n
-HTTP adapter, SQLite persistence, and official MCP Streamable HTTP tools.
+The bridge implements OneBot v11 HTTP/WebSocket, native QQ official Bot, and
+Weixin iLink text adapters, an a13n HTTP adapter, SQLite persistence, and generic MCP Hosts with official
+MCP Streamable HTTP tools. `channels/` owns protocol parsing, connection tasks,
+pairing, capabilities, and native sending.
 `models.py` owns validated management inputs; `storage.py` owns short storage
 operations; `bridge.py` owns durable workflow; `app.py` owns authentication and
 process lifecycle. Keep new adapters outside HTTP route handlers.
@@ -57,8 +59,15 @@ and frontend optional so future Hosts can reuse the same application behavior.
 
 ## Console management patterns
 
+Host creation selects a13n API + MCP or generic MCP. Generic Hosts need no
+upstream endpoint/key; their independent MCP key is shown once and can be rotated
+from Manage. Route forms show a13n agent/binding fields only for API Hosts.
+
 Channel accounts and Agent Hosts have separate sidebar entries and management
-pages. The shared connection API is an implementation detail; each page filters
+pages. Channel tables omit connection endpoints. Official QQ and Weixin API
+addresses are configured internally and are not displayed as form fields. Keep
+required upstream OneBot addresses in its configuration form, and generated
+inbound URLs in connection details for copying. The shared connection API is an implementation detail; each page filters
 its resource type and creates only that type. Sidebar navigation uses static
 Gateway and Activity group labels with direct links below them; do not add
 collapsible group buttons or an additional Platform heading.
@@ -75,7 +84,9 @@ per-record edit forms beside or below the list. Activity records are created by
 channel ingestion or agent execution and have no manual Add action.
 
 Use the official shadcn blocks, neutral theme, and components with minimal layout
-adjustments. Dialogs need an accessible title and description, keyboard dismissal,
+adjustments. Interface copy must not use middle-dot separators; use clear labels,
+or separate lines. Channel types use plain QQ and localized Weixin names, or
+OneBot followed by its transport, without parentheses. Dialogs need an accessible title and description, keyboard dismissal,
 focus restoration, inline errors, and a scrollable form on small screens. Preserve
 entered values on failure; close and clear form credentials after a successful
 save or cancellation. Keep group destination review and approval inside the reply

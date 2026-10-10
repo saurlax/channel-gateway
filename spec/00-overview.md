@@ -39,17 +39,22 @@ the lifecycle that starts an idle Agent run.
 ## Management surface
 
 The current management API uses `/api/v1`. Channel accounts and Agent Hosts share
-a connection resource with `kind: onebots` or `kind: a13n`; that wire representation
+a connection resource with channel `kind: onebots`, `qq`, or `weixin`, and Host
+`kind: a13n` or `mcp`; that wire representation
 does not merge their domain roles. The console exposes separate Channels and
 Agent hosts pages, followed by route, message, and reply management.
 
-| API group                        | Operations                                                         |
-| -------------------------------- | ------------------------------------------------------------------ |
-| `/connections`                   | List/create connections and replace credentials                    |
-| `/routes`                        | List/create routes, update access/binding, and rotate route tokens |
-| `/events`                        | List accepted messages and retry failed input delivery             |
-| `/replies`                       | List replies, approve edited drafts, and reject drafts             |
-| `/hooks/onebots/{connection_id}` | Receive account-specific signed events                             |
+| API group                                      | Operations                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `/auth/login`, `/auth/session`, `/auth/logout` | Administrator login, session restoration, and revocation                 |
+| `/connections`                                 | List/create connections, replace credentials, rotate Host MCP keys       |
+| `/routes`                                      | List/create routes, update access/binding, and rotate route tokens       |
+| `/events`                                      | List accepted messages and retry failed input delivery                   |
+| `/replies`                                     | List replies, approve edited drafts, and reject drafts                   |
+| `/hooks/onebots/{connection_id}`               | Receive account-specific signed OneBot events                            |
+| `/hooks/qq/{connection_id}`                    | Validate and receive signed official QQ callbacks                        |
+| `/ws/onebots/{connection_id}`                  | Accept an authenticated reverse universal WebSocket                      |
+| `/connections/{id}/login`                      | Start administrator Weixin QR pairing; `/status` and `/cancel` manage it |
 
 `/healthz`, `/api/v1/status`, and generated API documentation are public. Health
 is a process response, not proof of upstream connectivity or successful message

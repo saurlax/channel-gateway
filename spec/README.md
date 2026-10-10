@@ -6,16 +6,17 @@ and actions through MCP. A channel identity, a routing destination, and permissi
 to act are separate concepts.
 
 This directory owns accepted technical contracts. The current implementation is
-a single-process OneBots / OneBot v11 text bridge to a13n with conversation-scoped
-MCP tools. The contracts below describe that supported baseline. They do not
-claim a complete RBAC system or general cross-channel access.
+a single-process OneBot v11, QQ official Bot, and Weixin iLink text bridge to a13n with conversation-scoped
+MCP tools, plus generic MCP Hosts with independent keys and authorized
+cross-channel route reads. The contracts below describe that supported baseline. They do not
+claim a complete RBAC system or access outside assigned routes.
 
 ## Reading path and ownership
 
 | Document                                           | Owns                                                              |
 | -------------------------------------------------- | ----------------------------------------------------------------- |
 | [Architecture](00-overview.md)                     | Components, dependency boundaries, and runtime scope              |
-| [Channel adapters](01-channel-adapters.md)         | Account identity, OneBot transport, and message projection        |
+| [Channel adapters](01-channel-adapters.md)         | Account identity, protocols, pairing, and message projection      |
 | [Identity and access](02-identity-and-access.md)   | Credentials, route authorization, revocation, and privacy limits  |
 | [Routing and delivery](03-routing-and-delivery.md) | Conversation binding, input/reply lifecycles, and retry semantics |
 | [Agent tools](04-agent-tools.md)                   | MCP reads/actions and a13n tool binding                           |
@@ -28,7 +29,9 @@ wire schemas. The specifications own the semantics that those schemas implement.
 
 - `spec/` contains accepted, testable behavior and architecture contracts.
 - `docs/` contains user instructions and troubleshooting, including the
-  [OneBots and a13n setup guide](../docs/onebots-a13n.md).
+  [OneBots and a13n setup guide](../docs/onebots-a13n.md) and
+  [QQ and Weixin guide](../docs/official-channels.md), and
+  [Agent Host guide](../docs/agent-hosts.md).
 - [DEVELOPMENT.md](../DEVELOPMENT.md) owns engineering standards and console
   interaction/localization rules.
 - [CONTRIBUTING.md](../CONTRIBUTING.md) owns proposals, contribution workflow,
@@ -43,11 +46,11 @@ instructions, and relevant validation together in the same pull request.
 
 One channel is added at a time and represents one configured bot account. Instance
 discovery, multi-account selection, and implicit aggregation are not part of this
-baseline. Only HTTP API plus signed HTTP event callbacks is implemented; neither
-direction of WebSocket is currently supported. See the
+baseline. OneBot HTTP, reverse HTTP, forward/reverse WebSocket, QQ official
+Gateway/callbacks, and Weixin iLink polling are implemented. See the
 [channel contract](01-channel-adapters.md#transport-compatibility).
 
-Cross-channel identity linking, full RBAC, moderation, native QQ/Weixin connections,
+Cross-channel identity linking, full RBAC, moderation, media/voice,
 telephone, and radio are outside the supported baseline. No stable published
 adapter API, schema migration framework, or distributed worker protocol is
 defined. Future contracts must explicitly identify compatibility and migration

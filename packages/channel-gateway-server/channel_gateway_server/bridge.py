@@ -5,19 +5,80 @@ import json
 import logging
 
 import httpx
+from channel_gateway_core import Message
+from websockets.exceptions import ConnectionClosed
 
-from .adapters import AdapterError, HttpAdapters, host_body, output_text, resource_path
+from .adapters import AdapterError, HttpAdapters, event_key, host_body, output_text, resource_path
+from .channels.common import SendBlocked
+from .channels.manager import ChannelManager
+from .models import route_allows_sender
 from .storage import Store
 
 logger = logging.getLogger("channel-gateway.bridge")
 
 
 class Bridge:
-    def __init__(self, store: Store, adapters: HttpAdapters, poll_interval: float = 2.0):
+    def __init__(
+        self, store: Store, adapters: HttpAdapters, poll_interval: float = 2.0, channels: ChannelManager | None = None
+    ):
         self.store = store
         self.adapters = adapters
         self.poll_interval = poll_interval
         self.wake = asyncio.Event()
+        self.channels = channels
+
+    async def ingest(self, connection: dict, message: Message | None, context: dict | None = None) -> dict:
+        if message is None:
+            return {"state": "ignored"}
+        current = await self.store.connection(connection["id"])
+        keys = ("kind", "transport", "api_url", "token", "webhook_secret", "app_id", "app_secret")
+        if not current or any(current.get(key) != connection.get(key) for key in keys):
+            return {"state": "blocked"}
+        kind, conversation_id = message.address.conversation_id.split(":", 1)
+        routes = await self.store.routes()
+        route = next(
+            (
+                route
+                for route in routes
+                if route["channel_id"] == connection["id"]
+                and route["conversation_kind"] == kind
+                and route["conversation_id"] == conversation_id
+            ),
+            None,
+        )
+        if not route:
+            parent = next(
+                (
+                    row
+                    for row in routes
+                    if row["channel_id"] == connection["id"]
+                    and row["conversation_kind"] == kind
+                    and row["conversation_id"] == "*"
+                ),
+                None,
+            )
+            if parent and route_allows_sender(parent, message.sender_id):
+                route = await self.store.conversation_route(parent, conversation_id)
+            elif parent:
+                route = parent
+        identifier = event_key(message)
+        if not route or not route_allows_sender(route, message.sender_id):
+            await self.store.observe(
+                identifier,
+                message.model_dump(mode="json"),
+                state="unmatched" if not route else "blocked",
+                error="No matching route" if not route else "Sender or route is not authorized",
+            )
+            return {"state": "blocked"}
+        reply_context = {
+            **(context or {}),
+            "message_id": message.source_message_id,
+            "sender_id": message.sender_id,
+            "source_time": message.occurred_at.timestamp(),
+        }
+        inserted = await self.store.ingest(identifier, route["id"], message.model_dump(mode="json"), reply_context)
+        self.wake.set()
+        return {"state": "accepted" if inserted else "duplicate", "event_id": identifier}
 
     async def run(self) -> None:
         while True:
@@ -51,12 +112,15 @@ class Bridge:
     async def advance(self, event: dict) -> None:
         route = await self.store.route(event["route_id"])
         message = json.loads(event["message"])
-        if not route or not route["enabled"] or message["sender_id"] not in route["allowed_user_ids"]:
+        if not route or not route_allows_sender(route, message["sender_id"]):
             await self.store.update_event(event["id"], state="blocked", error="Route permission revoked")
             return
         connection = await self.store.connection(route["host_id"])
         if not connection:
             raise AdapterError("Host connection is missing")
+        if connection["kind"] == "mcp":
+            await self.store.update_event(event["id"], state="available", error=None)
+            return
         if event["state"] == "queued":
             # Freeze target and payload BEFORE I/O. A lost receipt retries the exact
             # original command even after another receipt binds the route's thread.
@@ -107,15 +171,37 @@ class Bridge:
             return
         if reply["event_id"]:
             source = await self.store.event(reply["event_id"])
-            if source is None or source["message"]["sender_id"] not in route["allowed_user_ids"]:
+            if source is None or not route_allows_sender(route, source["message"]["sender_id"]):
                 await self.store.finish_reply(reply["id"], "blocked", error="Source permission could not be confirmed")
                 return
+        if await self.store.automatic_reply(reply["id"]) and not (
+            route["auto_reply"] and (route["conversation_kind"] == "private" or route.get("access_mode") == "full")
+        ):
+            await self.store.finish_reply(reply["id"], "draft")
+            return
         connection = await self.store.connection(route["channel_id"])
+        if connection and self.channels and not self.channels.ready(connection):
+            return
         if not connection or not await self.store.claim_reply(reply["id"]):
             return
         try:
-            message_id = await self.adapters.send(connection, route, reply["text"])
-        except (AdapterError, httpx.HTTPError, ValueError, KeyError, TypeError):
+            message_id = (
+                await self.channels.send(connection, route, reply["text"], reply)
+                if self.channels
+                else await self.adapters.send(connection, route, reply["text"])
+            )
+        except SendBlocked as error:
+            await self.store.finish_reply(reply["id"], "blocked", error=str(error))
+        except (
+            AdapterError,
+            httpx.HTTPError,
+            ConnectionClosed,
+            TimeoutError,
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+        ):
             await self.store.finish_reply(
                 reply["id"], "unknown", error="Delivery not confirmed; verify in the channel before resending"
             )

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLocale } from "@/i18n";
-import type { Snapshot } from "@/api";
+import { RouteForm, type RouteSource } from "@/components/routes";
+import { eventAddress, type Snapshot } from "@/api";
 import type { Action } from "@/components/form-controls";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,11 +37,18 @@ export function Events({
   const { t, message, date } = useLocale();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
-  const routeName = (id: string) => snapshot.routes.find((route) => route.id === id)?.name ?? id;
+  const [routeSource, setRouteSource] = useState<RouteSource | null>(null);
+  const conversationName = (record: import("@/api").ChannelEvent) => {
+    const address = eventAddress(snapshot, record);
+    if (!address) return record.route_id ?? t("Not created");
+    const channel = snapshot.connections.find((item) => item.id === address.account_id);
+    const route = snapshot.routes.find((item) => item.id === record.route_id);
+    return route?.name ?? channel?.name ?? address.account_id;
+  };
   const rows = snapshot.events.filter((event) =>
     matchesQuery(query, [
       event.id,
-      routeName(event.route_id),
+      conversationName(event),
       event.message.sender_id,
       event.message.text,
       event.state,
@@ -50,11 +58,18 @@ export function Events({
     ]),
   );
   const event = snapshot.events.find((record) => record.id === selected);
+  const threadLabel = (record: import("@/api").ChannelEvent) => {
+    const route = snapshot.routes.find((route) => route.id === record.route_id);
+    const host = snapshot.connections.find((connection) => connection.id === route?.host_id);
+    return (
+      record.thread_id ?? (host?.kind === "mcp" ? t("Client pulls through MCP") : t("Not created"))
+    );
+  };
   return (
     <div className="grid grid-cols-1 gap-4">
       <p className="text-sm text-muted-foreground">
         {t(
-          "Messages accepted from verified channels and authorized senders. Refreshes every five seconds.",
+          "Received channel messages, including conversations without a route. Refreshes every five seconds.",
         )}
       </p>
       <ListToolbar query={query} onQueryChange={setQuery} label={t("Search messages…")} />
@@ -73,21 +88,32 @@ export function Events({
           <TableBody>
             {rows.length === 0 ? (
               <EmptyRow columns={6} filtered={!!query.trim()}>
-                {t("No messages yet. Connect OneBots and enable a conversation route to begin.")}
+                {t(
+                  "No messages yet. Send a message to a connected channel to discover its sender ID.",
+                )}
               </EmptyRow>
             ) : (
               rows.map((record) => (
                 <TableRow key={record.id}>
-                  <TableCell>{routeName(record.route_id)}</TableCell>
-                  <TableCell>
-                    <p className="text-xs text-muted-foreground">{record.message.sender_id}</p>
-                    <p className="max-w-sm truncate">{record.message.text}</p>
+                  <TableCell className="max-w-48 whitespace-normal">
+                    <p>{conversationName(record)}</p>
+                    <p className="break-all text-xs text-muted-foreground">
+                      {eventAddress(snapshot, record)?.conversation_id}
+                    </p>
+                  </TableCell>
+                  <TableCell className="max-w-56 whitespace-normal">
+                    <p className="break-all text-xs text-muted-foreground">
+                      {t("Sender ID")}: {record.message.sender_id}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words">{record.message.text}</p>
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary">{message(record.state)}</Badge>
                   </TableCell>
                   <TableCell>{date(record.created_at)}</TableCell>
-                  <TableCell className="text-xs">{record.thread_id ?? t("Not created")}</TableCell>
+                  <TableCell className="max-w-32 truncate text-xs" title={threadLabel(record)}>
+                    {threadLabel(record)}
+                  </TableCell>
                   <TableCell>
                     <div className="flex gap-2">
                       <Button
@@ -100,6 +126,29 @@ export function Events({
                       >
                         {t("View details")}
                       </Button>
+                      {!record.route_id && eventAddress(snapshot, record) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={
+                            busy ||
+                            !snapshot.connections.some((c) => c.kind === "a13n" || c.kind === "mcp")
+                          }
+                          onClick={() => {
+                            clearError();
+                            const address = eventAddress(snapshot, record);
+                            if (!address) return;
+                            const [kind, ...parts] = address.conversation_id.split(":");
+                            setRouteSource({
+                              channel_id: address.account_id,
+                              conversation_kind: kind as "private" | "group",
+                              conversation_id: parts.join(":"),
+                            });
+                          }}
+                        >
+                          {t("Create route")}
+                        </Button>
+                      )}
                       {record.state === "failed" && (
                         <Button
                           variant="outline"
@@ -119,20 +168,44 @@ export function Events({
         </Table>
       </TableFrame>
       <ManagementDialog
+        open={!!routeSource}
+        onOpenChange={(open) => !open && setRouteSource(null)}
+        title={t("Add a route")}
+        description={t("Use the sender and conversation IDs from this received message.")}
+        busy={busy}
+        error={error}
+        wide
+      >
+        {routeSource && (
+          <RouteForm
+            initial={routeSource}
+            snapshot={snapshot}
+            action={action}
+            busy={busy}
+            onSaved={() => setRouteSource(null)}
+          />
+        )}
+      </ManagementDialog>
+      <ManagementDialog
         open={!!event}
         onOpenChange={(open) => !open && setSelected(null)}
         title={t("Message details")}
-        description={event ? `${routeName(event.route_id)} · ${date(event.created_at)}` : ""}
+        description={event ? `${conversationName(event)}: ${date(event.created_at)}` : ""}
         error={error}
         busy={busy}
       >
         {event && (
           <div className="grid gap-4">
             <Badge variant="secondary">{message(event.state)}</Badge>
-            <p className="text-xs text-muted-foreground">{event.message.sender_id}</p>
+            <p className="break-all text-sm">
+              {t("Sender ID")}: {event.message.sender_id}
+            </p>
+            <p className="break-all text-sm">
+              {t("Conversation")}: {eventAddress(snapshot, event)?.conversation_id}
+            </p>
             <p className="whitespace-pre-wrap break-words">{event.message.text}</p>
             <p className="break-all text-xs text-muted-foreground">
-              {t("Agent thread")}: {event.thread_id ?? t("Not created")}
+              {t("Agent thread")}: {threadLabel(event)}
             </p>
             {event.error && (
               <p role="alert" className="text-sm text-muted-foreground">

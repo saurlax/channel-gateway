@@ -11,10 +11,13 @@ dependencies = [
     "channel-gateway-core",
     "aiosqlite>=0.21,<1",
     "click>=8.2,<9",
+    "cryptography>=45,<51",
     "fastapi>=0.116,<1",
     "httpx>=0.28,<1",
     "mcp>=1.26,<2",
+    "qrcode>=8,<9",
     "uvicorn>=0.35,<1",
+    "websockets>=15,<17",
 ]
 
 [project.urls]

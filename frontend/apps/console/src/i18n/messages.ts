@@ -1,4 +1,116 @@
 export const chinese = {
+  "Use this token as an MCP bearer credential. It is shown once and grants access to this route. All-conversation routes include their concrete conversations.":
+    "将此令牌作为 MCP Bearer 凭证。令牌仅显示一次，授予此路由的访问权限；任意会话路由包含其已接收的具体会话。",
+  "All conversations": "任意会话",
+  "Specific conversation": "指定会话",
+  "Conversation scope": "会话范围",
+  "Any sender": "任意发送者",
+  "Sender access": "发送者权限",
+  "Sender ID": "发送者 ID",
+  "Permission mode": "权限模式",
+  "Restricted access": "受限权限",
+  "Full access": "完全权限",
+  "Automatic replies": "自动回复",
+  "Separate thread per conversation": "每个会话独立创建线程",
+  "New conversations get separate threads. Specific routes take priority.":
+    "新会话分别创建独立线程，指定会话的路由优先匹配。",
+  "Use the agent's configured tools and reply automatically. Applies only to this route, without gateway administrator access.":
+    "保留 Agent 已配置的工具权限并自动回复，仅作用于此路由，不授予网关管理员权限。",
+  "Limit connection tools and review group replies.": "限制连接工具，群聊回复需要审核。",
+  "Choose a received conversation": "选择已收到消息的会话",
+  "Received channel messages, including conversations without a route. Refreshes every five seconds.":
+    "显示收到的渠道消息，包括尚未配置路由的会话，每五秒刷新一次。",
+  "No messages yet. Send a message to a connected channel to discover its sender ID.":
+    "暂无消息。向已连接的渠道发一条消息，即可查看发送者 ID。",
+  "Use the sender and conversation IDs from this received message.":
+    "使用此消息中的发送者和会话 ID 创建路由。",
+  "Restricted group routes require approval. Confirm that the draft is appropriate for everyone in the destination conversation.":
+    "受限权限的群聊路由需要审核，请确认草稿内容适合向目标会话中的所有成员公开。",
+  unmatched: "未匹配路由",
+  Username: "账号",
+  Password: "密码",
+  "Restoring session…": "正在恢复登录…",
+
+  "{name}: MCP key": "{name}：MCP Key",
+  "Update allowed sender IDs for this client’s conversation.": "更新此客户端会话的允许发送者 ID。",
+  "Host type": "宿主类型",
+  "a13n API + MCP": "a13n API + MCP",
+  "Generic MCP": "通用 MCP",
+  "MCP URL": "MCP URL",
+  "MCP key": "MCP Key",
+  "Rotate MCP key": "轮换 MCP Key",
+  "Client pulls through MCP": "客户端通过 MCP 读取",
+  "Add a channel and an agent host first.": "请先添加渠道和 Agent 宿主。",
+  "Choose API + MCP for a13n, or generic MCP for clients such as Codex.":
+    "a13n 使用 API + MCP，Codex 等客户端使用通用 MCP。",
+  "Deliver messages through the API and optionally attach MCP tools.":
+    "通过 API 投递消息，并可按需接入 MCP 工具。",
+  "The client reads authorized conversations through MCP. This does not wake an idle client.":
+    "客户端通过 MCP 读取授权会话。此方式不会唤醒空闲客户端。",
+  "Use this host’s MCP key as the bearer credential. It grants access to all enabled routes assigned to this host.":
+    "使用此宿主的 MCP Key 作为 Bearer 凭证，可访问分配给该宿主的所有已启用路由。",
+  "This MCP key is shown once. It identifies the host and grants access to its enabled routes. Store it in your client’s secret configuration.":
+    "此 MCP Key 仅显示一次，用于识别宿主并访问其已启用路由。请保存在客户端的密钥配置中。",
+  "Available to client": "可供客户端读取",
+
+  "Bot account": "机器人账号",
+  "OneBot reverse HTTP": "OneBot 反向 HTTP",
+  "OneBot forward HTTP": "OneBot 正向 HTTP",
+  "OneBot forward WebSocket": "OneBot 正向 WebSocket",
+  "OneBot reverse WebSocket": "OneBot 反向 WebSocket",
+  QQ: "QQ",
+  Weixin: "微信",
+  "Receive signed HTTP callbacks and send through the account HTTP API.":
+    "接收已签名的 HTTP 回调，并通过该账号的 HTTP API 发送消息。",
+  "Send through the account HTTP API. This mode does not receive messages or wake agents.":
+    "通过该账号的 HTTP API 发送消息。此方式不接收消息，也不会唤醒 Agent。",
+  "Connect to the account’s universal WebSocket endpoint to receive events and send messages.":
+    "连接该账号的通用 WebSocket 端点，接收事件并发送消息。",
+  "Configure the bot to connect to the gateway URL with the access token, self ID, and Universal client role.":
+    "配置机器人连接网关 URL，携带访问令牌、自身 ID，并使用 Universal 客户端角色。",
+  "Use a QQ official Bot AppID and AppSecret. Supports private and group text messages.":
+    "使用 QQ 官方机器人的 AppID 和 AppSecret。支持私聊和群聊文本消息。",
+  "Save the channel, then scan the login QR code with Weixin. Supports private text messages.":
+    "保存渠道后，使用微信扫描登录二维码。支持私聊文本消息。",
+  Endpoint: "连接端点",
+  "Account / application ID": "账号 / 应用 ID",
+  "Not paired": "未配对",
+  "Choose a protocol and configure one bot account per channel.":
+    "选择协议，每个渠道配置一个机器人账号。",
+  "Channel type": "渠道类型",
+  "Account WebSocket URL": "账号 WebSocket URL",
+  "Gateway WebSocket URL": "网关 WebSocket URL",
+  "Receive mode": "接收方式",
+  "HTTP callback": "HTTP 回调",
+  "Save & pair": "保存并配对",
+  "New AppSecret (optional)": "新 AppSecret（可选）",
+  "Pair one Weixin bot account. Re-pairing must use the same account.":
+    "配对一个微信机器人账号。重新配对时必须使用同一账号。",
+  "Weixin login QR code": "微信登录二维码",
+  "Verification code": "验证码",
+  Verify: "验证",
+  "Starting login…": "正在开始登录…",
+  "Generate new QR code": "生成新二维码",
+  "Scan to pair Weixin": "扫码配对微信",
+  "This channel sends only. It cannot receive messages or automatically start an agent run.":
+    "此渠道仅支持发送，无法接收消息或自动启动 Agent。",
+  Inactive: "未启动",
+  "Sign-in required": "需要登录",
+  Connecting: "正在连接",
+  Connected: "已连接",
+  Reconnecting: "正在重连",
+  "Awaiting connection": "等待连接",
+  "Callback ready": "等待回调",
+  "Send only": "仅发送",
+  "Waiting for scan": "等待扫码",
+  "Scanned; confirm in Weixin": "已扫码，请在微信中确认",
+  "Paired successfully": "配对成功",
+  "QR code expired": "二维码已过期",
+  "Enter the verification code": "请输入验证码",
+  "Verification blocked; generate a new QR code": "验证受限，请生成新二维码",
+  "Continuing sign-in": "正在继续登录",
+  "Already bound; generate a new QR code": "已绑定，请生成新二维码",
+
   "Saved, but the list could not refresh. Refresh the page data before trying again.":
     "已保存，但列表刷新失败。再次操作前请先刷新页面数据。",
   Channels: "渠道",
@@ -33,7 +145,7 @@ export const chinese = {
   "Request failed.": "请求失败。",
   Refresh: "刷新",
   "Action needs attention": "操作需要处理",
-  "{name} · access token": "{name} · 访问令牌",
+  "{name}: access token": "{name}: 访问令牌",
   "Use this token as the bearer credential of a dedicated a13n MCP connection. It is shown once and grants access to this route only.":
     "将此令牌设为此路由专用的 a13n MCP 连接的 Bearer 凭证。令牌仅显示一次，仅授予此路由的访问权限。",
   "Conversation access token": "会话访问令牌",
@@ -64,9 +176,7 @@ export const chinese = {
   "Sign in to Channel Gateway": "登录 Channel Gateway",
   "Manage your channels, access rules, and agent conversations.":
     "管理渠道、访问规则和 Agent 会话。",
-  "Administrator token": "管理员令牌",
-  "Your token is kept in memory until you sign out or close this page.":
-    "令牌仅保存在内存中，退出登录或关闭页面后即清除。",
+
   "Signing in…": "正在登录…",
   "Sign in": "登录",
   "Choose…": "请选择…",
@@ -141,7 +251,7 @@ export const chinese = {
   "Allow automatic replies to this user": "允许自动回复此用户",
   "Group replies require administrator approval.": "群聊回复需要管理员审核。",
   "Create route": "创建路由",
-  "{name} · allowed sender IDs": "{name} · 允许的发送者 ID",
+  "{name}: allowed sender IDs": "{name}: 允许的发送者 ID",
   "a13n MCP connection ID": "a13n MCP 连接 ID",
   "Save access & binding": "保存权限与绑定",
   "Destination:": "目标会话：",
@@ -173,9 +283,60 @@ export const chinese = {
 export type MessageKey = keyof typeof chinese;
 
 export const diagnostics: Record<string, string> = {
-  "Set CHANNEL_GATEWAY_ADMIN_TOKEN to enable management":
-    "请设置 CHANNEL_GATEWAY_ADMIN_TOKEN 以启用管理功能",
-  "Administrator authentication required": "需要管理员认证，请检查管理员令牌",
+  "No matching route": "尚未配置匹配此会话的路由",
+  "Sender or route is not authorized": "发送者未获授权或路由已停用",
+  "Allowlist routes require at least one sender ID": "白名单路由需要至少一个发送者 ID",
+  "Any-sender routes do not use an allowlist": "任意发送者模式无需填写白名单",
+  "All-conversation routes cannot use a dedicated a13n MCP connection":
+    "任意会话路由不能绑定单个会话专用的 a13n MCP 连接",
+  "Edit the parent route to change this conversation's access": "请编辑上级路由修改此会话的权限",
+  "Agent host not found": "未找到 Agent 宿主",
+  "Choose a channel and an agent host": "请选择渠道和 Agent 宿主",
+  "a13n routes require an agent ID": "a13n 路由需要填写 Agent ID",
+  "MCP hosts require MCP replies without a13n bindings":
+    "通用 MCP 宿主使用 MCP 回复，无需 a13n 绑定",
+  "MCP hosts use a gateway-issued key and no upstream credentials":
+    "通用 MCP 宿主使用网关生成的 Key，无需上游凭证",
+
+  "Channel connection failed; check credentials and network": "渠道连接失败，请检查凭据和网络",
+  "Invalid channel event was ignored": "已忽略无效渠道事件",
+  "Weixin session expired; scan a new login QR code": "微信会话已过期，请扫描新的登录二维码",
+  "Weixin login could not start; check the network and try again":
+    "无法开始微信登录，请检查网络后重试",
+  "Weixin pairing failed; verify the account and start a new QR code":
+    "微信配对失败，请核对账号后生成新二维码",
+  "Credentials do not match the channel type": "凭据与渠道类型不匹配",
+  "Choose a channel and an a13n host": "请选择渠道和 a13n 宿主",
+  "This channel does not support that conversation type": "该渠道不支持此会话类型",
+  "This channel does not receive HTTP callbacks": "该渠道不接收 HTTP 回调",
+  "No authorized reply context; wait for an incoming message":
+    "没有已授权的回复上下文，请等待收到消息",
+  "No Weixin context token; wait for an incoming message": "没有微信会话上下文，请等待收到消息",
+  "Channel is disconnected": "渠道已断开",
+  "OneBot requires a transport, access token, and bot self ID":
+    "OneBot 需要接入方式、访问令牌和机器人自身 ID",
+  "Only reverse HTTP uses a signing secret": "仅反向 HTTP 使用签名密钥",
+  "Reverse WebSocket uses the gateway-generated URL": "反向 WebSocket 使用网关生成的 URL",
+  "The URL scheme must match the OneBot transport": "URL 协议必须与 OneBot 接入方式匹配",
+  "QQ requires an AppID, AppSecret, and receive mode": "QQ 需要 AppID、AppSecret 和接收方式",
+  "QQ AppSecret must be ASCII": "QQ AppSecret 必须为 ASCII 字符",
+  "QQ uses official endpoints and its application credentials": "QQ 使用官方端点和应用凭据",
+  "Weixin uses polling; imported credentials require a bot ID and token":
+    "微信使用轮询，导入凭据需要机器人 ID 和令牌",
+  "Weixin requires an official HTTPS API host": "微信需要官方 HTTPS API 地址",
+  "a13n requires an HTTP API URL and workspace API key": "a13n 需要 HTTP API 地址和工作区 API 密钥",
+  "a13n requires an HTTP API URL": "a13n 需要 HTTP API 地址",
+  "Only QQ uses application credentials": "仅 QQ 使用应用凭据",
+  "Use an HTTP(S) or WS(S) URL without embedded credentials":
+    "请使用不包含凭据的 HTTP(S) 或 WS(S) URL",
+
+  "Set CG_ADMIN_USERNAME and CG_ADMIN_PASSWORD to enable management":
+    "请设置 CG_ADMIN_USERNAME 和 CG_ADMIN_PASSWORD 以启用管理功能",
+  "Administrator sign-in required": "请登录管理员账号",
+  "Incorrect username or password": "账号或密码错误",
+  "Refresh the page before making changes": "请刷新页面后再进行更改",
+  "Too many sign-in attempts; try again in a minute": "登录尝试过多，请一分钟后重试",
+  "Use the management login API": "请通过管理登录接口登录",
   "Cross-origin management requests are not accepted": "不接受跨来源的管理请求",
   "Connection not found": "找不到连接",
   "Only OneBots connections use a webhook secret": "仅 OneBots 连接使用 Webhook 密钥",
@@ -213,4 +374,25 @@ export const diagnostics: Record<string, string> = {
   "Group replies require administrator approval": "群聊回复需要管理员审核",
   "A private route authorizes only its conversation user": "私聊路由只能授权该会话的用户",
   "Field required": "必填字段",
+};
+
+// Protocol enums have readable labels in either interface language.
+export const protocolLabels: Record<string, MessageKey> = {
+  available: "Available to client",
+  inactive: "Inactive",
+  login_required: "Sign-in required",
+  connecting: "Connecting",
+  connected: "Connected",
+  reconnecting: "Reconnecting",
+  awaiting_connection: "Awaiting connection",
+  callback_ready: "Callback ready",
+  http_only: "Send only",
+  weixin_login_wait: "Waiting for scan",
+  weixin_login_scaned: "Scanned; confirm in Weixin",
+  weixin_login_confirmed: "Paired successfully",
+  weixin_login_expired: "QR code expired",
+  weixin_login_need_verifycode: "Enter the verification code",
+  weixin_login_verify_code_blocked: "Verification blocked; generate a new QR code",
+  weixin_login_scaned_but_redirect: "Continuing sign-in",
+  weixin_login_binded_redirect: "Already bound; generate a new QR code",
 };

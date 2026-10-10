@@ -22,7 +22,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { Snapshot } from "@/api";
+import { isHost } from "@/hosts";
+import { eventAddress, type Snapshot } from "@/api";
 
 export function Routes({
   snapshot,
@@ -43,28 +44,30 @@ export function Routes({
   const [selected, setSelected] = useState<string | null>(null);
   const connectionName = (id: string) =>
     snapshot.connections.find((connection) => connection.id === id)?.name ?? id;
-  const rows = snapshot.routes.filter((route) =>
-    matchesQuery(query, [
-      route.name,
-      route.id,
-      route.conversation_id,
-      message(route.conversation_kind),
-      route.agent_id,
-      route.thread_id,
-      connectionName(route.channel_id),
-      connectionName(route.host_id),
-      ...route.allowed_user_ids,
-    ]),
-  );
+  const rows = snapshot.routes
+    .filter((route) => !route.parent_route_id)
+    .filter((route) =>
+      matchesQuery(query, [
+        route.name,
+        route.id,
+        route.conversation_id,
+        message(route.conversation_kind),
+        route.agent_id,
+        route.thread_id,
+        connectionName(route.channel_id),
+        connectionName(route.host_id),
+        ...route.allowed_user_ids,
+      ]),
+    );
   const route = snapshot.routes.find((record) => record.id === selected);
   const canAdd =
-    snapshot.connections.some((connection) => connection.kind === "onebots") &&
-    snapshot.connections.some((connection) => connection.kind === "a13n");
+    snapshot.connections.some((connection) => !isHost(connection)) &&
+    snapshot.connections.some(isHost);
   return (
     <div className="grid grid-cols-1 gap-4">
       {!canAdd && (
         <p className="text-sm text-muted-foreground">
-          {t("Add a OneBots connection and an a13n host first.")}
+          {t("Add a channel and an agent host first.")}
         </p>
       )}
       <ListToolbar query={query} onQueryChange={setQuery} label={t("Search routes…")}>
@@ -103,7 +106,10 @@ export function Routes({
                   <TableCell>
                     <p className="font-medium">{record.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {message(record.conversation_kind)} · {record.conversation_id}
+                      {message(record.conversation_kind)}:{" "}
+                      {record.conversation_id === "*"
+                        ? t("All conversations")
+                        : record.conversation_id}
                     </p>
                   </TableCell>
                   <TableCell>{connectionName(record.channel_id)}</TableCell>
@@ -111,16 +117,29 @@ export function Routes({
                     <p>{connectionName(record.host_id)}</p>
                     <p className="text-xs">{record.agent_id}</p>
                     <p className="text-xs text-muted-foreground">
-                      {record.thread_id ?? t("Created on first message")}
+                      {record.conversation_id === "*"
+                        ? t("Separate thread per conversation")
+                        : (record.thread_id ??
+                          (snapshot.connections.find((c) => c.id === record.host_id)?.kind === "mcp"
+                            ? t("Client pulls through MCP")
+                            : t("Created on first message")))}
                     </p>
                   </TableCell>
-                  <TableCell>{record.allowed_user_ids.join(", ")}</TableCell>
+                  <TableCell>
+                    {record.sender_policy === "any"
+                      ? t("Any sender")
+                      : record.allowed_user_ids.join(", ")}
+                  </TableCell>
                   <TableCell>
                     <Badge variant="outline">
-                      {record.auto_reply ? t("Automatic private reply") : t("Approval required")}
+                      {record.auto_reply ? t("Automatic replies") : t("Approval required")}
                     </Badge>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {record.reply_source === "output" ? t("Final run output") : t("MCP tools")}
+                      {record.access_mode === "full"
+                        ? t("Full access")
+                        : record.reply_source === "output"
+                          ? t("Final run output")
+                          : t("MCP tools")}
                     </p>
                   </TableCell>
                   <TableCell>
@@ -187,14 +206,20 @@ export function Routes({
         open={!!route}
         onOpenChange={(open) => !open && setSelected(null)}
         title={route?.name ?? t("Access & MCP binding")}
-        description={t(
-          "Update sender IDs or attach a dedicated MCP connection. After rotating a route token, update its a13n bearer credential.",
-        )}
+        description={
+          snapshot.connections.find((c) => c.id === route?.host_id)?.kind === "mcp"
+            ? t("Update allowed sender IDs for this client’s conversation.")
+            : t(
+                "Update sender IDs or attach a dedicated MCP connection. After rotating a route token, update its a13n bearer credential.",
+              )
+        }
+
         busy={busy}
         error={error}
       >
         {route && (
           <RouteAccess
+            mcpOnly={snapshot.connections.find((c) => c.id === route.host_id)?.kind === "mcp"}
             route={route}
             action={action}
             busy={busy}
@@ -206,47 +231,67 @@ export function Routes({
   );
 }
 
-function RouteForm({
+export type RouteSource = {
+  channel_id: string;
+  conversation_kind: "private" | "group";
+  conversation_id: string;
+};
+
+export function RouteForm({
+  initial,
   snapshot,
   action,
   busy,
   onSaved,
 }: {
+  initial?: RouteSource;
   snapshot: Snapshot;
   action: Action;
   busy: boolean;
   onSaved: () => void;
 }) {
   const { t } = useLocale();
-  const channels = snapshot.connections.filter((c) => c.kind === "onebots");
-  const hosts = snapshot.connections.filter((c) => c.kind === "a13n");
-  const [channel, setChannel] = useState(channels[0]?.id ?? "");
+  const channels = snapshot.connections.filter((c) => !isHost(c));
+  const hosts = snapshot.connections.filter(isHost);
+  const [channel, setChannel] = useState(initial?.channel_id ?? channels[0]?.id ?? "");
   const [host, setHost] = useState(hosts[0]?.id ?? "");
-  const [kind, setKind] = useState("private");
+  const mcpOnly = hosts.find((c) => c.id === host)?.kind === "mcp";
+  const [kind, setKind] = useState(initial?.conversation_kind ?? "private");
+  const [scope, setScope] = useState("specific");
+  const [conversation, setConversation] = useState(initial?.conversation_id ?? "");
+  const [senderPolicy, setSenderPolicy] = useState("allowlist");
+  const [accessMode, setAccessMode] = useState("restricted");
+  const currentChannel = channels.find((item) => item.id === channel);
+  const privateOnly = currentChannel?.kind === "weixin";
   const [source, setSource] = useState("output");
   const [automatic, setAutomatic] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    const conversation = field(data, "conversation_id");
+    const target = scope === "all" ? "*" : conversation;
     if (
       await action("routes", {
         name: field(data, "name"),
         channel_id: channel,
         host_id: host,
         conversation_kind: kind,
-        conversation_id: conversation,
+        conversation_id: target,
+        sender_policy: senderPolicy,
+        access_mode: accessMode,
         allowed_user_ids:
-          kind === "private"
-            ? [conversation]
-            : field(data, "users")
-                .split(/[\s,]+/)
-                .filter(Boolean),
-        agent_id: field(data, "agent_id"),
-        auto_reply: kind === "private" && automatic,
-        reply_source: source,
-        mcp_connection_id: field(data, "mcp_connection_id") || null,
+          senderPolicy === "any"
+            ? []
+            : kind === "private" && scope === "specific"
+              ? [target]
+              : field(data, "users")
+                  .split(/[\s,]+/)
+                  .filter(Boolean),
+        agent_id: mcpOnly ? null : field(data, "agent_id"),
+        auto_reply: accessMode === "full" || (kind === "private" && automatic),
+        reply_source: mcpOnly ? "mcp" : source,
+        mcp_connection_id:
+          mcpOnly || scope === "all" ? null : field(data, "mcp_connection_id") || null,
       })
     ) {
       onSaved();
@@ -261,10 +306,10 @@ function RouteForm({
         <Choice
           id="conversation-kind"
           value={kind}
-          onChange={setKind}
+          onChange={(value) => setKind(value as "private" | "group")}
           items={[
             ["private", t("Private chat")],
-            ["group", t("Group chat")],
+            ...(!privateOnly ? [["group", t("Group chat")] as [string, string]] : []),
           ]}
         />
       </FormField>
@@ -272,7 +317,10 @@ function RouteForm({
         <Choice
           id="route-channel"
           value={channel}
-          onChange={setChannel}
+          onChange={(value) => {
+            setChannel(value);
+            if (channels.find((item) => item.id === value)?.kind === "weixin") setKind("private");
+          }}
           items={channels.map((c) => [c.id, c.name])}
         />
       </FormField>
@@ -284,13 +332,63 @@ function RouteForm({
           items={hosts.map((c) => [c.id, c.name])}
         />
       </FormField>
-      <FormField id="conversation-id" label={kind === "group" ? t("Group ID") : t("User ID")}>
-        <Input id="conversation-id" name="conversation_id" required />
+      <FormField id="conversation-scope" label={t("Conversation scope")}>
+        <Choice
+          id="conversation-scope"
+          value={scope}
+          onChange={(value) => {
+            setScope(value);
+            if (value === "all") {
+              setSenderPolicy("any");
+              setSource("output");
+            }
+          }}
+          items={[
+            ["specific", t("Specific conversation")],
+            ["all", t("All conversations")],
+          ]}
+        />
+        {scope === "all" && (
+          <p className="text-xs text-muted-foreground">
+            {t("New conversations get separate threads. Specific routes take priority.")}
+          </p>
+        )}
       </FormField>
-      <FormField id="agent-id" label={t("a13n agent ID")}>
-        <Input id="agent-id" name="agent_id" required placeholder="agt_…" />
+      {scope === "specific" && (
+        <FormField id="conversation-id" label={kind === "group" ? t("Group ID") : t("User ID")}>
+          <Input
+            id="conversation-id"
+            name="conversation_id"
+            required
+            value={conversation}
+            onChange={(event) => setConversation(event.target.value)}
+          />
+          <ObservedConversations
+            snapshot={snapshot}
+            channel={channel}
+            kind={kind}
+            onSelect={setConversation}
+          />
+        </FormField>
+      )}
+      <FormField id="sender-policy" label={t("Sender access")}>
+        <Choice
+          id="sender-policy"
+          value={senderPolicy}
+          onChange={setSenderPolicy}
+          items={[
+            ["allowlist", t("Allowed sender IDs")],
+            ["any", t("Any sender")],
+          ]}
+        />
       </FormField>
-      {kind === "group" && (
+      <AccessMode value={accessMode} onChange={setAccessMode} />
+      {!mcpOnly && (
+        <FormField id="agent-id" label={t("a13n agent ID")}>
+          <Input id="agent-id" name="agent_id" required placeholder="ap_…" />
+        </FormField>
+      )}
+      {senderPolicy === "allowlist" && (kind === "group" || scope === "all") && (
         <FormField id="allowed-users" label={t("Allowed sender IDs")}>
           <Input id="allowed-users" name="users" required placeholder="12345, 67890" />
           <p className="text-xs text-muted-foreground">
@@ -298,34 +396,49 @@ function RouteForm({
           </p>
         </FormField>
       )}
-      <FormField id="reply-source" label={t("Reply source")}>
-        <Choice
-          id="reply-source"
-          value={source}
-          onChange={setSource}
-          items={[
-            ["output", t("Final run output")],
-            ["mcp", t("MCP send_message tool")],
-          ]}
-        />
-      </FormField>
-      <FormField id="mcp-connection" label={t("a13n MCP connection ID (optional)")}>
-        <Input id="mcp-connection" name="mcp_connection_id" required={source === "mcp"} />
-        <p className="text-xs text-muted-foreground">
-          {t(
-            "Use a dedicated MCP connection for this route. You can bind it after creating the route.",
+      {!mcpOnly && (
+        <>
+          <FormField id="reply-source" label={t("Reply source")}>
+            <Choice
+              id="reply-source"
+              value={source}
+              onChange={setSource}
+              items={[
+                ["output", t("Final run output")],
+                ...(scope !== "all"
+                  ? [["mcp", t("MCP send_message tool")] as [string, string]]
+                  : []),
+              ]}
+            />
+          </FormField>
+          {scope !== "all" && (
+            <FormField id="mcp-connection" label={t("a13n MCP connection ID (optional)")}>
+              <Input id="mcp-connection" name="mcp_connection_id" required={source === "mcp"} />
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "Use a dedicated MCP connection for this route. You can bind it after creating the route.",
+                )}
+              </p>
+            </FormField>
           )}
-        </p>
-      </FormField>
-      {kind === "private" && (
+        </>
+      )}
+      {kind === "private" && accessMode !== "full" && (
         <div className="flex items-center gap-2">
           <Switch id="automatic" checked={automatic} onCheckedChange={setAutomatic} />
           <Label htmlFor="automatic">{t("Allow automatic replies to this user")}</Label>
         </div>
       )}
-      {kind === "group" && (
+      {kind === "group" && accessMode !== "full" && (
         <p className="text-sm text-muted-foreground">
           {t("Group replies require administrator approval.")}
+        </p>
+      )}
+      {currentChannel?.capabilities?.receive === false && (
+        <p className="text-sm text-muted-foreground">
+          {t(
+            "This channel sends only. It cannot receive messages or automatically start an agent run.",
+          )}
         </p>
       )}
       <Button disabled={busy || !channel || !host} type="submit">
@@ -336,11 +449,13 @@ function RouteForm({
 }
 
 function RouteAccess({
+  mcpOnly,
   route,
   action,
   busy,
   onSaved,
 }: {
+  mcpOnly: boolean;
   route: import("@/api").Route;
   action: Action;
   busy: boolean;
@@ -348,6 +463,9 @@ function RouteAccess({
 }) {
   const { t } = useLocale();
   const [source, setSource] = useState(route.reply_source);
+  const [senderPolicy, setSenderPolicy] = useState(route.sender_policy);
+  const [accessMode, setAccessMode] = useState(route.access_mode);
+  const [automatic, setAutomatic] = useState(route.auto_reply);
   return (
     <form
       className="grid gap-4 md:grid-cols-2"
@@ -358,11 +476,23 @@ function RouteAccess({
           await action(
             `routes/${route.id}`,
             {
-              allowed_user_ids: field(data, "users")
-                .split(/[\s,]+/)
-                .filter(Boolean),
-              reply_source: source,
-              mcp_connection_id: field(data, "mcp_connection_id") || null,
+              sender_policy: senderPolicy,
+              access_mode: accessMode,
+              auto_reply:
+                accessMode === "full" || (route.conversation_kind === "private" && automatic),
+              allowed_user_ids:
+                senderPolicy === "any"
+                  ? []
+                  : route.conversation_kind === "private" && route.conversation_id !== "*"
+                    ? [route.conversation_id]
+                    : field(data, "users")
+                        .split(/[\s,]+/)
+                        .filter(Boolean),
+              reply_source: mcpOnly ? "mcp" : source,
+              mcp_connection_id:
+                mcpOnly || route.conversation_id === "*"
+                  ? null
+                  : field(data, "mcp_connection_id") || null,
             },
             "PATCH",
           )
@@ -370,40 +500,131 @@ function RouteAccess({
           onSaved();
       }}
     >
-      <FormField
-        id={`users-${route.id}`}
-        label={t("{name} · allowed sender IDs", { name: route.name })}
-      >
-        <Input
-          id={`users-${route.id}`}
-          name="users"
-          defaultValue={route.allowed_user_ids.join(", ")}
-          required
-          readOnly={route.conversation_kind === "private"}
-        />
-      </FormField>
-      <FormField id={`mcp-${route.id}`} label={t("a13n MCP connection ID")}>
-        <Input
-          id={`mcp-${route.id}`}
-          name="mcp_connection_id"
-          defaultValue={route.mcp_connection_id ?? ""}
-          required={source === "mcp"}
-        />
-      </FormField>
-      <FormField id={`source-${route.id}`} label={t("Reply source")}>
+      <FormField id="edit-sender-policy" label={t("Sender access")}>
         <Choice
-          id={`source-${route.id}`}
-          value={source}
-          onChange={(value) => setSource(value as "output" | "mcp")}
+          id="edit-sender-policy"
+          value={senderPolicy}
+          onChange={(value) => setSenderPolicy(value as "allowlist" | "any")}
           items={[
-            ["output", t("Final run output")],
-            ["mcp", t("MCP send_message tool")],
+            ["allowlist", t("Allowed sender IDs")],
+            ["any", t("Any sender")],
           ]}
         />
       </FormField>
+      <AccessMode
+        value={accessMode}
+        onChange={(value) => setAccessMode(value as "restricted" | "full")}
+      />
+      {senderPolicy === "allowlist" && (
+        <FormField
+          id={`users-${route.id}`}
+          label={t("{name}: allowed sender IDs", { name: route.name })}
+        >
+          <Input
+            id={`users-${route.id}`}
+            name="users"
+            defaultValue={
+              route.conversation_kind === "private" && route.conversation_id !== "*"
+                ? route.conversation_id
+                : route.allowed_user_ids.join(", ")
+            }
+            required
+            readOnly={route.conversation_kind === "private" && route.conversation_id !== "*"}
+          />
+        </FormField>
+      )}
+      {!mcpOnly && route.conversation_id !== "*" && (
+        <>
+          <FormField id={`mcp-${route.id}`} label={t("a13n MCP connection ID")}>
+            <Input
+              id={`mcp-${route.id}`}
+              name="mcp_connection_id"
+              defaultValue={route.mcp_connection_id ?? ""}
+              required={source === "mcp"}
+            />
+          </FormField>
+          <FormField id={`source-${route.id}`} label={t("Reply source")}>
+            <Choice
+              id={`source-${route.id}`}
+              value={source}
+              onChange={(value) => setSource(value as "output" | "mcp")}
+              items={[
+                ["output", t("Final run output")],
+                ["mcp", t("MCP send_message tool")],
+              ]}
+            />
+          </FormField>
+        </>
+      )}
+      {route.conversation_kind === "private" && accessMode !== "full" && (
+        <div className="flex items-center gap-2">
+          <Switch id="edit-automatic" checked={automatic} onCheckedChange={setAutomatic} />
+          <Label htmlFor="edit-automatic">{t("Automatic replies")}</Label>
+        </div>
+      )}
       <Button type="submit" variant="outline" disabled={busy}>
         {t("Save access & binding")}
       </Button>
     </form>
+  );
+}
+
+function AccessMode({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const { t } = useLocale();
+  return (
+    <FormField id="access-mode" label={t("Permission mode")}>
+      <Choice
+        id="access-mode"
+        value={value}
+        onChange={onChange}
+        items={[
+          ["restricted", t("Restricted access")],
+          ["full", t("Full access")],
+        ]}
+      />
+      <p className="text-xs text-muted-foreground">
+        {value === "full"
+          ? t(
+              "Use the agent's configured tools and reply automatically. Applies only to this route, without gateway administrator access.",
+            )
+          : t("Limit connection tools and review group replies.")}
+      </p>
+    </FormField>
+  );
+}
+
+function ObservedConversations({
+  snapshot,
+  channel,
+  kind,
+  onSelect,
+}: {
+  snapshot: Snapshot;
+  channel: string;
+  kind: string;
+  onSelect: (value: string) => void;
+}) {
+  const { t } = useLocale();
+  const conversations = [
+    ...new Set(
+      snapshot.events.flatMap((event) => {
+        const address = eventAddress(snapshot, event);
+        return address?.account_id === channel && address.conversation_id.startsWith(kind + ":")
+          ? [address.conversation_id.slice(kind.length + 1)]
+          : [];
+      }),
+    ),
+  ];
+  if (!conversations.length) return null;
+  return (
+    <FormField id="observed-conversation" label={t("Choose a received conversation")}>
+      <Choice
+        id="observed-conversation"
+        value=""
+        onChange={onSelect}
+        placeholder={t("Choose a received conversation")}
+        items={conversations.map((id) => [id, id])}
+      />
+    </FormField>
   );
 }

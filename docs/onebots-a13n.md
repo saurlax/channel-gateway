@@ -1,16 +1,19 @@
 # Set up the OneBots and a13n text bridge
 
 This guide connects one bot account to an a13n Agent using HTTP API calls and
-signed HTTP callbacks. Add further accounts separately; WebSocket and direct
-QQ/Weixin connections are not currently available. See the
+signed HTTP callbacks. Add further accounts separately. Other OneBot transports
+are described below; see the [native QQ/Weixin guide](official-channels.md) for
+direct official platform connections. See the
 [channel contract](../spec/01-channel-adapters.md) for protocol and message limits.
 
 ## Connect a channel and host
 
-1. Set `CHANNEL_GATEWAY_ADMIN_TOKEN` to a random token of at least 32 characters.
-   Set `CHANNEL_GATEWAY_DATA_DIR` to a private persistent directory and start
-   `make serve`. Open the console and sign in with the administrator token.
-2. In **Channels**, select **Add channel** and add a **OneBots** account. The API
+1. Set `CG_ADMIN_USERNAME` and `CG_ADMIN_PASSWORD` to your administrator
+   account and password of at least 8 characters.
+   Set `CG_DATA_DIR` to a private persistent directory and start
+   `make serve`. Open the console and sign in with that account and password.
+2. In **Channels**, select **Add channel**, choose **OneBot reverse HTTP**,
+   and add one account. The API
    base is the complete OneBot v11 account endpoint, for example
    `https://onebots.example/qq/ACCOUNT/onebot/v11`. Enter the account's
    `access_token`, its event `self_id`, and a signing secret of at least 16
@@ -20,14 +23,16 @@ QQ/Weixin connections are not currently available. See the
    `secret`, and the webhook URL in `http_reverse`. OneBots signs the raw JSON
    with `X-Signature: sha1=<HMAC-SHA1>`. Notice and heartbeat events are ignored.
    See [OneBots](https://github.com/lc-cn/onebots).
-4. In **Agent hosts**, select **Add agent host** and add an **a13n** host using
+4. In **Agent hosts**, select **Add agent host** and choose **a13n API + MCP**, and add a host using
    its API base, e.g. `https://a13n.example/api/v1`, and a workspace API key
    permitted to read runs
    and run the selected agent. No interactive login session is used.
 5. In **Routes & access**, select **Add a route** and choose both connections,
    a private user ID or group ID, allowed platform sender IDs, and the a13n
    agent ID. A private route
-   authorizes exactly that user. A group requires an explicit sender allowlist.
+   authorizes exactly that user by default. A restricted group defaults to an
+   explicit sender allowlist. Alternatively select **Any sender**; choose
+   **All conversations** to match new conversations with separate threads.
    Start with **Final run output** and no MCP connection ID.
 6. Send a text message as an authorized user. **Messages** shows acceptance,
    host submission, the created thread, and any failure. **Reply approvals**
@@ -46,6 +51,32 @@ route when a different target is needed. Select **Edit access** on a route row t
 edit sender allowlists and MCP binding. Disable the route to stop further work;
 this cannot retract a sent message or interrupt an external request already in
 flight.
+
+## Other OneBot transports
+
+Choose the transport in **Add channel**:
+
+- **Forward HTTP**: enter the account HTTP API URL, access token, and self ID.
+  This sends only; it cannot receive messages or automatically start an Agent run.
+- **Forward WebSocket**: enter the complete account universal WS(S) URL, access
+  token, and expected self ID. CG connects to it for both events and API calls.
+- **Reverse WebSocket**: enter the access token and expected self ID. Save, open
+  **Manage**, and copy the gateway WebSocket URL into the bot's reverse WebSocket
+  configuration. Its handshake must include `Authorization: Bearer <token>`,
+  `X-Self-ID: <configured ID>`, and `X-Client-Role: Universal`.
+
+The four options do not discover or combine several bot accounts. Enable the
+matching transport in your OneBots account configuration. Reverse HTTP also
+requires the signing secret; WebSocket modes do not. The channel table displays
+status without endpoint URLs; account addresses and generated inbound URLs are
+available through **Manage**. Inbound addresses use the origin used to open
+the console.
+When behind a proxy, open the console through its public HTTPS origin to obtain
+public HTTPS/WSS addresses, and enable WebSocket proxy upgrades. Route access and
+reply approval remain the same for every transport.
+
+Generic clients such as Codex use the [Agent Host guide](agent-hosts.md) instead
+of a13n API delivery.
 
 ## Optional MCP tools in a13n
 

@@ -8,7 +8,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-export type Action = (path: string, body?: object, method?: string) => Promise<boolean>;
+export type Action = (
+  path: string,
+  body?: object,
+  method?: string,
+) => Promise<{ id?: string } | false>;
 const fieldClass = "grid gap-2";
 export function field(data: FormData, key: string) {
   return String(data.get(key) ?? "").trim();
@@ -37,17 +41,19 @@ export function Choice({
   value,
   onChange,
   items,
+  placeholder,
 }: {
   id: string;
   value: string;
   onChange: (value: string) => void;
   items: Array<[string, string]>;
+  placeholder?: string;
 }) {
   const { t } = useLocale();
   return (
     <Select value={value || undefined} onValueChange={onChange}>
       <SelectTrigger id={id} className="w-full">
-        <SelectValue placeholder={t("Choose…")} />
+        <SelectValue placeholder={placeholder ?? t("Choose…")} />
       </SelectTrigger>
       <SelectContent>
         {items.map(([key, label]) => (

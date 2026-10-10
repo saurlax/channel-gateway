@@ -82,7 +82,7 @@ export function Replies({
                     <TableCell>
                       <p className="font-medium">{route?.name ?? record.route_id}</p>
                       <p className="text-xs text-muted-foreground">
-                        {route ? message(route.conversation_kind) : ""} · {route?.conversation_id}
+                        {route ? message(route.conversation_kind) : ""}: {route?.conversation_id}
                       </p>
                     </TableCell>
                     <TableCell>
@@ -118,7 +118,7 @@ export function Replies({
         title={t("Reply details")}
         description={
           reply
-            ? `${findRoute(reply.route_id)?.name ?? reply.route_id} · ${date(reply.created_at)}`
+            ? `${findRoute(reply.route_id)?.name ?? reply.route_id}: ${date(reply.created_at)}`
             : ""
         }
         busy={busy}
@@ -165,7 +165,7 @@ function ReplyReview({
           <AlertTitle>{t("Review the destination before sending")}</AlertTitle>
           <AlertDescription>
             {t(
-              "Group replies always require approval. Confirm that the draft is appropriate for everyone in the destination conversation.",
+              "Restricted group routes require approval. Confirm that the draft is appropriate for everyone in the destination conversation.",
             )}
           </AlertDescription>
         </Alert>

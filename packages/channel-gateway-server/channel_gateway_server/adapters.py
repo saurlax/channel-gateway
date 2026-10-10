@@ -64,7 +64,7 @@ def event_key(message: Message) -> str:
 
 def host_body(message: dict, route: dict) -> dict:
     context = {
-        "channel": "onebots",
+        "channel": message["address"]["channel"],
         "connection_id": route["channel_id"],
         "conversation_kind": route["conversation_kind"],
         "conversation_id": route["conversation_id"],
@@ -83,12 +83,14 @@ def host_body(message: dict, route: dict) -> dict:
         if route["reply_source"] == "mcp":
             tools.append("send_message")
         selections.append({"connection_id": route["mcp_connection_id"], "tools": tools})
-    return {
+    body = {
         "agent_id": route["agent_id"],
         "delivery": "next_run",
         "payload": {"content": [{"type": "text", "text": text}]},
-        "options": {"overrides": {"connection_tools": selections}},
     }
+    if route.get("access_mode", "restricted") != "full":
+        body["options"] = {"overrides": {"connection_tools": selections}}
+    return body
 
 
 class HttpAdapters:

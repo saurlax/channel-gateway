@@ -148,8 +148,10 @@ and Host input.
 
 `sendmessage` uses the exact account/conversation's latest authorized context,
 text item, bot message type/state, and CG reply ID as `client_id`. Missing context
-blocks before a send request. `ret: 0` confirms provider acceptance; iLink returns
-no platform message ID, so the stored receipt correlation is the CG client ID.
+blocks before a send request. A successful HTTP JSON response with no nonzero
+`ret` or `errcode` confirms provider acceptance; either code may be omitted by
+the official send endpoint. iLink returns no platform message ID, so the stored
+receipt correlation is the CG client ID.
 This does not prove recipient delivery or reading. Sending is never automatically
 retried after a possible external effect.
 

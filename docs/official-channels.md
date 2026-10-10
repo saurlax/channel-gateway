@@ -77,6 +77,8 @@ A disconnected OneBot socket or unpaired Weixin account leaves approved replies
 waiting for connectivity. A missing authorized native reply context blocks the
 reply before sending. A Weixin success receipt confirms API acceptance using CG's
 client ID, not a platform message ID or recipient read acknowledgement.
+The official send response may omit `ret`; a successful HTTP JSON response with
+no nonzero `ret` or `errcode` is accepted as success.
 
 Use one process/replica, HTTPS remotely, and a private persistent state directory.
 See [credential handling](../spec/02-identity-and-access.md#administrator-and-credential-handling).

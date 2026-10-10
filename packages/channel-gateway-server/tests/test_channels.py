@@ -53,6 +53,7 @@ class Providers:
         self.qr_status = {"status": "wait"}
         self.expired = False
         self.fail_send = False
+        self.weixin_send_receipt = {"ret": 0}
 
     def __call__(self, request):
         self.requests.append(request)
@@ -76,6 +77,8 @@ class Providers:
                 return httpx.Response(200, json={"ret": -14})
             if self.fail_send and path.endswith("sendmessage"):
                 raise httpx.ReadTimeout("upstream private response")
+            if path.endswith("sendmessage"):
+                return httpx.Response(200, json=self.weixin_send_receipt)
             return httpx.Response(200, json={"ret": 0})
         if path.endswith("/messages"):
             assert request.headers["authorization"] == "QQBot qq-access-token"
@@ -240,8 +243,10 @@ def test_weixin_pairing_account_binding_cancellation_and_redaction(native):
     assert client.post(path + "/status", json={"login_id": new_login["login_id"]}).json()["status"] == "expired"
 
 
-def test_weixin_context_is_private_and_account_scoped(native):
+@pytest.mark.parametrize("receipt", [{"ret": 0}, {}, {"errcode": 0}])
+def test_weixin_context_is_private_and_account_scoped(native, receipt):
     client, app, provider, _ = native
+    provider.weixin_send_receipt = receipt
     channel = add(client, kind="weixin", token="wx-token", self_id="bot1")
     configured = add_route(native, channel)
     other = add(client, kind="weixin", token="other-token", self_id="bot2")
@@ -592,7 +597,8 @@ def test_old_onebot_connections_and_credential_rotation_preserve_context(native)
     client.portal.call(stale)
 
 
-def test_weixin_unconfirmed_send_does_not_repeat(native):
+@pytest.mark.parametrize("failure", ["timeout", {"ret": 1}, {"errcode": 1}])
+def test_weixin_unconfirmed_send_does_not_repeat(native, failure):
     client, app, provider, _ = native
     channel = add(client, kind="weixin", token="wx-token", self_id="bot1")
     add_route(native, channel)
@@ -600,7 +606,10 @@ def test_weixin_unconfirmed_send_does_not_repeat(native):
     client.portal.call(
         app.state.bridge.ingest, stored, weixin_message(wx_event(), stored), {"context_token": "private-context"}
     )
-    provider.fail_send = True
+    if failure == "timeout":
+        provider.fail_send = True
+    else:
+        provider.weixin_send_receipt = failure
     client.portal.call(app.state.bridge.tick)
     client.portal.call(app.state.bridge.tick)
     assert client.get("/api/v1/replies").json()[0]["state"] == "unknown"

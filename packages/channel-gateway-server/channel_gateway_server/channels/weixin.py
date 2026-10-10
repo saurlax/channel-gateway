@@ -83,7 +83,7 @@ class WeixinClient:
         return await self.request("getupdates", {"get_updates_buf": cursor}, timeout=45)
 
     async def send(self, conversation: str, text: str, context_token: str, reply_id: str) -> str:
-        value = await self.request(
+        await self.request(
             "sendmessage",
             {
                 "msg": {
@@ -97,9 +97,7 @@ class WeixinClient:
                 }
             },
         )
-        if value.get("ret") != 0:
-            raise AdapterError("Weixin omitted the send acknowledgement")
-        # iLink acknowledges acceptance without returning a platform message ID.
+        # iLink success may omit ret and never requires a platform message ID.
         return reply_id
 
     async def start_login(self) -> dict:

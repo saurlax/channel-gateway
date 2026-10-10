@@ -15,15 +15,16 @@ Channel ingestion and Agent Host delivery have separate adapters. This allows a
 conversation to reach an agent in a13n or another Host, while the agent can consult
 other authorized channels before deciding where and how to respond.
 
-> **Project status:** Channel Gateway is in its foundation stage. This repository
-> contains a runnable HTTP service, a minimal management console, initial message
-> models, and development tooling. Channel adapters, a13n delivery, persistence,
-> and MCP tools are planned and are **not implemented yet**.
+> **Project status:** An initial OneBots ↔ a13n text bridge is implemented, with
+> signed event ingestion, conversation routes, persistent delivery records,
+> scoped MCP tools, and a management console built from official shadcn blocks.
+> Cross-channel identity linking, full RBAC, moderation actions, and voice/radio
+> integrations remain planned. This is a single-process prototype.
 
 ## How it fits together
 
-The following diagram shows the intended integration flow. The adapters and
-routing in the diagram are not available in the initial scaffold.
+The implemented bridge separates channel ingestion, host execution, and
+agent-facing communication tools. Group replies pass through administrator approval.
 
 ```mermaid
 flowchart LR
@@ -36,7 +37,7 @@ flowchart LR
 ```
 
 - **Connect channels.** Receive platform events through channel adapters, starting
-  with a planned OneBots integration. Telephone and radio require separate media
+  with OneBots using OneBot v11 reverse HTTP. Telephone and radio require separate media
   and session adapters; they are future directions.
 - **Deliver to agents.** Bind channel conversations to Agent Host threads and
   submit input through the Host's supported API. MCP notifications alone do not
@@ -60,18 +61,30 @@ container images yet.
 git clone https://github.com/saurlax/channel-gateway.git
 cd channel-gateway
 make install
+export CHANNEL_GATEWAY_ADMIN_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 make serve
 ```
 
 Open **<http://127.0.0.1:8310>** for the console and
 **<http://127.0.0.1:8310/api/docs>** for the API documentation. The console displays
-live service availability and the planned integrations. It does not connect real
-accounts or route messages yet. Stop the foreground service with `Ctrl+C`.
+separate channel and Agent Host panels, conversation routes, received messages,
+and reply approvals. Management pages use a search toolbar and table; Add and
+row actions open dialogs. Sign in
+with the administrator token you configured. Follow the
+[OneBots and a13n setup guide](docs/onebots-a13n.md) to connect real accounts.
+
+The console follows the browser's language preferences automatically. It supports
+English and Simplified Chinese, choosing the first supported language and falling
+back to English. Chinese language variants currently use Simplified Chinese.
+Channel messages, user-defined names, and identifiers remain in their original
+language.
+Stop the foreground service with `Ctrl+C`.
 
 To run only the backend, without Node.js or pnpm:
 
 ```bash
 uv sync --locked
+export CHANNEL_GATEWAY_ADMIN_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 uv run --locked channel-gateway serve
 ```
 
@@ -79,8 +92,12 @@ The backend exposes `GET /healthz`, `GET /api/v1/status`, and
 `GET /api/openapi.json`. It serves the console only when frontend assets are
 present. Run `uv run channel-gateway serve --help` for listen options.
 
-The initial service binds to loopback and has no authentication; use it for local
-development.
+The service binds to loopback by default. Management requires a bearer token of
+at least 32 characters. Without one, health and status remain available but
+management is disabled. SQLite state defaults to `.channel-gateway/`; set
+`CHANNEL_GATEWAY_DATA_DIR` to a persistent private directory when hosting the service.
+Credentials and message history are stored there, without encryption at rest.
+Use one process and one replica. Expose authenticated endpoints through HTTPS.
 
 ## Develop
 
@@ -88,15 +105,15 @@ Python packages are managed by a uv workspace. The private frontend uses a pnpm
 workspace, with compiled assets bundled into the server package. Node.js is needed
 to build the console, not to run a built Python package.
 
-| Work on | Command |
-| --- | --- |
-| Install locked dependencies | `make install` |
-| Backend with reload | `make dev-api` |
-| Frontend with hot reload | `make dev-web` |
-| Serve the built console and backend | `make serve` |
-| Formatting, lint, and type checks | `make check` |
-| Backend and core tests | `make test` |
-| Console and Python package builds | `make build` |
+| Work on                             | Command        |
+| ----------------------------------- | -------------- |
+| Install locked dependencies         | `make install` |
+| Backend with reload                 | `make dev-api` |
+| Frontend with hot reload            | `make dev-web` |
+| Serve the built console and backend | `make serve`   |
+| Formatting, lint, and type checks   | `make check`   |
+| Backend and core tests              | `make test`    |
+| Console and Python package builds   | `make build`   |
 
 Run `make dev-api` and `make dev-web` in separate terminals. The frontend at
 `http://127.0.0.1:5173` proxies API requests to the backend at
@@ -107,11 +124,14 @@ packages/
   channel-gateway-core/    Reusable channel addresses and text message models
   channel-gateway-server/    FastAPI application, CLI, and optional console assets
 frontend/
-  apps/console/       React + TypeScript + Vite management console
+  apps/console/         React + TypeScript + Vite management console
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and validation and
 [DEVELOPMENT.md](DEVELOPMENT.md) for component boundaries and engineering standards.
+The [specification index](spec/README.md) leads to the accepted architecture,
+channel, access, delivery, and Agent tool contracts. User setup instructions live
+in `docs/`; unresolved designs and plans belong in GitHub Issues.
 
 ## Contribute
 
@@ -126,5 +146,10 @@ For private vulnerability reports, follow [SECURITY.md](SECURITY.md).
 ## License
 
 Channel Gateway is licensed under the [Apache License 2.0](LICENSE).
+
+The console includes MIT-licensed [shadcn/ui](https://github.com/shadcn-ui/ui)
+components and the official [sidebar-07](https://ui.shadcn.com/blocks/sidebar) and
+[login-01](https://ui.shadcn.com/blocks/authentication) blocks. Their license is
+retained in the frontend and bundled assets.
 
 Copyright 2026 Saurlax.

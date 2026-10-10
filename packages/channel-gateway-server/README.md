@@ -1,9 +1,12 @@
 # Channel Gateway Server
 
-FastAPI service, command-line entry point, and optional bundled React console.
-The current foundation exposes process health, implementation status, and API
-documentation. Channel listeners, persistence, MCP tools, and Agent Host delivery
-are not implemented yet.
+FastAPI management service, OneBot v11 ↔ a13n text bridge, SQLite persistence,
+conversation-scoped MCP tools, and a bundled shadcn management console.
+
+See [the bridge setup guide](../../docs/onebots-a13n.md) and the
+[technical contracts](../../spec/README.md). Management needs
+`CHANNEL_GATEWAY_ADMIN_TOKEN` (at least 32 characters). State is stored under
+`CHANNEL_GATEWAY_DATA_DIR`, defaulting to `.channel-gateway`; use one process/replica.
 
 From the repository root, `make serve` builds the console and starts the service.
 `make dev-api` starts the backend without requiring a frontend build. Run

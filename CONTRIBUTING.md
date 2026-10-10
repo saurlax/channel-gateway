@@ -1,11 +1,25 @@
 # Contributing
 
-Channel Gateway is in its foundation stage. Bug reports, focused improvements, and
+Channel Gateway is in its prototype stage. Bug reports, focused improvements, and
 channel or Agent Host integrations are welcome. Search existing
 [issues](https://github.com/saurlax/channel-gateway/issues) before opening a proposal.
 Discuss material changes to routing, identity, delivery guarantees, or adapter
 contracts in an issue before implementation. Small corrections can go directly
 to a pull request.
+
+## Specifications
+
+[spec/README.md](spec/README.md) indexes accepted technical contracts and their
+owners. Keep proposals, alternatives, and unresolved decisions in Issues. When a
+design is accepted, update its owning spec with the implementation, affected
+tests, and user instructions in the same pull request. User-authorized agreed
+designs do not require opening another Issue merely to record the same decision.
+
+Write specs in English with concrete, verifiable behavior. State identity and
+authority boundaries, completion/failure semantics, and compatibility impact
+where relevant. Link to the owning contract instead of copying it into another
+document. Keep setup instructions in `docs/` and engineering standards in
+`DEVELOPMENT.md`. Do not describe unimplemented capabilities as available.
 
 ## Development setup
 
@@ -32,12 +46,16 @@ run `make serve`.
 
 ## Validation
 
-| Change | Required local checks |
-| --- | --- |
-| Python behavior | `make check-python test` |
-| Frontend behavior | `make check-web build-web` |
-| Packaging or dependencies | Affected checks, locked installation, and `make build` |
-| Documentation | Verify commands, relative links, and implementation claims |
+| Change                       | Required local checks                                                            |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| Python behavior              | `make check-python test`                                                         |
+| Frontend behavior            | `make check-web build-web`                                                       |
+| Packaging or dependencies    | Affected checks, locked installation, and `make build`                           |
+| Documentation/specifications | Verify commands, relative links, contract consistency, and implementation claims |
+
+For console language selection and interpolation, run
+`pnpm --dir frontend --filter @channel-gateway/console test`. These tests use the
+built-in Node.js test runner.
 
 `make check test build` validates the complete initial project. Run focused tests
 when they cover the affected behavior; broaden checks when shared contracts or

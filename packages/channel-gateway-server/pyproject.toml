@@ -1,0 +1,35 @@
+[project]
+name = "channel-gateway-server"
+version = "0.0.0"
+description = "Channel Gateway service and bundled management console"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Saurlax" }]
+requires-python = ">=3.13"
+dependencies = [
+    "channel-gateway-core",
+    "click>=8.2,<9",
+    "fastapi>=0.116,<1",
+    "uvicorn>=0.35,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/saurlax/channel-gateway"
+Issues = "https://github.com/saurlax/channel-gateway/issues"
+
+[project.scripts]
+channel-gateway = "channel_gateway_server.cli:main"
+
+[tool.uv.sources]
+channel-gateway-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+artifacts = ["channel_gateway_server/static/**"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["channel_gateway_server"]

@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Frontend
+node_modules/
+*.tsbuildinfo
+packages/channel-gateway-server/channel_gateway_server/static/
+
+# Local configuration and state
+.env
+.env.*
+!.env.example
+.channel-gateway/
+*.db
+*.db-shm
+*.db-wal
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/

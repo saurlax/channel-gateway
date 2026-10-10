@@ -1,0 +1,17 @@
+{
+  "name": "channel-gateway-frontend",
+  "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm run format:check && pnpm -r run check",
+    "build": "pnpm -r run build"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6"
+  }
+}

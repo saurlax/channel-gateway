@@ -9,8 +9,11 @@ authors = [{ name = "Saurlax" }]
 requires-python = ">=3.13"
 dependencies = [
     "channel-gateway-core",
+    "aiosqlite>=0.21,<1",
     "click>=8.2,<9",
     "fastapi>=0.116,<1",
+    "httpx>=0.28,<1",
+    "mcp>=1.26,<2",
     "uvicorn>=0.35,<1",
 ]
 

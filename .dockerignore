@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+.env.*
+.channel-gateway
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/*.tsbuildinfo
+dist
+build
+**/*.sqlite3*
+**/*.db*
+packages/channel-gateway-server/channel_gateway_server/static

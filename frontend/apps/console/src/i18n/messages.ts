@@ -38,6 +38,21 @@ export const chinese = {
   "Only channels can be deleted": "仅支持删除渠道",
   "This route's channel has been deleted": "此路由的渠道已被删除",
   "Channel deleted": "渠道已删除",
+  Overview: "总览",
+  "API {api} / MCP {mcp}": "API {api} / MCP {mcp}",
+  "{count} enabled": "已启用 {count}",
+  "Recent messages": "近期消息",
+  "Latest 100": "最近 100 条",
+  "Gateway activity": "网关活动",
+  "Needs attention": "待处理事项",
+  "Latest 100 per list": "消息 / 回复各最近 100 条",
+  "Replies blocked or unconfirmed": "回复受阻 / 结果不明",
+  "Messages without a route": "消息未匹配路由",
+  "Messages failed or blocked": "消息失败 / 受阻",
+  "View all messages": "查看全部消息",
+  "Last refreshed: {time}": "上次刷新：{time}",
+  "No messages yet.": "暂无消息。",
+
   "Use this token as an MCP bearer credential. It is shown once and grants access to this route. All-conversation routes include their concrete conversations.":
     "将此令牌作为 MCP Bearer 凭证。令牌仅显示一次，授予此路由的访问权限；任意会话路由包含其已接收的具体会话。",
   "All conversations": "任意会话",
@@ -57,10 +72,6 @@ export const chinese = {
     "保留 Agent 已配置的工具权限，仅作用于此路由，不授予网关管理员权限。",
   "Limit connection tools to those assigned to this route.": "仅使用分配给此路由的连接工具。",
   "Choose a received conversation": "选择已收到消息的会话",
-  "Received channel messages, including conversations without a route. Refreshes every five seconds.":
-    "显示收到的渠道消息，包括尚未配置路由的会话，每五秒刷新一次。",
-  "No messages yet. Send a message to a connected channel to discover its sender ID.":
-    "暂无消息。向已连接的渠道发一条消息，即可查看发送者 ID。",
   "Use the sender and conversation IDs from this received message.":
     "使用此消息中的发送者和会话 ID 创建路由。",
   unmatched: "未匹配路由",
@@ -206,8 +217,6 @@ export const chinese = {
   Platform: "管理平台",
   "Unable to sign in.": "无法登录。",
   "Sign in to Channel Gateway": "登录 Channel Gateway",
-  "Manage your channels, access rules, and agent conversations.":
-    "管理渠道、访问规则和 Agent 会话。",
 
   "Signing in…": "正在登录…",
   "Sign in": "登录",

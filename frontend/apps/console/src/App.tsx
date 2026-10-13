@@ -21,8 +21,11 @@ import { Routes } from "@/components/routes";
 import { Events } from "@/components/events";
 import { ManagementDialog } from "@/components/management";
 import { Empty, FormField } from "@/components/form-controls";
+import { Dashboard } from "@/components/dashboard";
+import { useMessageActivity } from "@/hooks/use-message-activity";
 
 const titles: Record<string, MessageKey> = {
+  overview: "Overview",
   channels: "Channels",
   hosts: "Agent hosts",
   routes: "Routes & access",
@@ -30,7 +33,7 @@ const titles: Record<string, MessageKey> = {
 };
 function readPage() {
   const hash = location.hash.slice(1);
-  return Object.hasOwn(titles, hash) ? hash : "channels";
+  return Object.hasOwn(titles, hash) ? hash : "overview";
 }
 const empty: Snapshot = { connections: [], routes: [], events: [], replies: [] };
 export function App() {
@@ -46,6 +49,8 @@ export function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState("");
+  const activity = useMessageActivity(snapshot.events, loaded && !!csrfToken);
   const [capability, setCapability] = useState("");
   const [capabilityLabel, setCapabilityLabel] = useState("");
   const refresh = useCallback(async () => {
@@ -56,6 +61,7 @@ export function App() {
       api<Snapshot["replies"]>(csrfToken, "replies"),
     ]);
     setSnapshot({ connections, routes, events, replies });
+    setUpdatedAt(new Date().toISOString());
     setLoaded(true);
   }, [csrfToken]);
   useEffect(() => {
@@ -183,7 +189,7 @@ export function App() {
       <AppSidebar onLogout={() => void logout()} page={page} />
       <SidebarInset className="min-w-0">
         {/* Header and content layout from the official sidebar-07 block. */}
-        <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
@@ -198,7 +204,7 @@ export function App() {
             </Breadcrumb>
           </div>
         </header>
-        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+        <div className="flex flex-1 flex-col gap-5 p-4 md:p-6">
           <div className="flex items-center justify-between gap-4">
             <h1 className="text-2xl font-semibold">{t(titles[page])}</h1>
             <Button
@@ -252,6 +258,9 @@ export function App() {
             <Empty>{t("Loading gateway configuration…")}</Empty>
           ) : (
             <>
+              {page === "overview" && (
+                <Dashboard snapshot={snapshot} activity={activity} updatedAt={updatedAt} />
+              )}
               {(page === "channels" || page === "hosts") && (
                 <Connections
                   key={page}
@@ -278,6 +287,7 @@ export function App() {
                 <Events
                   snapshot={snapshot}
                   csrfToken={csrfToken}
+                  newEventIds={activity.received}
                   action={action}
                   busy={busy}
                   error={error}

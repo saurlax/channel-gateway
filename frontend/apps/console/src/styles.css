@@ -1,4 +1,4 @@
-/* Official shadcn neutral theme: https://ui.shadcn.com/r/colors/neutral.json */
+/* Signal theme: shadcn semantic tokens with a jade accent and neutral surfaces. */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -7,71 +7,71 @@
 
 :root {
   --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --foreground: #1b2724;
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: #1b2724;
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --popover-foreground: #1b2724;
+  --primary: #087d68;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f3;
+  --secondary-foreground: #1b2724;
+  --muted: #f1f5f3;
+  --muted-foreground: #61736c;
+  --accent: #e6f5ef;
+  --accent-foreground: #086b59;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --border: #e2e9e5;
+  --input: #d5dfd9;
+  --ring: #087d68;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: #f7f9f8;
+  --sidebar-foreground: #1b2724;
+  --sidebar-primary: #087d68;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e6f5ef;
+  --sidebar-accent-foreground: #086b59;
+  --sidebar-border: #e2e9e5;
+  --sidebar-ring: #087d68;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: #151918;
+  --foreground: #eef6f2;
+  --card: #1a201e;
+  --card-foreground: #eef6f2;
+  --popover: #1a201e;
+  --popover-foreground: #eef6f2;
+  --primary: #63d8bc;
+  --primary-foreground: #10231c;
+  --secondary: #25312c;
+  --secondary-foreground: #eef6f2;
+  --muted: #25312c;
+  --muted-foreground: #a7bab1;
+  --accent: #203e33;
+  --accent-foreground: #8de4cb;
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --border: #34443b;
+  --input: #42574b;
+  --ring: #63d8bc;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar: #1a201e;
+  --sidebar-foreground: #eef6f2;
+  --sidebar-primary: #63d8bc;
+  --sidebar-primary-foreground: #10231c;
+  --sidebar-accent: #203e33;
+  --sidebar-accent-foreground: #8de4cb;
+  --sidebar-border: #34443b;
+  --sidebar-ring: #63d8bc;
 }
 
 @theme inline {
@@ -118,5 +118,66 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* One-shot feedback for newly observed messages, never an ambient activity loop. */
+.signal-track {
+  position: relative;
+  height: 1px;
+  min-width: 0.5rem;
+  flex: 1;
+  background: var(--border);
+}
+
+.signal-packet {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: signal-travel 1.2s ease-in-out both;
+}
+
+.signal-new-message {
+  animation: signal-arrive 1.8s ease-out both;
+}
+
+@keyframes signal-travel {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    left: calc(100% - 7px);
+    opacity: 0;
+  }
+}
+
+@keyframes signal-arrive {
+  from {
+    background-color: var(--accent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signal-packet {
+    display: none;
+    animation: none;
+  }
+  .signal-new-message {
+    animation: none;
+    background-color: var(--accent);
   }
 }

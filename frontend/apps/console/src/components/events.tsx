@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { useLocale } from "@/i18n";
 import { RouteForm, type RouteSource } from "@/components/routes";
-import { conversations, type Conversation } from "@/conversations";
+import {
+  conversations,
+  conversationKey,
+  eventAddress,
+  sourceFromAddress,
+  type Conversation,
+} from "@/conversations";
 import type { Snapshot } from "@/api";
 import type { Action } from "@/components/form-controls";
 import { ConversationDialog } from "@/components/conversation-history";
@@ -26,6 +32,7 @@ import {
 export function Events({
   snapshot,
   csrfToken,
+  newEventIds,
   action,
   busy,
   error,
@@ -33,6 +40,7 @@ export function Events({
 }: {
   snapshot: Snapshot;
   csrfToken: string;
+  newEventIds: string[];
   action: Action;
   busy: boolean;
   error: string;
@@ -43,6 +51,15 @@ export function Events({
   const [selected, setSelected] = useState<Conversation | null>(null);
   const [routeSource, setRouteSource] = useState<RouteSource | null>(null);
   const groups = conversations(snapshot);
+  const newConversations = new Set(
+    snapshot.events
+      .filter((event) => newEventIds.includes(event.id))
+      .flatMap((event) => {
+        const address = eventAddress(snapshot, event);
+        const source = address && sourceFromAddress(address);
+        return source ? [conversationKey(source)] : [];
+      }),
+  );
   const channelName = (id: string) =>
     snapshot.connections.find((item) => item.id === id)?.name ?? id;
   const rows = groups.filter((group) =>
@@ -58,11 +75,6 @@ export function Events({
   const conversation = groups.find((group) => group.key === selected?.key) ?? selected;
   return (
     <div className="grid grid-cols-1 gap-4">
-      <p className="text-sm text-muted-foreground">
-        {t(
-          "Channel conversations with received messages and agent replies. Refreshes every five seconds.",
-        )}
-      </p>
       <ListToolbar query={query} onQueryChange={setQuery} label={t("Search messages…")} />
       <TableFrame>
         <Table>
@@ -78,13 +90,14 @@ export function Events({
           <TableBody>
             {rows.length === 0 ? (
               <EmptyRow columns={5} filtered={!!query.trim()}>
-                {t(
-                  "No messages yet. Send a message to a connected channel to discover its sender ID.",
-                )}
+                {t("No conversations yet.")}
               </EmptyRow>
             ) : (
               rows.map((group) => (
-                <TableRow key={group.key}>
+                <TableRow
+                  key={group.key}
+                  className={newConversations.has(group.key) ? "signal-new-message" : undefined}
+                >
                   <TableCell className="max-w-48 whitespace-normal">
                     <p className="font-medium">
                       {group.route?.name ?? group.name ?? channelName(group.source.channel_id)}

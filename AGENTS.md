@@ -32,6 +32,12 @@ those stages only when the user has authorized them.
 
 ## Console management interfaces
 
+- Keep interface copy concise, formal, and precise. Prefer short resource labels,
+  status labels, and action names. Do not add introductory paragraphs, demo or
+  presentation copy, animation explanations, or implementation commentary to
+  product pages. Keep essential data scope and status distinctions in compact
+  labels; retain guidance needed for credentials, permissions, and destructive
+  actions.
 - Do not use middle-dot separators in interface copy. Use clear labels or
   separate lines. Channel type labels use plain QQ and localized Weixin names,
   or OneBot followed by its transport. Do not wrap channel types or transports

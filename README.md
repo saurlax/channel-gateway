@@ -74,9 +74,13 @@ make serve
 ```
 
 Open **<http://127.0.0.1:8310>** for the console and
-**<http://127.0.0.1:8310/api/docs>** for the API documentation. The console displays
-separate channel and Agent Host panels, conversation routes, and conversation histories with received messages and
-Agent replies. Management pages use a search toolbar and table; Add and
+**<http://127.0.0.1:8310/api/docs>** for the API documentation. The console opens on
+an overview dashboard with configuration counts, recent message states, attention
+items, and recent messages. Message and reply summaries cover the latest 100
+records of each type, not lifetime totals. Route counts exclude automatically
+created conversation children. It also provides separate channel and Agent Host
+panels, conversation routes, and conversation histories with received messages
+and Agent replies. Management pages use a search toolbar and table; Add and
 row actions open dialogs. Sign in
 with the account and password you configured. Follow the
 [OneBots and a13n setup guide](docs/onebots-a13n.md) or the
@@ -88,7 +92,11 @@ The console follows the browser's language preferences automatically. It support
 English and Simplified Chinese, choosing the first supported language and falling
 back to English. Chinese language variants currently use Simplified Chinese.
 Channel messages, user-defined names, and identifiers remain in their original
-language.
+language. The Signal theme uses jade accents with neutral surfaces. As the console
+refreshes, new messages briefly highlight and the overview connection line indicates
+newly observed incoming messages or Host acceptance. This is refresh feedback, not a
+live connection monitor or proof that an agent run has finished. Initial history
+does not animate; reduced-motion preferences replace motion with static highlights.
 Stop the foreground service with `Ctrl+C`.
 
 To run only the backend, without Node.js or pnpm:

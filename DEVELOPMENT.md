@@ -72,6 +72,17 @@ its resource type and creates only that type. Sidebar navigation uses static
 Gateway and Activity group labels with direct links below them; do not add
 collapsible group buttons or an additional Platform heading.
 
+The default Overview page summarizes configuration and the latest activity window.
+Keep the animated gateway connection line on Overview only, not on resource or
+activity management pages. Label bounded message/reply counts as recent records;
+count configured routes separately from automatically created child routes.
+
+Interface copy is concise, formal, and precise. Use short labels for resources,
+states, actions, and data scope. Omit introductory paragraphs, demo or presentation
+copy, animation explanations, and implementation commentary from product pages.
+Keep instructions that users need to enter credentials, choose permissions, or
+confirm destructive actions and destination authorization.
+
 Use a search toolbar followed by a table for channels, hosts, routes, and message
 conversations. Incoming messages and Agent replies share the same chronological
 conversation history, opened only from the Messages panel. Route rows have one
@@ -93,9 +104,18 @@ and adapt the closest existing block's layout and interaction design. Retain its
 standard spacing, typography, component variants, and action placement. When no
 block covers the interaction, follow the [official component examples](https://ui.shadcn.com/docs/components):
 form actions use Dialog footers and destructive confirmation uses Alert Dialog.
-Keep the neutral theme and limit custom styling to necessary product and
+Keep neutral surfaces and limit custom styling to necessary product and
 responsive adjustments; do not invent a custom design when an official pattern
-fits. Interface copy must not use middle-dot separators; use clear labels,
+fits.
+
+The Signal theme uses jade semantic tokens for primary actions, focus, and active
+navigation on neutral surfaces. Keep destructive feedback distinct from the brand
+color. Message feedback is brief and driven by changes observed during refresh;
+initial history and unchanged polls must not animate. Host-side motion requires
+observed `submitted` or `completed` input, never generic MCP `available` state.
+Honor `prefers-reduced-motion` with static feedback.
+
+Interface copy must not use middle-dot separators; use clear labels,
 or separate lines. Channel types use plain QQ and localized Weixin names, or
 OneBot followed by its transport, without parentheses. Dialogs need an accessible title and description, keyboard dismissal,
 focus restoration, inline errors, and a scrollable form on small screens. Preserve

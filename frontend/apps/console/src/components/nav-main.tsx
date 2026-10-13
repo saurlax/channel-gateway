@@ -31,7 +31,11 @@ export function NavMain({
               {group.items.map((item) => (
                 <SidebarMenuItem key={item.url}>
                   <SidebarMenuButton asChild isActive={item.url === activeUrl} tooltip={item.title}>
-                    <a href={item.url} onClick={() => isMobile && setOpenMobile(false)}>
+                    <a
+                      href={item.url}
+                      aria-current={item.url === activeUrl ? "page" : undefined}
+                      onClick={() => isMobile && setOpenMobile(false)}
+                    >
                       <item.icon />
                       <span>{item.title}</span>
                     </a>

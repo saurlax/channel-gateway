@@ -2,14 +2,14 @@
 
 import asyncio
 import hmac
-import json
 import sqlite3
 from contextlib import asynccontextmanager, suppress
 from importlib.metadata import version
 from pathlib import Path
+from typing import Literal
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,7 @@ from .adapters import AdapterError, HttpAdapters, onebot_message, verified_signa
 from .auth import AdministratorAuth
 from .bridge import Bridge
 from .channels.common import event_object
+from .channels.ingress import ProjectionError, begin_event, event_type, ingest_event
 from .channels.manager import ChannelManager, capabilities, transport
 from .channels.qq import qq_message, validation_response, verify_callback
 from .mcp_tools import RouteAuthorization, create_mcp
@@ -25,8 +26,8 @@ from .models import (
     AdministratorLogin,
     ConnectionInput,
     ConnectionSecrets,
+    Identifier,
     LoginPoll,
-    ReplyInput,
     RouteInput,
     RouteUpdate,
     Settings,
@@ -233,6 +234,23 @@ def create_app(
             await channels.restart(row)
         return connection_view(row)
 
+    @app.delete("/api/v1/connections/{connection_id}")
+    async def delete_connection(connection_id: str, _admin: None = Depends(admin)) -> dict:
+        async with channels.login_locks.setdefault(connection_id, asyncio.Lock()):
+            row = await store.connection(connection_id)
+            if row is None:
+                raise HTTPException(404, "Connection not found")
+            await channels.stop(connection_id)
+            if not await store.delete_connection(connection_id, row):
+                current = await store.connection(connection_id)
+                if current:
+                    await channels.restart(current)
+                raise HTTPException(409, "Connection changed; refresh before editing")
+            channels.logins.pop(connection_id, None)
+            channels.states.pop(connection_id, None)
+        bridge.wake.set()
+        return {"id": connection_id}
+
     def validate_host_route(host: dict, body: RouteInput) -> None:
         if host["kind"] == "mcp":
             if body.agent_id or body.mcp_connection_id or body.reply_source != "mcp":
@@ -269,13 +287,24 @@ def create_app(
             route, token = await store.add_route(body.model_dump())
         except sqlite3.IntegrityError:
             raise HTTPException(409, "This conversation or MCP connection already has a route") from None
+        except ValueError:
+            raise HTTPException(409, "Connection changed; refresh before editing") from None
         return {**route, "agent_token": token}
+
+    @app.delete("/api/v1/routes/{route_id}")
+    async def delete_route(route_id: str, _admin: None = Depends(admin)) -> dict:
+        if not await store.delete_route(route_id):
+            raise HTTPException(404, "Route not found")
+        bridge.wake.set()
+        return {"id": route_id}
 
     @app.patch("/api/v1/routes/{route_id}")
     async def change_route(route_id: str, body: RouteUpdate, _admin: None = Depends(admin)) -> dict:
         row = await store.route(route_id)
         if row is None:
             raise HTTPException(404, "Route not found")
+        if not await store.connection(row["channel_id"]):
+            raise HTTPException(409, "This route's channel has been deleted")
         updates = body.model_dump(exclude_unset=True)
         if any(
             key in updates and updates[key] != row.get(key)
@@ -329,18 +358,25 @@ def create_app(
     async def replies(_admin: None = Depends(admin)) -> list[dict]:
         return await store.replies()
 
-    @app.post("/api/v1/replies/{reply_id}/approve")
-    async def approve(reply_id: str, body: ReplyInput, _admin: None = Depends(admin)) -> dict:
-        if not await store.decide(reply_id, approve=True, text=body.text):
-            raise HTTPException(409, "Only an existing draft can be approved")
-        bridge.wake.set()
-        return {"state": "approved"}
-
-    @app.post("/api/v1/replies/{reply_id}/reject")
-    async def reject(reply_id: str, _admin: None = Depends(admin)) -> dict:
-        if not await store.decide(reply_id, approve=False):
-            raise HTTPException(409, "Only an existing draft can be rejected")
-        return {"state": "rejected"}
+    @app.get("/api/v1/history")
+    async def conversation_history(
+        channel_id: Identifier,
+        conversation_kind: Literal["private", "group"],
+        conversation_id: Identifier,
+        limit: int = Query(default=100, ge=1, le=100),
+        before_created_at: str | None = Query(default=None, max_length=64),
+        before_id: Identifier | None = None,
+        _admin: None = Depends(admin),
+    ) -> dict:
+        if (before_created_at is None) != (before_id is None):
+            raise HTTPException(422, "Provide both history cursor fields")
+        return await store.conversation_history(
+            channel_id,
+            f"{conversation_kind}:{conversation_id}",
+            limit=limit,
+            before_created_at=before_created_at,
+            before_id=before_id,
+        )
 
     @app.post("/api/v1/events/{event_id}/retry")
     async def retry(event_id: str, _admin: None = Depends(admin)) -> dict:
@@ -361,13 +397,11 @@ def create_app(
         if not verified_signature(raw, request.headers.get("x-signature", ""), connection["webhook_secret"]):
             raise HTTPException(401, "Invalid event signature")
         try:
-            event = json.loads(raw)
-            if not isinstance(event, dict):
-                raise ValueError("Expected an event object")
-            message = onebot_message(event, connection)
-        except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+            return await ingest_event(
+                store, connection, raw, bridge.ingest, lambda event: (onebot_message(event, connection), None)
+            )
+        except ProjectionError:
             raise HTTPException(422, "Invalid OneBot text event") from None
-        return await bridge.ingest(connection, message)
 
     @app.post("/api/v1/hooks/qq/{connection_id}")
     async def receive_qq(connection_id: str, request: Request) -> dict:
@@ -376,9 +410,18 @@ def create_app(
             raise HTTPException(409, "This channel does not receive HTTP callbacks")
         raw = await event_bytes(request)
         try:
-            event = event_object(raw)
+            # Validation challenges have no signature; only well-formed challenges
+            # are retained, independently of authenticated message events.
+            try:
+                event = event_object(raw)
+            except (ValueError, TypeError):
+                event = {}
             if event.get("op") == 13:
-                return validation_response(event, connection["app_secret"])
+                response = validation_response(event, connection["app_secret"])
+                identifier, _ = await begin_event(store, connection, raw)
+                if identifier:
+                    await store.finish_channel_event(identifier, "validation", event_type=event_type(event))
+                return response
             if not verify_callback(
                 raw,
                 request.headers.get("x-signature-timestamp", ""),
@@ -386,7 +429,9 @@ def create_app(
                 connection["app_secret"],
             ):
                 raise HTTPException(401, "Invalid event signature")
-            await bridge.ingest(connection, qq_message(event, connection))
+            await ingest_event(
+                store, connection, raw, bridge.ingest, lambda event: (qq_message(event, connection), None)
+            )
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
             raise HTTPException(422, "Invalid QQ text event") from None
         # Confirm durable ingestion before acknowledging; Agent execution is asynchronous.

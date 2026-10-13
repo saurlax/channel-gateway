@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS routes (
  value TEXT NOT NULL, token_hash TEXT NOT NULL, thread_id TEXT,
  UNIQUE(channel_id, kind, conversation_id)
 );
+CREATE TABLE IF NOT EXISTS archived_routes (
+ id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, kind TEXT NOT NULL, conversation_id TEXT NOT NULL,
+ value TEXT NOT NULL, thread_id TEXT
+);
 CREATE TABLE IF NOT EXISTS events (
  id TEXT PRIMARY KEY, route_id TEXT NOT NULL, message TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued',
  target TEXT, body TEXT, thread_id TEXT, entry_id TEXT, run_id TEXT,
@@ -25,15 +29,23 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE TABLE IF NOT EXISTS replies (
  id TEXT PRIMARY KEY, route_id TEXT NOT NULL, event_id TEXT UNIQUE, text TEXT NOT NULL,
- state TEXT NOT NULL DEFAULT 'draft', message_id TEXT, error TEXT,
+ state TEXT NOT NULL DEFAULT 'queued', message_id TEXT, error TEXT,
  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE TABLE IF NOT EXISTS automatic_replies (reply_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS observations (
  id TEXT PRIMARY KEY, message TEXT NOT NULL, state TEXT NOT NULL, error TEXT NOT NULL,
  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS event_route ON events(route_id, created_at);
+CREATE INDEX IF NOT EXISTS observation_conversation ON observations(
+ json_extract(message,'$.address.account_id'), json_extract(message,'$.address.conversation_id'), created_at, id
+);
+CREATE TABLE IF NOT EXISTS channel_events (
+ id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, transport TEXT NOT NULL, payload BLOB NOT NULL,
+ event_type TEXT, state TEXT NOT NULL DEFAULT 'received', message_event_id TEXT, error TEXT,
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS channel_event_account ON channel_events(channel_id, created_at);
 CREATE TABLE IF NOT EXISTS channel_state (
  connection_id TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL,
  PRIMARY KEY(connection_id, name)
@@ -68,6 +80,13 @@ class Store:
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA journal_mode=WAL")
         await self.db.executescript(SCHEMA)
+        # Retire approval settings without sending historical unreviewed content.
+        async with self.transaction() as db:
+            await db.execute("UPDATE routes SET value=json_remove(value,'$.auto_reply')")
+            await db.execute("UPDATE replies SET state='queued' WHERE state='approved'")
+            await db.execute(
+                "UPDATE replies SET state='blocked',error='Legacy draft retired; send a new message' WHERE state='draft'"
+            )
         # A request interrupted during delivery might already have taken effect.
         await self.db.execute(
             "UPDATE replies SET state='unknown', error='Delivery interrupted; verify in the channel' WHERE state='sending'"
@@ -119,6 +138,41 @@ class Store:
         async with self.transaction() as db:
             await db.execute("DELETE FROM channel_state WHERE connection_id=?", (connection_id,))
 
+    async def archive_channel_event(self, connection: dict, payload: bytes) -> str | None:
+        """Retain each authenticated arrival before projection or route selection."""
+        identifier = new_id("recv")
+        mode = (
+            connection.get("transport")
+            or {"qq": "websocket", "weixin": "polling", "onebots": "http_reverse"}[connection["kind"]]
+        )
+        async with self.transaction() as db:
+            async with db.execute("SELECT value FROM connections WHERE id=?", (connection["id"],)) as cursor:
+                row = await cursor.fetchone()
+            current = json.loads(row[0]) if row else None
+            keys = ("kind", "transport", "api_url", "token", "webhook_secret", "app_id", "app_secret")
+            if not current or any(current.get(key) != connection.get(key) for key in keys):
+                return None
+            await db.execute(
+                "INSERT INTO channel_events(id,channel_id,transport,payload) VALUES (?,?,?,?)",
+                (identifier, connection["id"], mode, payload),
+            )
+        return identifier
+
+    async def finish_channel_event(
+        self,
+        identifier: str,
+        state: str,
+        *,
+        event_type: str | None = None,
+        message_event_id: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        async with self.transaction() as db:
+            await db.execute(
+                "UPDATE channel_events SET state=?,event_type=?,message_event_id=?,error=? WHERE id=?",
+                (state, event_type, message_event_id, error, identifier),
+            )
+
     async def add_connection(self, value: dict) -> dict:
         value = {**value, "id": new_id("conn")}
         async with self.transaction() as db:
@@ -148,13 +202,20 @@ class Store:
         return value
 
     async def routes(self) -> list[dict]:
-        routes = [self.route_view(row) for row in await self.rows("SELECT * FROM routes ORDER BY id")]
+        rows = await self.rows(
+            "SELECT r.*,EXISTS(SELECT 1 FROM connections c WHERE c.id=r.channel_id) "
+            "AND EXISTS(SELECT 1 FROM connections h WHERE h.id=json_extract(r.value,'$.host_id')) AS channel_present "
+            "FROM routes r ORDER BY r.id"
+        )
+        routes = [self.route_view(row) for row in rows]
+        for route, row in zip(routes, rows, strict=True):
+            route["enabled"] = route["enabled"] and bool(row["channel_present"])
         parents = {row["id"]: row for row in routes}
         for row in routes:
             if row["parent_route_id"]:
                 parent = parents.get(row["parent_route_id"])
                 if parent:
-                    for key in ("sender_policy", "allowed_user_ids", "access_mode", "auto_reply", "reply_source"):
+                    for key in ("sender_policy", "allowed_user_ids", "access_mode", "reply_source"):
                         row[key] = parent[key]
                     row["enabled"] = row["enabled"] and parent["enabled"]
                 else:
@@ -172,6 +233,12 @@ class Store:
         value = {**value, "id": new_id("route")}
         token = secrets.token_urlsafe(32)
         async with self.transaction() as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM connections WHERE id IN (?,?)", (value["channel_id"], value["host_id"])
+            ) as cursor:
+                found = await cursor.fetchone()
+                if found is None or found[0] != 2:
+                    raise ValueError("Route connections no longer exist")
             await db.execute(
                 "INSERT INTO routes (id,channel_id,kind,conversation_id,value,token_hash) VALUES (?,?,?,?,?,?)",
                 (
@@ -193,6 +260,10 @@ class Store:
         value = {**parent, "id": new_id("route"), "conversation_id": conversation_id, "parent_route_id": parent["id"]}
         value.pop("thread_id", None)
         async with self.transaction() as db:
+            async with db.execute("SELECT value FROM routes WHERE id=?", (parent["id"],)) as cursor:
+                current = await cursor.fetchone()
+                if current is None or not json.loads(current[0])["enabled"]:
+                    raise ValueError("All-conversation route is no longer enabled")
             await db.execute(
                 "INSERT OR IGNORE INTO routes (id,channel_id,kind,conversation_id,value,token_hash) VALUES (?,?,?,?,?,?)",
                 (
@@ -219,9 +290,34 @@ class Store:
                 (identifier, json.dumps(message), state, error, identifier),
             )
 
+    async def materialize_observed_routes(self, parent: dict) -> None:
+        """Give previously received authorized conversations concrete MCP handles."""
+        sender_filter = ""
+        params: tuple = (parent["channel_id"], parent["conversation_kind"])
+        if parent.get("sender_policy", "allowlist") != "any":
+            sender_filter = " AND json_extract(o.message,'$.sender_id') IN (SELECT value FROM json_each(?))"
+            params += (json.dumps(parent["allowed_user_ids"]),)
+        rows = await self.rows(
+            """SELECT DISTINCT substr(json_extract(o.message,'$.address.conversation_id'),instr(json_extract(o.message,'$.address.conversation_id'),':')+1) AS conversation_id
+            FROM observations o WHERE json_extract(o.message,'$.address.account_id')=?
+            AND substr(json_extract(o.message,'$.address.conversation_id'),1,instr(json_extract(o.message,'$.address.conversation_id'),':')-1)=?
+            AND NOT EXISTS(SELECT 1 FROM routes r WHERE r.channel_id=json_extract(o.message,'$.address.account_id')
+                AND r.kind||':'||r.conversation_id=json_extract(o.message,'$.address.conversation_id'))"""
+            + sender_filter,
+            params,
+        )
+        for row in rows:
+            await self.conversation_route(parent, row["conversation_id"])
+
     async def update_route(self, identifier: str, value: dict, expected: dict) -> bool:
         expected = {key: item for key, item in expected.items() if key != "thread_id"}
         async with self.transaction() as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM connections WHERE id IN (?,?)", (value["channel_id"], value["host_id"])
+            ) as cursor:
+                found = await cursor.fetchone()
+                if found is None or found[0] != 2:
+                    return False
             async with db.execute("SELECT * FROM routes WHERE id=?", (identifier,)) as cursor:
                 row = await cursor.fetchone()
             if (
@@ -240,6 +336,65 @@ class Store:
             )
             return cursor.rowcount == 1
 
+    async def delete_connection(self, identifier: str, expected: dict) -> bool:
+        async with self.transaction() as db:
+            cursor = await db.execute(
+                "DELETE FROM connections WHERE id=? AND value=?",
+                (identifier, json.dumps(expected)),
+            )
+            if not cursor.rowcount:
+                return False
+            await db.execute(
+                "UPDATE routes SET value=json_set(value,'$.enabled',json('false')) "
+                "WHERE channel_id=? OR json_extract(value,'$.host_id')=?",
+                (identifier, identifier),
+            )
+            await db.execute(
+                "UPDATE events SET state='blocked',error='Connection deleted' WHERE route_id IN "
+                "(SELECT id FROM routes WHERE channel_id=? OR json_extract(value,'$.host_id')=?) "
+                "AND state IN ('queued','submitted')",
+                (identifier, identifier),
+            )
+            await db.execute(
+                "UPDATE replies SET state='blocked',error='Connection deleted' WHERE route_id IN "
+                "(SELECT id FROM routes WHERE channel_id=? OR json_extract(value,'$.host_id')=?) AND state='queued'",
+                (identifier, identifier),
+            )
+            await db.execute("DELETE FROM channel_state WHERE connection_id=?", (identifier,))
+            await db.execute("DELETE FROM host_keys WHERE host_id=?", (identifier,))
+            return True
+
+    async def delete_route(self, identifier: str) -> bool:
+        async with self.transaction() as db:
+            async with db.execute("SELECT id FROM routes WHERE id=?", (identifier,)) as cursor:
+                if await cursor.fetchone() is None:
+                    return False
+            selection = "id=? OR json_extract(value,'$.parent_route_id')=?"
+            params = (identifier, identifier)
+            await db.execute(
+                "INSERT INTO archived_routes SELECT id,channel_id,kind,conversation_id,value,thread_id "
+                "FROM routes WHERE " + selection,
+                params,
+            )
+            await db.execute(
+                "UPDATE events SET state='blocked',error='Route deleted' WHERE state IN ('queued','submitted') "
+                "AND route_id IN (SELECT id FROM routes WHERE " + selection + ")",
+                params,
+            )
+            await db.execute(
+                "UPDATE replies SET state='blocked',error='Route deleted' WHERE state='queued' "
+                "AND route_id IN (SELECT id FROM routes WHERE " + selection + ")",
+                params,
+            )
+            await db.execute(
+                "DELETE FROM channel_state WHERE EXISTS(SELECT 1 FROM routes r WHERE "
+                "(r.id=? OR json_extract(r.value,'$.parent_route_id')=?) "
+                "AND r.channel_id=channel_state.connection_id AND channel_state.name='context:'||r.kind||':'||r.conversation_id)",
+                params,
+            )
+            await db.execute("DELETE FROM routes WHERE " + selection, params)
+            return True
+
     async def rotate_token(self, identifier: str) -> str:
         token = secrets.token_urlsafe(32)
         async with self.transaction() as db:
@@ -249,8 +404,11 @@ class Store:
     async def ingest(self, identifier: str, route_id: str, message: dict, context: dict | None = None) -> bool:
         async with self.transaction() as db:
             cursor = await db.execute(
-                "INSERT OR IGNORE INTO events(id,route_id,message) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM observations WHERE id=?)",
-                (identifier, route_id, json.dumps(message), identifier),
+                "INSERT OR IGNORE INTO events(id,route_id,message) SELECT ?,?,? "
+                "WHERE NOT EXISTS (SELECT 1 FROM observations WHERE id=?) "
+                "AND EXISTS (SELECT 1 FROM connections WHERE id=?) "
+                "AND EXISTS (SELECT 1 FROM routes WHERE id=? AND json_extract(value,'$.enabled')=1)",
+                (identifier, route_id, json.dumps(message), identifier, message["address"]["account_id"], route_id),
             )
             if context and cursor.rowcount == 1:
                 await db.execute(
@@ -288,11 +446,26 @@ class Store:
         return rows[0]
 
     async def events(self, *, route_id: str | None = None, limit: int = 100) -> list[dict]:
-        where = " WHERE route_id=?" if route_id else ""
+        where = " WHERE e.route_id=?" if route_id else ""
         params = (route_id, limit) if route_id else (limit,)
-        rows = await self.rows("SELECT * FROM events" + where + " ORDER BY rowid DESC LIMIT ?", params)
+        rows = await self.rows(
+            "SELECT e.*,COALESCE(r.channel_id,a.channel_id) AS source_channel,"
+            "COALESCE(r.kind,a.kind) AS source_kind,COALESCE(r.conversation_id,a.conversation_id) AS source_conversation,"
+            "json_extract(COALESCE(r.value,a.value),'$.name') AS route_name FROM events e "
+            "LEFT JOIN routes r ON r.id=e.route_id LEFT JOIN archived_routes a ON a.id=e.route_id"
+            + where
+            + " ORDER BY e.rowid DESC LIMIT ?",
+            params,
+        )
         for row in rows:
             row["message"] = json.loads(row["message"])
+            channel = row.pop("source_channel")
+            kind = row.pop("source_kind")
+            conversation = row.pop("source_conversation")
+            if channel and conversation != "*":
+                row["message"].setdefault(
+                    "address", {"account_id": channel, "conversation_id": f"{kind}:{conversation}"}
+                )
             row.pop("body")
             row.pop("target")
         if route_id is None:
@@ -308,6 +481,72 @@ class Store:
         return await self.rows("""SELECT e.* FROM events e WHERE e.state IN ('queued','submitted') AND NOT EXISTS (
             SELECT 1 FROM events older WHERE older.route_id=e.route_id AND older.state IN ('queued','submitted')
             AND older.rowid<e.rowid) ORDER BY e.rowid LIMIT 100""")
+
+    async def received_messages(self, route: dict, *, limit: int = 20) -> list[dict]:
+        """Read source history under current access, independently of past delivery."""
+        params: tuple = (route["id"], route["channel_id"], f"{route['conversation_kind']}:{route['conversation_id']}")
+        sender_filter = ""
+        if route.get("sender_policy", "allowlist") != "any":
+            sender_filter = " AND json_extract(message,'$.sender_id') IN (SELECT value FROM json_each(?))"
+            params += (json.dumps(route["allowed_user_ids"]),)
+        rows = await self.rows(
+            """WITH received AS (
+                SELECT e.id,e.message,e.created_at,
+                    COALESCE(json_extract(e.message,'$.address.account_id'),r.channel_id) AS channel_id,
+                    COALESCE(json_extract(e.message,'$.address.conversation_id'),r.kind||':'||r.conversation_id) AS conversation_id
+                FROM events e JOIN routes r ON r.id=e.route_id WHERE e.route_id=?
+                UNION ALL
+                SELECT id,message,created_at,json_extract(message,'$.address.account_id'),
+                    json_extract(message,'$.address.conversation_id') FROM observations
+            ) SELECT message,channel_id,conversation_id FROM received WHERE channel_id=? AND conversation_id=?"""
+            + sender_filter
+            + " ORDER BY created_at DESC,id DESC LIMIT ?",
+            (*params, max(1, min(limit, 100))),
+        )
+        messages = []
+        for row in reversed(rows):
+            message = json.loads(row["message"])
+            message.setdefault("address", {"account_id": row["channel_id"], "conversation_id": row["conversation_id"]})
+            messages.append(message)
+        return messages
+
+    async def conversation_history(
+        self,
+        channel_id: str,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+        before_created_at: str | None = None,
+        before_id: str | None = None,
+    ) -> dict:
+        where = "WHERE channel_id=? AND conversation_id=?"
+        params: tuple = (channel_id, conversation_id)
+        if before_created_at is not None and before_id is not None:
+            where += " AND (created_at,id)<(?,?)"
+            params += (before_created_at, before_id)
+        rows = await self.rows(
+            """WITH destinations AS (
+                SELECT id,channel_id,kind,conversation_id,thread_id FROM routes
+                UNION ALL SELECT id,channel_id,kind,conversation_id,thread_id FROM archived_routes
+            ), history AS (
+                SELECT e.id,e.route_id,'incoming' AS direction,json_extract(e.message,'$.text') AS text,
+                    json_extract(e.message,'$.sender_id') AS sender_id,e.state,e.error,e.created_at,e.thread_id,e.run_id,
+                    COALESCE(json_extract(e.message,'$.address.account_id'),r.channel_id) AS channel_id,
+                    COALESCE(json_extract(e.message,'$.address.conversation_id'),r.kind||':'||r.conversation_id) AS conversation_id
+                FROM events e LEFT JOIN destinations r ON r.id=e.route_id
+                UNION ALL
+                SELECT id,NULL,'incoming',json_extract(message,'$.text'),json_extract(message,'$.sender_id'),
+                    state,error,created_at,NULL,NULL,json_extract(message,'$.address.account_id'),
+                    json_extract(message,'$.address.conversation_id') FROM observations
+                UNION ALL
+                SELECT p.id,p.route_id,'outgoing',p.text,NULL,p.state,p.error,p.created_at,r.thread_id,NULL,
+                    r.channel_id,r.kind||':'||r.conversation_id FROM replies p JOIN destinations r ON r.id=p.route_id
+            ) SELECT id,route_id,direction,text,sender_id,state,error,created_at,thread_id,run_id FROM history """
+            + where
+            + " ORDER BY created_at DESC,id DESC LIMIT ?",
+            (*params, limit + 1),
+        )
+        return {"messages": list(reversed(rows[:limit])), "has_more": len(rows) > limit}
 
     async def update_event(self, identifier: str, **fields) -> None:
         allowed = {"state", "target", "body", "thread_id", "entry_id", "run_id", "attempts", "error"}
@@ -330,42 +569,34 @@ class Store:
                 (thread_id, entry_id, run_id, event_id),
             )
 
-    async def draft(self, route: dict, text: str, *, event_id: str | None = None) -> dict:
-        row = {"id": new_id("reply"), "route_id": route["id"], "event_id": event_id, "text": text, "state": "draft"}
-        if route["auto_reply"] and (route["conversation_kind"] == "private" or route.get("access_mode") == "full"):
-            row["state"] = "approved"
+    async def queue_reply(self, route: dict, text: str, *, event_id: str | None = None) -> dict:
+        row = {"id": new_id("reply"), "route_id": route["id"], "event_id": event_id, "text": text, "state": "queued"}
         async with self.transaction() as db:
             await db.execute(
                 "INSERT OR IGNORE INTO replies(id,route_id,event_id,text,state) VALUES (?,?,?,?,?)",
                 tuple(row[key] for key in ["id", "route_id", "event_id", "text", "state"]),
             )
-            if row["state"] == "approved":
-                await db.execute("INSERT OR IGNORE INTO automatic_replies VALUES (?)", (row["id"],))
             if event_id:
                 await db.execute("UPDATE events SET state='completed',error=NULL WHERE id=?", (event_id,))
         return row
 
     async def replies(self) -> list[dict]:
-        return await self.rows("SELECT * FROM replies ORDER BY rowid DESC LIMIT 100")
-
-    async def decide(self, identifier: str, *, approve: bool, text: str | None = None) -> bool:
-        async with self.transaction() as db:
-            cursor = await db.execute(
-                "UPDATE replies SET state=?,text=COALESCE(?,text) WHERE id=? AND state='draft'",
-                ("approved" if approve else "rejected", text, identifier),
-            )
-            if cursor.rowcount:
-                await db.execute("DELETE FROM automatic_replies WHERE reply_id=?", (identifier,))
-            return cursor.rowcount == 1
-
-    async def automatic_reply(self, identifier: str) -> bool:
-        return bool(await self.rows("SELECT reply_id FROM automatic_replies WHERE reply_id=?", (identifier,)))
+        rows = await self.rows("""WITH destinations AS (
+            SELECT id,channel_id,kind,conversation_id,value FROM routes
+            UNION ALL SELECT id,channel_id,kind,conversation_id,value FROM archived_routes
+        ) SELECT p.*,r.channel_id,r.kind,r.conversation_id,json_extract(r.value,'$.name') AS route_name
+        FROM replies p LEFT JOIN destinations r ON r.id=p.route_id ORDER BY p.rowid DESC LIMIT 100""")
+        for row in rows:
+            channel = row.pop("channel_id")
+            kind = row.pop("kind")
+            conversation = row.pop("conversation_id")
+            if channel and conversation != "*":
+                row["address"] = {"account_id": channel, "conversation_id": f"{kind}:{conversation}"}
+        return rows
 
     async def claim_reply(self, identifier: str) -> bool:
         async with self.transaction() as db:
-            cursor = await db.execute(
-                "UPDATE replies SET state='sending' WHERE id=? AND state='approved'", (identifier,)
-            )
+            cursor = await db.execute("UPDATE replies SET state='sending' WHERE id=? AND state='queued'", (identifier,))
             return cursor.rowcount == 1
 
     async def finish_reply(

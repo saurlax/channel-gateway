@@ -106,7 +106,7 @@ class Bridge:
                     state="failed" if attempts >= 5 else event["state"],
                 )
         for reply in await self.store.replies():
-            if reply["state"] == "approved":
+            if reply["state"] == "queued":
                 await self.send(reply)
 
     async def advance(self, event: dict) -> None:
@@ -158,7 +158,7 @@ class Bridge:
             return
         text = output_text(run.get("output"))
         if text and len(text) <= 16000:
-            await self.store.draft(route, text, event_id=event["id"])
+            await self.store.queue_reply(route, text, event_id=event["id"])
         else:
             await self.store.update_event(
                 event["id"], state="completed", error="No supported text reply (or output exceeds 16000 characters)"
@@ -174,11 +174,6 @@ class Bridge:
             if source is None or not route_allows_sender(route, source["message"]["sender_id"]):
                 await self.store.finish_reply(reply["id"], "blocked", error="Source permission could not be confirmed")
                 return
-        if await self.store.automatic_reply(reply["id"]) and not (
-            route["auto_reply"] and (route["conversation_kind"] == "private" or route.get("access_mode") == "full")
-        ):
-            await self.store.finish_reply(reply["id"], "draft")
-            return
         connection = await self.store.connection(route["channel_id"])
         if connection and self.channels and not self.channels.ready(connection):
             return

@@ -21,7 +21,8 @@ direct official platform connections. See the
 3. Select **Manage** on the channel row and copy its reverse HTTP webhook URL.
    Configure that account's OneBot v11 protocol with `use_http: true`, the matching `access_token`,
    `secret`, and the webhook URL in `http_reverse`. OneBots signs the raw JSON
-   with `X-Signature: sha1=<HMAC-SHA1>`. Notice and heartbeat events are ignored.
+   with `X-Signature: sha1=<HMAC-SHA1>`. Notice and heartbeat events are retained
+   in the private channel-event journal without triggering the Agent.
    See [OneBots](https://github.com/lc-cn/onebots).
 4. In **Agent hosts**, select **Add agent host** and choose **a13n API + MCP**, and add a host using
    its API base, e.g. `https://a13n.example/api/v1`, and a workspace API key
@@ -34,10 +35,10 @@ direct official platform connections. See the
    explicit sender allowlist. Alternatively select **Any sender**; choose
    **All conversations** to match new conversations with separate threads.
    Start with **Final run output** and no MCP connection ID.
-6. Send a text message as an authorized user. **Messages** shows acceptance,
-   host submission, the created thread, and any failure. **Reply approvals**
-   shows the resulting text draft and its exact destination in a table. Select
-   **Review** to open and edit it before selecting **Approve and send**.
+6. Send a text message as an authorized user. **Messages** lists conversations, including
+   those without a route. Select **View conversation** to see incoming text and
+   Agent replies in chronological order, with delivery states and diagnostics.
+   Authorized private and group replies are sent automatically without review.
 
 The signing secret must match OneBots' configuration. Start with a private test
 conversation and an Agent whose permissions are appropriate for its participants.
@@ -47,8 +48,11 @@ explains conversation and thread binding.
 
 Select **Manage** on a channel or host row to replace API tokens and signing
 secrets. URLs and destinations cannot be edited; create another connection or
-route when a different target is needed. Select **Edit access** on a route row to
-edit sender allowlists and MCP binding. Disable the route to stop further work;
+route when a different target is needed. Select **Edit** on a route row to
+edit sender allowlists and MCP binding, toggle **Enable route**, or select
+**Delete route** and confirm. Deletion removes the binding and its tokens while
+retaining administrator conversation history. Recreating it starts a new thread.
+Disable the route to stop further work;
 this cannot retract a sent message or interrupt an external request already in
 flight.
 
@@ -73,7 +77,7 @@ available through **Manage**. Inbound addresses use the origin used to open
 the console.
 When behind a proxy, open the console through its public HTTPS origin to obtain
 public HTTPS/WSS addresses, and enable WebSocket proxy upgrades. Route access and
-reply approval remain the same for every transport.
+automatic reply delivery remain the same for every transport.
 
 Generic clients such as Codex use the [Agent Host guide](agent-hosts.md) instead
 of a13n API delivery.
@@ -105,7 +109,7 @@ route token as its **bearer credential**. The equivalent a13n create body is:
 Copy the resulting a13n connection ID into the route's **Access & MCP binding**.
 Choose **MCP send_message tool** if the agent should explicitly request replies;
 otherwise **Final run output** makes `read_conversation` available while the
-bridge generates drafts from the completed run output. These modes avoid
+bridge queues automatic replies from the completed run output. These modes avoid
 sending both a tool reply and the final output for the same run.
 
 Choose an Agent whose remaining permissions are appropriate for the conversation.
@@ -113,25 +117,28 @@ The bridge's connection-tool selection does not remove built-in toolsets, plugin
 skills, or access to other Host resources. See the
 [Agent tool contract](../spec/04-agent-tools.md) for exact tool selection and scope.
 
-Rotate a route token from its row action, copy the one-time value, and replace the
+Rotate a route token inside its **Edit** dialog, copy the one-time value, and replace the
 bearer credential in its a13n connection. Wait for active input to finish before
 changing the MCP binding. Never put the token in `mcp_headers`; use the bearer
 credential field shown above.
 
 ## Diagnose delivery
 
-In **Messages**, inspect the message details, assigned thread/run, and diagnostic.
+In **Messages**, select **View conversation**. Inspect incoming messages and
+outgoing Agent replies together, with delivery diagnostics. Each concrete
+conversation has its own row, including those created by an all-conversation
+route. Use **Load earlier messages** to read older history.
 If a message is `submitted`, check the assigned run in a13n; a waiting run needs
 to be resolved there. For a failed event, fix connection or Agent configuration
 and select **Retry**. Keep replacement a13n keys within the same principal and
 workspace. Retrying resumes the recorded command or polling operation.
 
-In **Reply approvals**, open **Review**, verify the exact destination, edit the
-draft if needed, then approve or reject it. A `sent` reply has a confirmed channel
-receipt. If a reply is `unknown`, inspect the channel before deciding whether
+Outgoing entries in the same conversation show their text and delivery status. A `queued` reply is waiting for sending; a `sent` reply has a confirmed
+channel receipt. If a reply is `unknown`, inspect the channel before deciding whether
 another message is needed; CG does not automatically resend it. The
 [delivery contract](../spec/03-routing-and-delivery.md) defines all states and
-completion/retry boundaries.
+completion/retry boundaries. When upgrading from manual review, old unreviewed
+drafts are blocked rather than sent; send a new input to obtain a current reply.
 
 ## Deployment boundaries
 

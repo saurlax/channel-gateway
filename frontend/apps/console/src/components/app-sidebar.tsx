@@ -1,14 +1,6 @@
 import { useLocale } from "@/i18n";
 // Adapted from the official shadcn sidebar-07 block.
-import {
-  Bot,
-  Cable,
-  ClipboardCheck,
-  GalleryVerticalEnd,
-  LogOut,
-  MessageSquare,
-  Route,
-} from "lucide-react";
+import { Bot, Cable, GalleryVerticalEnd, LogOut, MessageSquare, Route } from "lucide-react";
 import { NavMain } from "@/components/nav-main";
 import {
   Sidebar,
@@ -58,10 +50,7 @@ export function AppSidebar({ onLogout, page }: { onLogout: () => void; page: str
             {
               id: "activity",
               title: t("Activity"),
-              items: [
-                { title: t("Messages"), url: "#events", icon: MessageSquare },
-                { title: t("Reply approvals"), url: "#replies", icon: ClipboardCheck },
-              ],
+              items: [{ title: t("Messages"), url: "#events", icon: MessageSquare }],
             },
           ]}
         />

@@ -4,6 +4,8 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { DialogFooter } from "@/components/ui/dialog";
+import { DeleteResource } from "@/components/delete-resource";
 import { FormField, Choice, field, type Action } from "@/components/form-controls";
 import {
   ListToolbar,
@@ -207,6 +209,8 @@ export function Connections({
             onSaved={() => setSelected(null)}
             csrfToken={csrfToken}
             refresh={refresh}
+            error={error}
+            clearError={clearError}
           />
         )}
       </ManagementDialog>
@@ -404,6 +408,8 @@ function ConnectionDetails({
   onSaved,
   csrfToken,
   refresh,
+  error,
+  clearError,
 }: {
   connection: Connection;
   action: Action;
@@ -411,6 +417,8 @@ function ConnectionDetails({
   onSaved: () => void;
   csrfToken: string;
   refresh: () => Promise<void>;
+  error: string;
+  clearError: () => void;
 }) {
   const { t } = useLocale();
   const reverseHTTP =
@@ -454,19 +462,13 @@ function ConnectionDetails({
               "Use this host’s MCP key as the bearer credential. It grants access to all enabled routes assigned to this host.",
             )}
           </p>
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => void action(`connections/${connection.id}/mcp-key`)}
-          >
-            {t("Rotate MCP key")}
-          </Button>
         </>
       )}
       {connection.kind === "mcp" ? null : connection.kind === "weixin" ? (
         <WeixinLogin connection={connection} csrfToken={csrfToken} refresh={refresh} />
       ) : (
         <form
+          id="connection-credentials"
           className="grid gap-4"
           onSubmit={async (event) => {
             event.preventDefault();
@@ -503,11 +505,50 @@ function ConnectionDetails({
               />
             </FormField>
           )}
-          <Button type="submit" disabled={busy}>
-            {busy ? t("Saving…") : t("Save credentials")}
-          </Button>
         </form>
       )}
+      <DialogFooter>
+        <DeleteResource
+          label={isHost(connection) ? t("Delete agent host") : t("Delete channel")}
+          title={
+            isHost(connection)
+              ? t("Delete agent host {name}?", { name: connection.name })
+              : t("Delete channel {name}?", { name: connection.name })
+          }
+          description={
+            isHost(connection)
+              ? t(
+                  "This removes the host and its credentials, revokes its MCP key, disables assigned routes, and blocks pending work. Message and reply history is retained. This cannot be undone.",
+                )
+              : t(
+                  "This removes the channel and its credentials, disables its routes, and blocks pending work. Message and reply history is retained. This cannot be undone.",
+                )
+          }
+          path={`connections/${connection.id}`}
+          action={action}
+          busy={busy}
+          error={error}
+          clearError={clearError}
+          onDeleted={onSaved}
+        />
+        {isHost(connection) && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={async () => {
+              if (await action(`connections/${connection.id}/mcp-key`)) onSaved();
+            }}
+          >
+            {t("Rotate MCP key")}
+          </Button>
+        )}
+        {connection.kind !== "mcp" && connection.kind !== "weixin" && (
+          <Button type="submit" form="connection-credentials" disabled={busy}>
+            {busy ? t("Saving…") : t("Save credentials")}
+          </Button>
+        )}
+      </DialogFooter>
     </div>
   );
 }

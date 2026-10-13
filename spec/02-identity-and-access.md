@@ -8,7 +8,7 @@ cross-channel identity linking, or general information-flow enforcement.
 
 | Credential                      | Authority                                                                   |
 | ------------------------------- | --------------------------------------------------------------------------- |
-| CG administrator session cookie | Manage connections, routes, message delivery, and reply decisions           |
+| CG administrator session cookie | Manage connections, routes, message delivery, and reply records           |
 | OneBot access token             | Authenticate account API calls or a universal WebSocket session             |
 | QQ AppID / AppSecret            | Obtain API tokens and verify official callbacks                             |
 | Weixin bot token                | Poll and send for one paired iLink bot account                              |
@@ -81,19 +81,24 @@ list and accepting any verified platform sender within the source scope. A
 specific private allowlist route authorizes exactly its conversation user.
 An all-conversation route can allow selected sender IDs or any sender.
 
-`access_mode` is `restricted` by default. Restricted group replies require review;
-restricted private replies require an explicit automatic-reply opt-in. `full`
-retains the selected a13n Agent's configured tools and enables automatic replies,
-including group replies. It grants neither gateway management access nor channel
-destinations outside the route. For generic MCP clients it changes reply policy,
-not client execution permissions. Native platform reply limits still apply.
+`access_mode` is `restricted` by default and limits a13n connection tools to the
+route's explicit binding. `full` retains the selected a13n Agent's configured
+tools. Both modes automatically send replies to authorized private and group
+conversations; there is no per-reply administrator review or automatic-reply
+opt-in. Neither mode grants gateway management access or destinations outside
+the route. For generic MCP clients permission mode does not change client
+execution permissions. Native platform reply limits still apply.
 The console exposes these choices separately; neither is silently enabled on
 existing routes. Full access with any sender trusts every sender who can reach
 that channel scope to invoke the selected Agent's configured capabilities.
 
-Supported messages without an authorized route are persisted for administrator
-identity discovery. They have no Agent capability, do not wake a Host, and are
-excluded from MCP. Management views show verified account, conversation and
+All bounded authenticated arrivals are privately retained regardless of routes
+and sender allowlists. Supported messages without an authorized route are also
+persisted for administrator identity discovery. They do not wake a Host or
+create an Agent capability. An enabled route can subsequently authorize MCP
+reads of that source conversation's observed history under its current sender
+policy, without replaying old inputs. Raw packets and their private protocol
+metadata remain excluded from MCP. Management views show verified account, conversation and
 sender IDs and received text, without private protocol reply contexts.
 
 Authorization is checked at ingress, when advancing input delivery, during MCP
@@ -101,12 +106,31 @@ access, and before sending a reply. Removing a sender hides that sender's messag
 from subsequent MCP reads and blocks pending inputs from that sender. Replies
 linked to such an input are blocked before sending. MCP-created replies have no
 source event link; their authority is the route credential and current route
-state, with the same group approval requirement.
+state, with the same automatic sending lifecycle.
 
 Disabling a route blocks new work and invalidates its MCP authority. It does not
 interrupt an external request already in flight, erase history, retract a sent
 message, or cancel an a13n run. Re-enabling a route restores its still-current
 token; rotate the token when the previous credential must remain revoked.
+
+## Resource deletion
+
+`DELETE /api/v1/connections/{id}` requires an administrator session and CSRF token.
+For an Agent Host, it removes upstream credentials and the Host MCP key hash,
+disables every assigned route including concrete children, and blocks queued or
+submitted inputs and queued replies in the same short transaction. It does not
+remove channel accounts, cancel upstream runs, or retract external requests
+already in flight. Retained routes cannot regain authority while their Host is
+missing. Host and route MCP credentials are rechecked against current resources;
+deleting the Host invalidates its key and disables route capabilities. Channel
+deletion has the [channel lifecycle](01-channel-adapters.md#account-binding).
+
+`DELETE /api/v1/routes/{id}` revokes that route and, for an all-conversation parent,
+its concrete children. The [delivery contract](03-routing-and-delivery.md#conversation-routes)
+owns binding removal and history retention. Deletion never grants access to old
+history through a replacement route's MCP capability. Console deletion starts
+inside each resource's edit/management dialog using the shared red outline button
+and official Alert Dialog confirmation; ordinary row actions remain compact.
 
 ## Route capabilities
 
@@ -142,8 +166,7 @@ thread tools. Rotation does not cancel an operation already in flight.
 
 ## Privacy boundary
 
-Separate conversation threads, scoped tools, allowlists, and administrator group
-approval reduce exposure. They do not guarantee that an Agent with access to
+Separate conversation threads, scoped tools, and allowlists reduce exposure. They do not guarantee that an Agent with access to
 other private resources will never disclose those resources. The a13n connection
 tool override does not remove built-in toolsets, plugins, skills, or other Host
 resource permissions. Administrators must select an Agent whose remaining access

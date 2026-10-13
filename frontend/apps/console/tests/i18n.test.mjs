@@ -22,8 +22,8 @@ test("UI translation preserves user data and literal replacement characters", ()
 test("known diagnostics localize while upstream details remain readable", () => {
   assert.equal(translateDiagnostic("zh-CN", "Administrator sign-in required"), "请登录管理员账号");
   assert.equal(
-    translateDiagnostic("zh-CN", "Value error, Group replies require administrator approval"),
-    "群聊回复需要管理员审核",
+    translateDiagnostic("zh-CN", "Value error, Allowlist routes require at least one sender ID"),
+    "白名单路由需要至少一个发送者 ID",
   );
   assert.equal(
     translateDiagnostic("zh-CN", "String should have at least 16 characters"),

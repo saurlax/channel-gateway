@@ -50,11 +50,26 @@ those stages only when the user has authorized them.
   states inside the table; keep the layout usable on narrow screens with table
   scrolling contained in its frame.
 - For resources users can create, put an Add button in the toolbar and open the
-  creation form in a modal. Editing, credentials, details, and reply review also
+  creation form in a modal. Editing, credentials, details, and reply details also
   open from row actions in modals. Read-only activity lists need no Add button.
-- Use the official shadcn blocks and components with their standard styles. Keep
-  custom styling minimal. Preserve browser-language localization, accessible
-  labels, keyboard interaction, and destination/approval checks when moving forms.
+- Before changing console UI, consult the [official shadcn Blocks](https://ui.shadcn.com/blocks)
+  and reuse the closest existing block's layout and interaction design. Prefer
+  its standard spacing, typography, component variants, and action placement;
+  do not invent a custom design when an official pattern fits.
+- If no block covers the interaction, use the [official component examples](https://ui.shadcn.com/docs/components)
+  with their standard styles, such as Dialog footers for form actions and Alert
+  Dialog for destructive confirmation. Keep custom styling limited to necessary
+  product and responsive adjustments. Preserve browser-language localization,
+  accessible labels, keyboard interaction, and destination authorization checks.
+
+- Authorized private and group replies are sent automatically. Show incoming
+  messages and Agent replies together in conversation history under Messages.
+  Conversation history is opened only from Messages, not from route rows. Route
+  rows have one Edit action; token rotation, enable/disable settings, and deletion
+  belong inside the edit dialog. Channels, Agent Hosts, and routes must expose
+  deletion in their management/edit dialogs using the shared red outline Delete
+  button and official Alert Dialog confirmation. Do not add a separate reply page or per-reply
+  administrator review or approval flows.
 
 [DEVELOPMENT.md](DEVELOPMENT.md#console-management-patterns) owns the detailed
 console interaction standards.

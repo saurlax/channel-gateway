@@ -16,7 +16,8 @@ from websockets.exceptions import ConnectionClosed
 
 from ..adapters import AdapterError
 from ..storage import Store
-from .common import event_object, identifier, response_object, text_message
+from .common import identifier, response_object, text_message
+from .ingress import ProjectionError, begin_event, event_type, ingest_parsed
 
 QQ_API = "https://api.sgroup.qq.com"
 QQ_TOKEN = "https://bots.qq.com/app/getAppAccessToken"
@@ -72,7 +73,14 @@ def qq_message(event: dict, connection: dict) -> Message | None:
     if isinstance(content, str):
         content = re.sub(r"<@!?" + re.escape(str(connection.get("self_id") or "")) + r">", "", content).strip()
     return text_message(
-        connection, kind, conversation, sender, data["id"], content, datetime.fromisoformat(data["timestamp"])
+        connection,
+        kind,
+        conversation,
+        sender,
+        data["id"],
+        content,
+        datetime.fromisoformat(data["timestamp"]),
+        message_id_limit=1024,
     )
 
 
@@ -121,7 +129,7 @@ class QQClient:
             f"/v2/{resource}/{quote(route['conversation_id'], safe='')}/messages",
             {"content": text, "msg_type": 0, "msg_id": message_id, "msg_seq": sequence},
         )
-        return identifier(value["id"])
+        return identifier(value["id"], max_length=1024)
 
 
 class QQGateway:
@@ -136,12 +144,17 @@ class QQGateway:
     async def run(self, socket) -> None:
         self.session = await self.store.channel_state(self.client.connection["id"], "qq_gateway")
         hello = await asyncio.wait_for(socket.recv(), 15)
-        packet = event_object(hello)
+        hello_id, packet = await begin_event(self.store, self.client.connection, hello)
+        if hello_id is None:
+            await socket.close()
+            return
         if packet.get("op") != 10:
             raise AdapterError("QQ Gateway omitted Hello")
         interval = float(packet["d"]["heartbeat_interval"]) / 1000
         if not 0.1 <= interval <= 300:
             raise AdapterError("QQ Gateway heartbeat interval is invalid")
+        if hello_id:
+            await self.store.finish_channel_event(hello_id, "control", event_type=event_type(packet))
         token = "QQBot " + await self.client.access_token()
         if self.session.get("session_id") and self.session.get("seq") is not None:
             data = {"token": token, **self.session}
@@ -152,7 +165,7 @@ class QQGateway:
         heartbeat = asyncio.create_task(self.heartbeat(socket, interval))
         try:
             async for raw in socket:
-                await self.dispatch(event_object(raw), socket)
+                await self.dispatch(raw, socket)
         finally:
             heartbeat.cancel()
             with suppress(asyncio.CancelledError):
@@ -171,7 +184,12 @@ class QQGateway:
                 await socket.close()
                 return
 
-    async def dispatch(self, event: dict, socket) -> None:
+    async def dispatch(self, raw: dict | str | bytes, socket) -> None:
+        archive_id, event = await begin_event(self.store, self.client.connection, raw)
+        if archive_id is None:
+            await socket.close()
+            return
+        processed = False
         if event.get("op") == 11:
             self.acknowledged = True
         elif event.get("op") in {7, 9}:
@@ -188,14 +206,25 @@ class QQGateway:
                 self.status("connected")
             else:
                 try:
-                    message = qq_message(event, self.client.connection)
-                except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
-                    message = None
-                await self.receive(self.client.connection, message, None)
+                    await ingest_parsed(
+                        self.store,
+                        self.client.connection,
+                        archive_id,
+                        event,
+                        self.receive,
+                        lambda value: (qq_message(value, self.client.connection), None),
+                    )
+                except ProjectionError:
+                    pass
+                processed = True
+            if not processed:
+                await self.store.finish_channel_event(archive_id, "control", event_type=event_type(event))
             if isinstance(event.get("s"), int):
                 self.session["seq"] = event["s"]
                 # Advance resume position only after gateway ingestion returns.
                 await self.store.set_channel_state(self.client.connection["id"], "qq_gateway", self.session)
+            return
+        await self.store.finish_channel_event(archive_id, "control", event_type=event_type(event))
 
 
 def gateway_url(value: str) -> str:

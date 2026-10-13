@@ -27,11 +27,11 @@ flowchart LR
     Agent -->|Scoped reads and reply requests| MCP[MCP tools]
     MCP --> Workflow
     Host -->|Completed output| Workflow
-    Workflow -->|Approved reply| Ingress
+    Workflow -->|Authorized reply| Ingress
     Ingress --> Channel
 ```
 
-Ingestion, Host acceptance, run completion, reply approval, and confirmed channel
+Ingestion, Host acceptance, run completion, reply queuing, and confirmed channel
 sending are distinct boundaries. Their durable meanings are owned by
 [routing and delivery](03-routing-and-delivery.md). MCP transport does not own
 the lifecycle that starts an idle Agent run.
@@ -42,15 +42,16 @@ The current management API uses `/api/v1`. Channel accounts and Agent Hosts shar
 a connection resource with channel `kind: onebots`, `qq`, or `weixin`, and Host
 `kind: a13n` or `mcp`; that wire representation
 does not merge their domain roles. The console exposes separate Channels and
-Agent hosts pages, followed by route, message, and reply management.
+Agent hosts pages, followed by routes and message conversations with incoming and outgoing history.
 
 | API group                                      | Operations                                                               |
 | ---------------------------------------------- | ------------------------------------------------------------------------ |
 | `/auth/login`, `/auth/session`, `/auth/logout` | Administrator login, session restoration, and revocation                 |
-| `/connections`                                 | List/create connections, replace credentials, rotate Host MCP keys       |
-| `/routes`                                      | List/create routes, update access/binding, and rotate route tokens       |
+| `/connections`                                 | List/create/delete connections, replace credentials, rotate Host MCP keys       |
+| `/routes`                                      | List/create/delete routes, update access/binding, and rotate route tokens       |
 | `/events`                                      | List accepted messages and retry failed input delivery                   |
-| `/replies`                                     | List replies, approve edited drafts, and reject drafts                   |
+| `/history`                                     | Read chronological received/reply history for one account conversation |
+| `/replies`                                     | List reply delivery records                   |
 | `/hooks/onebots/{connection_id}`               | Receive account-specific signed OneBot events                            |
 | `/hooks/qq/{connection_id}`                    | Validate and receive signed official QQ callbacks                        |
 | `/ws/onebots/{connection_id}`                  | Accept an authenticated reverse universal WebSocket                      |
@@ -66,7 +67,8 @@ owns console interaction standards.
 ## Runtime and persistence
 
 The supported topology is one process and one replica. SQLite persists connections,
-routes, received messages, Host submission receipts, and replies across restart.
+routes, a private raw channel-event journal independent of routing, projected
+received messages, Host submission receipts, and replies across restart.
 It has no distributed worker leases, schema migration framework, retention
 policy, or high-availability contract. HTTP callbacks acknowledge authorized
 input after local persistence; no external exactly-once effect is promised.

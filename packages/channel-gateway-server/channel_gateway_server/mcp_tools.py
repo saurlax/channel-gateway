@@ -8,7 +8,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .bridge import Bridge
-from .models import ReplyInput, route_allows_sender
+from .models import ReplyInput
 from .storage import Store
 
 current_token: ContextVar[str] = ContextVar("channel_gateway_mcp_token")
@@ -23,7 +23,7 @@ def create_mcp(store: Store, bridge: Bridge) -> FastMCP:
         # Bearer auth is enforced by the outer ASGI application. Cross-origin
         # browser requests are refused there; deployment domains need no wildcard.
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-        instructions="List authorized conversations, then pass their route_id to read or reply. A route credential can omit route_id. Restricted group messages become drafts for administrator approval; full-access routes can reply automatically. MCP reads do not wake or complete an agent run.",
+        instructions="List authorized conversations, then pass their route_id to read or reply. A route credential can omit route_id. Replies to authorized conversations are queued for automatic sending. MCP reads do not wake or complete an agent run.",
     )
 
     async def authorized_routes() -> list[dict]:
@@ -31,12 +31,16 @@ def create_mcp(store: Store, bridge: Bridge) -> FastMCP:
         route = await store.route_for_token(token)
         if route and route["enabled"]:
             if route["conversation_id"] == "*":
+                await store.materialize_observed_routes(route)
                 return [
                     row for row in await store.routes() if row.get("parent_route_id") == route["id"] and row["enabled"]
                 ]
             return [route]
         host = await store.host_for_token(token)
         if host:
+            for parent in await store.routes():
+                if parent["host_id"] == host["id"] and parent["enabled"] and parent["conversation_id"] == "*":
+                    await store.materialize_observed_routes(parent)
             return [
                 row
                 for row in await store.routes()
@@ -71,23 +75,21 @@ def create_mcp(store: Store, bridge: Bridge) -> FastMCP:
     async def read_conversation(limit: int = 20, route_id: str | None = None) -> dict:
         """Read received text messages from this credential's authorized conversation."""
         route = await authorized_route(route_id)
-        messages = await store.events(route_id=route["id"], limit=max(1, min(limit, 100)))
+        messages = await store.received_messages(route, limit=limit)
         return {
             "conversation_kind": route["conversation_kind"],
             "conversation_id": route["conversation_id"],
-            "messages": [
-                row["message"] for row in reversed(messages) if route_allows_sender(route, row["message"]["sender_id"])
-            ],
+            "messages": messages,
         }
 
     @server.tool()
     async def send_message(text: str, route_id: str | None = None) -> dict:
-        """Request a text reply to this conversation. Group replies require administrator approval."""
+        """Request a text reply to this conversation. Replies are sent automatically after current authorization checks."""
         route = await authorized_route(route_id)
         if route["reply_source"] != "mcp":
             raise ValueError("This route forwards final run output; return reply text from the run instead")
         validated = ReplyInput(text=text)
-        reply = await store.draft(route, validated.text)
+        reply = await store.queue_reply(route, validated.text)
         bridge.wake.set()
         return {"reply_id": reply["id"], "state": reply["state"]}
 

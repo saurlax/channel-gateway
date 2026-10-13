@@ -23,7 +23,6 @@ export type Route = {
   parent_route_id: string | null;
   agent_id: string | null;
   enabled: boolean;
-  auto_reply: boolean;
   reply_source: "output" | "mcp";
   mcp_connection_id: string | null;
   thread_id: string | null;
@@ -31,6 +30,7 @@ export type Route = {
 export type ChannelEvent = {
   id: string;
   route_id: string | null;
+  route_name?: string | null;
   state: string;
   thread_id: string | null;
   run_id: string | null;
@@ -45,6 +45,8 @@ export type ChannelEvent = {
 export type Reply = {
   id: string;
   route_id: string;
+  route_name?: string | null;
+  address?: { account_id: string; conversation_id: string };
   state: string;
   text: string;
   error: string | null;
@@ -58,6 +60,21 @@ export type Snapshot = {
 };
 
 export type AdminSession = { username: string; csrf_token: string };
+
+export type HistoryMessage = {
+  id: string;
+  route_id: string | null;
+  direction: "incoming" | "outgoing";
+  text: string;
+  sender_id: string | null;
+  state: string;
+  error: string | null;
+  created_at: string;
+  thread_id: string | null;
+  run_id: string | null;
+};
+
+export type HistoryPage = { messages: HistoryMessage[]; has_more: boolean };
 
 export class ApiError extends Error {
   constructor(
@@ -103,15 +120,4 @@ export async function api<T>(csrfToken: string, path: string, init: RequestInit 
     );
   }
   return value as T;
-}
-
-export function eventAddress(snapshot: Snapshot, event: ChannelEvent) {
-  if (event.message.address) return event.message.address;
-  const route = snapshot.routes.find((route) => route.id === event.route_id);
-  return route && route.conversation_id !== "*"
-    ? {
-        account_id: route.channel_id,
-        conversation_id: `${route.conversation_kind}:${route.conversation_id}`,
-      }
-    : undefined;
 }

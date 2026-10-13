@@ -3,10 +3,11 @@ import { useState, type FormEvent } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { FormField, Choice, field, type Action } from "@/components/form-controls";
+import { DialogFooter } from "@/components/ui/dialog";
+import { DeleteResource } from "@/components/delete-resource";
 import { Switch } from "@/components/ui/switch";
+import { FormField, Choice, field, type Action } from "@/components/form-controls";
 import {
   ListToolbar,
   TableFrame,
@@ -23,7 +24,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { isHost } from "@/hosts";
-import { eventAddress, type Snapshot } from "@/api";
+import type { Snapshot } from "@/api";
+import { eventAddress } from "@/conversations";
 
 export function Routes({
   snapshot,
@@ -90,7 +92,7 @@ export function Routes({
               <TableHead>{t("Channel account")}</TableHead>
               <TableHead>{t("Agent / thread")}</TableHead>
               <TableHead>{t("Allowed users")}</TableHead>
-              <TableHead>{t("Reply policy")}</TableHead>
+              <TableHead>{t("Reply source")}</TableHead>
               <TableHead>{t("Access")}</TableHead>
               <TableHead>{t("Action")}</TableHead>
             </TableRow>
@@ -132,48 +134,27 @@ export function Routes({
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">
-                      {record.auto_reply ? t("Automatic replies") : t("Approval required")}
+                      {record.reply_source === "output" ? t("Final run output") : t("MCP tools")}
                     </Badge>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {record.access_mode === "full"
-                        ? t("Full access")
-                        : record.reply_source === "output"
-                          ? t("Final run output")
-                          : t("MCP tools")}
+                      {record.access_mode === "full" ? t("Full access") : t("Restricted access")}
                     </p>
                   </TableCell>
                   <TableCell>
-                    <Switch
-                      aria-label={t("Enable {name}", { name: record.name })}
-                      checked={record.enabled}
-                      disabled={busy}
-                      onCheckedChange={(enabled) =>
-                        void action(`routes/${record.id}`, { enabled }, "PATCH")
-                      }
-                    />
+                    <Badge variant="outline">{record.enabled ? t("Enabled") : t("Disabled")}</Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => {
-                          clearError();
-                          setSelected(record.id);
-                        }}
-                      >
-                        {t("Edit access")}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => void action(`routes/${record.id}/token`)}
-                      >
-                        {t("Rotate token")}
-                      </Button>
-                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => {
+                        clearError();
+                        setSelected(record.id);
+                      }}
+                    >
+                      {t("Edit")}
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))
@@ -224,6 +205,8 @@ export function Routes({
             action={action}
             busy={busy}
             onSaved={() => setSelected(null)}
+            error={error}
+            clearError={clearError}
           />
         )}
       </ManagementDialog>
@@ -264,7 +247,6 @@ export function RouteForm({
   const currentChannel = channels.find((item) => item.id === channel);
   const privateOnly = currentChannel?.kind === "weixin";
   const [source, setSource] = useState("output");
-  const [automatic, setAutomatic] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -288,7 +270,6 @@ export function RouteForm({
                   .split(/[\s,]+/)
                   .filter(Boolean),
         agent_id: mcpOnly ? null : field(data, "agent_id"),
-        auto_reply: accessMode === "full" || (kind === "private" && automatic),
         reply_source: mcpOnly ? "mcp" : source,
         mcp_connection_id:
           mcpOnly || scope === "all" ? null : field(data, "mcp_connection_id") || null,
@@ -423,17 +404,6 @@ export function RouteForm({
           )}
         </>
       )}
-      {kind === "private" && accessMode !== "full" && (
-        <div className="flex items-center gap-2">
-          <Switch id="automatic" checked={automatic} onCheckedChange={setAutomatic} />
-          <Label htmlFor="automatic">{t("Allow automatic replies to this user")}</Label>
-        </div>
-      )}
-      {kind === "group" && accessMode !== "full" && (
-        <p className="text-sm text-muted-foreground">
-          {t("Group replies require administrator approval.")}
-        </p>
-      )}
       {currentChannel?.capabilities?.receive === false && (
         <p className="text-sm text-muted-foreground">
           {t(
@@ -454,18 +424,22 @@ function RouteAccess({
   action,
   busy,
   onSaved,
+  error,
+  clearError,
 }: {
   mcpOnly: boolean;
   route: import("@/api").Route;
   action: Action;
   busy: boolean;
   onSaved: () => void;
+  error: string;
+  clearError: () => void;
 }) {
   const { t } = useLocale();
   const [source, setSource] = useState(route.reply_source);
   const [senderPolicy, setSenderPolicy] = useState(route.sender_policy);
   const [accessMode, setAccessMode] = useState(route.access_mode);
-  const [automatic, setAutomatic] = useState(route.auto_reply);
+  const [enabled, setEnabled] = useState(route.enabled);
   return (
     <form
       className="grid gap-4 md:grid-cols-2"
@@ -476,10 +450,9 @@ function RouteAccess({
           await action(
             `routes/${route.id}`,
             {
+              enabled,
               sender_policy: senderPolicy,
               access_mode: accessMode,
-              auto_reply:
-                accessMode === "full" || (route.conversation_kind === "private" && automatic),
               allowed_user_ids:
                 senderPolicy === "any"
                   ? []
@@ -556,15 +529,37 @@ function RouteAccess({
           </FormField>
         </>
       )}
-      {route.conversation_kind === "private" && accessMode !== "full" && (
-        <div className="flex items-center gap-2">
-          <Switch id="edit-automatic" checked={automatic} onCheckedChange={setAutomatic} />
-          <Label htmlFor="edit-automatic">{t("Automatic replies")}</Label>
-        </div>
-      )}
-      <Button type="submit" variant="outline" disabled={busy}>
-        {t("Save access & binding")}
-      </Button>
+      <FormField id="route-enabled" label={t("Enable route")}>
+        <Switch id="route-enabled" checked={enabled} onCheckedChange={setEnabled} disabled={busy} />
+      </FormField>
+      <DialogFooter className="md:col-span-2">
+        <DeleteResource
+          label={t("Delete route")}
+          title={t("Delete route {name}?", { name: route.name })}
+          description={t(
+            "This removes the route and its conversation bindings, revokes its tokens, and blocks pending work. Message and reply history is retained. This cannot be undone.",
+          )}
+          path={`routes/${route.id}`}
+          action={action}
+          busy={busy}
+          error={error}
+          clearError={clearError}
+          onDeleted={onSaved}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy}
+          onClick={async () => {
+            if (await action(`routes/${route.id}/token`)) onSaved();
+          }}
+        >
+          {t("Rotate token")}
+        </Button>
+        <Button type="submit" disabled={busy}>
+          {t("Save access & binding")}
+        </Button>
+      </DialogFooter>
     </form>
   );
 }
@@ -585,9 +580,9 @@ function AccessMode({ value, onChange }: { value: string; onChange: (value: stri
       <p className="text-xs text-muted-foreground">
         {value === "full"
           ? t(
-              "Use the agent's configured tools and reply automatically. Applies only to this route, without gateway administrator access.",
+              "Use the agent's configured tools. Applies only to this route, without gateway administrator access.",
             )
-          : t("Limit connection tools and review group replies.")}
+          : t("Limit connection tools to those assigned to this route.")}
       </p>
     </FormField>
   );

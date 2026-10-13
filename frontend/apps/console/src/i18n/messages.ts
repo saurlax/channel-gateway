@@ -1,4 +1,43 @@
 export const chinese = {
+  "Delete agent host": "删除 Agent 宿主",
+  "Delete agent host {name}?": "删除 Agent 宿主 {name}？",
+  "This removes the host and its credentials, revokes its MCP key, disables assigned routes, and blocks pending work. Message and reply history is retained. This cannot be undone.":
+    "删除宿主及其凭据，撤销 MCP Key，禁用关联路由，并阻止待处理任务。消息和回复历史会保留，此操作无法撤销。",
+  "Delete route": "删除路由",
+  "Delete route {name}?": "删除路由 {name}？",
+  "This removes the route and its conversation bindings, revokes its tokens, and blocks pending work. Message and reply history is retained. This cannot be undone.":
+    "删除路由及其会话绑定，撤销令牌，并阻止待处理任务。消息和回复历史会保留，此操作无法撤销。",
+  "Connection deleted": "连接已删除",
+  "Route deleted": "路由已删除",
+  "No recent messages": "暂无近期消息",
+  Edit: "编辑",
+  Enabled: "已启用",
+  Disabled: "已停用",
+  "Enable route": "启用路由",
+  "Received message": "收到的消息",
+  "Loading…": "正在加载…",
+  "View conversation": "查看会话",
+  "Conversation history": "会话历史",
+  "Received messages and agent replies in chronological order.":
+    "按时间顺序显示收到的消息和 Agent 回复。",
+  "Channel conversations with received messages and agent replies. Refreshes every five seconds.":
+    "按会话查看收到的消息和 Agent 回复，每五秒刷新一次。",
+  "No conversations yet.": "暂无会话。",
+  "No messages in this conversation yet.": "此会话暂无消息。",
+  "Latest message": "最新消息",
+  "Updated at": "更新时间",
+  "Load earlier messages": "加载更早的消息",
+  "Agent reply": "Agent 回复",
+  "Delete channel": "删除渠道",
+  "Delete channel {name}?": "删除渠道 {name}？",
+  "Confirm deletion": "确认删除",
+  "Deleting…": "正在删除…",
+  Cancel: "取消",
+  "This removes the channel and its credentials, disables its routes, and blocks pending work. Message and reply history is retained. This cannot be undone.":
+    "删除渠道及其凭据，禁用关联路由，并阻止待处理任务。消息和回复历史会保留，此操作无法撤销。",
+  "Only channels can be deleted": "仅支持删除渠道",
+  "This route's channel has been deleted": "此路由的渠道已被删除",
+  "Channel deleted": "渠道已删除",
   "Use this token as an MCP bearer credential. It is shown once and grants access to this route. All-conversation routes include their concrete conversations.":
     "将此令牌作为 MCP Bearer 凭证。令牌仅显示一次，授予此路由的访问权限；任意会话路由包含其已接收的具体会话。",
   "All conversations": "任意会话",
@@ -14,9 +53,9 @@ export const chinese = {
   "Separate thread per conversation": "每个会话独立创建线程",
   "New conversations get separate threads. Specific routes take priority.":
     "新会话分别创建独立线程，指定会话的路由优先匹配。",
-  "Use the agent's configured tools and reply automatically. Applies only to this route, without gateway administrator access.":
-    "保留 Agent 已配置的工具权限并自动回复，仅作用于此路由，不授予网关管理员权限。",
-  "Limit connection tools and review group replies.": "限制连接工具，群聊回复需要审核。",
+  "Use the agent's configured tools. Applies only to this route, without gateway administrator access.":
+    "保留 Agent 已配置的工具权限，仅作用于此路由，不授予网关管理员权限。",
+  "Limit connection tools to those assigned to this route.": "仅使用分配给此路由的连接工具。",
   "Choose a received conversation": "选择已收到消息的会话",
   "Received channel messages, including conversations without a route. Refreshes every five seconds.":
     "显示收到的渠道消息，包括尚未配置路由的会话，每五秒刷新一次。",
@@ -24,8 +63,6 @@ export const chinese = {
     "暂无消息。向已连接的渠道发一条消息，即可查看发送者 ID。",
   "Use the sender and conversation IDs from this received message.":
     "使用此消息中的发送者和会话 ID 创建路由。",
-  "Restricted group routes require approval. Confirm that the draft is appropriate for everyone in the destination conversation.":
-    "受限权限的群聊路由需要审核，请确认草稿内容适合向目标会话中的所有成员公开。",
   unmatched: "未匹配路由",
   Username: "账号",
   Password: "密码",
@@ -133,14 +170,12 @@ export const chinese = {
   "Reply details": "回复详情",
   "Created at": "创建时间",
   Status: "状态",
-  Review: "审核",
-
   Breadcrumb: "面包屑导航",
   "Unable to read the server response.": "无法读取服务器响应。",
   Connections: "连接",
   "Routes & access": "路由与权限",
   Messages: "消息",
-  "Reply approvals": "回复审核",
+  Replies: "回复记录",
   Conversation: "会话",
   "Request failed.": "请求失败。",
   Refresh: "刷新",
@@ -162,11 +197,8 @@ export const chinese = {
   Action: "操作",
   "Not created": "尚未创建",
   Retry: "重试",
-  "Review the destination before sending": "发送前请检查目标会话",
-  "Group replies always require approval. Confirm that the draft is appropriate for everyone in the destination conversation.":
-    "群聊回复必须经过审核。请确认草稿内容适合向目标会话中的所有成员公开。",
-  "No reply drafts yet. Completed agent runs or MCP reply requests will appear here.":
-    "暂无回复草稿。Agent 运行完成后生成的回复或 MCP 回复请求会显示在这里。",
+  "No replies yet. Completed agent runs or MCP reply requests will appear here.":
+    "暂无回复。Agent 运行完成后生成的回复或 MCP 回复请求会显示在这里。",
   "Channel gateway": "渠道网关",
   Gateway: "网关",
   Activity: "活动",
@@ -219,7 +251,6 @@ export const chinese = {
   Access: "访问权限",
   "Created on first message": "收到首条消息时创建",
   "Automatic private reply": "私聊自动回复",
-  "Approval required": "需要审核",
   "Final run output": "运行最终输出",
   "MCP tools": "MCP 工具",
   "Enable {name}": "启用 {name}",
@@ -248,16 +279,12 @@ export const chinese = {
   "a13n MCP connection ID (optional)": "a13n MCP 连接 ID（可选）",
   "Use a dedicated MCP connection for this route. You can bind it after creating the route.":
     "为此路由使用专用 MCP 连接，也可以在创建路由后绑定。",
-  "Allow automatic replies to this user": "允许自动回复此用户",
-  "Group replies require administrator approval.": "群聊回复需要管理员审核。",
   "Create route": "创建路由",
   "{name}: allowed sender IDs": "{name}: 允许的发送者 ID",
   "a13n MCP connection ID": "a13n MCP 连接 ID",
   "Save access & binding": "保存权限与绑定",
   "Destination:": "目标会话：",
   "Reply text": "回复内容",
-  "Approve and send": "批准并发送",
-  Reject: "拒绝",
   "Toggle Sidebar": "切换侧边栏",
   Sidebar: "侧边栏",
   "Displays the mobile sidebar.": "显示移动端侧边栏。",
@@ -270,9 +297,8 @@ export const chinese = {
   completed: "已完成",
   failed: "失败",
   blocked: "已阻止",
-  draft: "待审核",
-  approved: "已批准",
   rejected: "已拒绝",
+  "Legacy draft retired; send a new message": "旧待审核草稿已停止处理，请发送新消息",
   sending: "发送中",
   sent: "已发送",
   unknown: "结果未知",
@@ -351,8 +377,6 @@ export const diagnostics: Record<string, string> = {
   "Invalid route access or reply policy": "路由权限或回复规则无效",
   "This MCP connection is already bound to another route": "此 MCP 连接已绑定其他路由",
   "Route changed; refresh before editing": "路由已变更，请刷新后再编辑",
-  "Only an existing draft can be approved": "只能批准现有的待审核草稿",
-  "Only an existing draft can be rejected": "只能拒绝现有的待审核草稿",
   "Only a failed event can be retried": "只能重试失败的消息",
   "Host request failed; check connection and Agent configuration":
     "宿主请求失败，请检查连接和 Agent 配置",
@@ -371,7 +395,6 @@ export const diagnostics: Record<string, string> = {
   "OneBots requires a self ID and webhook signing secret":
     "OneBots 需要机器人自身 ID 和 Webhook 签名密钥",
   "a13n does not accept OneBot identity fields": "a13n 不接受 OneBot 身份字段",
-  "Group replies require administrator approval": "群聊回复需要管理员审核",
   "A private route authorizes only its conversation user": "私聊路由只能授权该会话的用户",
   "Field required": "必填字段",
 };

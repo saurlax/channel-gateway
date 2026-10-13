@@ -8,27 +8,39 @@ from collections.abc import Awaitable, Callable
 from channel_gateway_core import Message
 
 from ..adapters import AdapterError, onebot_message
-from .common import event_object
+from ..storage import Store
+from .ingress import begin_event, event_type, ingest_parsed
 
 type ReceiveMessage = Callable[[dict, Message | None, dict | None], Awaitable[dict]]
 
 
 class OneBotSession:
-    def __init__(self, connection: dict, receive: ReceiveMessage, send: Callable[[str], Awaitable[None]]):
+    def __init__(self, connection: dict, receive: ReceiveMessage, send: Callable[[str], Awaitable[None]], store: Store):
         self.connection = connection
         self.receive = receive
         self.send = send
+        self.store = store
         self.pending: dict[str, asyncio.Future] = {}
 
     async def dispatch(self, raw: str | bytes) -> None:
-        event = event_object(raw)
+        identifier, event = await begin_event(self.store, self.connection, raw)
+        if identifier is None:
+            return
         echo = event.get("echo")
         if isinstance(echo, str) and echo in self.pending:
+            await self.store.finish_channel_event(identifier, "receipt", event_type=event_type(event))
             future = self.pending[echo]
             if not future.done():
                 future.set_result(event)
             return
-        await self.receive(self.connection, onebot_message(event, self.connection), None)
+        await ingest_parsed(
+            self.store,
+            self.connection,
+            identifier,
+            event,
+            self.receive,
+            lambda value: (onebot_message(value, self.connection), None),
+        )
 
     async def call(self, action: str, params: dict) -> dict:
         echo = "req_" + secrets.token_hex(16)

@@ -35,14 +35,22 @@ def response_object(response: httpx.Response, provider: str) -> dict:
     return value
 
 
-def identifier(value: object) -> str:
-    if isinstance(value, bool) or not isinstance(value, (int, str)) or not str(value) or len(str(value)) > 128:
+def identifier(value: object, *, max_length: int = 128) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, str)) or not str(value) or len(str(value)) > max_length:
         raise ValueError("Invalid channel identifier")
     return str(value)
 
 
 def text_message(
-    connection: dict, kind: str, conversation: str, sender: str, message_id: object, text: object, when: datetime
+    connection: dict,
+    kind: str,
+    conversation: str,
+    sender: str,
+    message_id: object,
+    text: object,
+    when: datetime,
+    *,
+    message_id_limit: int = 128,
 ) -> Message | None:
     if not isinstance(text, str) or not text.strip():
         return None
@@ -54,7 +62,7 @@ def text_message(
             account_id=connection["id"],
             conversation_id=f"{kind}:{identifier(conversation)}",
         ),
-        source_message_id=identifier(message_id),
+        source_message_id=identifier(message_id, max_length=message_id_limit),
         sender_id=identifier(sender),
         text=text,
         occurred_at=when,

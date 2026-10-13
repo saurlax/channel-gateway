@@ -54,9 +54,15 @@ conversation’s `id` as `route_id`:
 Messages become **Available to client**. The client actively reads them; MCP does
 not start an idle Codex session, and a read does not prove execution completion.
 Reading is repeatable, not a consuming inbox. Use source message IDs to avoid
-processing the same input twice. The tool reads CG’s received history, not native
-platform history. Reply requests remain drafts unless private automatic replies or full access
-were explicitly enabled. Restricted group replies require administrator approval.
+processing the same input twice. The tool reads CG's received text history,
+including messages observed before route creation or while delivery was disabled,
+under the current sender policy. Reading does not replay those messages as Agent
+work. It excludes raw event packets, private context tokens, and messages bound
+to deleted routes. All-conversation scopes discover previously observed authorized
+conversations when listed. This is not native platform history. Reply requests
+are queued and sent automatically after current route authorization
+checks, for private and group conversations. In **Messages → View conversation**, received messages and outgoing replies
+appear together in chronological order.
 
 ## Key scope and rotation
 
@@ -73,3 +79,12 @@ can obtain a key using this action. Upstream API credentials are unaffected.
 See the [access contract](../spec/02-identity-and-access.md#host-capabilities),
 [tool contract](../spec/04-agent-tools.md), and
 [delivery contract](../spec/03-routing-and-delivery.md#generic-mcp-delivery).
+
+## Remove a Host
+
+Open **Agent hosts → Manage → Delete agent host** and confirm its name. CG removes
+its upstream credentials and MCP key, disables assigned routes, and blocks pending
+work. Channel accounts and administrator message/reply history remain. Existing
+upstream runs or external requests already in flight cannot be cancelled by this
+operation. Delete the disabled routes separately if their source conversations
+should be bound to another Host.

@@ -24,7 +24,7 @@ other authorized channels before deciding where and how to respond.
 ## How it fits together
 
 The implemented bridge separates channel ingestion, host execution, and
-agent-facing communication tools. Restricted group replies pass through administrator approval; explicit full-access routes can reply automatically.
+agent-facing communication tools. Authorized private and group replies are sent automatically.
 
 ```mermaid
 flowchart LR
@@ -52,6 +52,12 @@ Channel Gateway is independent of [Agent Foundation (a13n)](https://github.com/c
 and [OneBots](https://github.com/lc-cn/onebots). The initial development layout
 follows a13n's Python/uv and React/TypeScript/Vite approach.
 
+Channel collection is independent of routing. Bounded authenticated incoming
+packets are retained in a private SQLite journal, including unsupported events
+and non-text message payloads. Routes govern Agent activation and MCP access;
+authorized MCP reads also include text collected before route creation or while
+delivery was disabled. Platform permissions still determine which messages reach CG.
+
 ## Run from source
 
 You need **Python 3.13**, [**uv**](https://docs.astral.sh/uv/), **Make**, **Node.js 24
@@ -69,8 +75,8 @@ make serve
 
 Open **<http://127.0.0.1:8310>** for the console and
 **<http://127.0.0.1:8310/api/docs>** for the API documentation. The console displays
-separate channel and Agent Host panels, conversation routes, received messages,
-and reply approvals. Management pages use a search toolbar and table; Add and
+separate channel and Agent Host panels, conversation routes, and conversation histories with received messages and
+Agent replies. Management pages use a search toolbar and table; Add and
 row actions open dialogs. Sign in
 with the account and password you configured. Follow the
 [OneBots and a13n setup guide](docs/onebots-a13n.md) or the

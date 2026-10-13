@@ -72,25 +72,36 @@ its resource type and creates only that type. Sidebar navigation uses static
 Gateway and Activity group labels with direct links below them; do not add
 collapsible group buttons or an additional Platform heading.
 
-Use a search toolbar followed by a table for channels, hosts, routes, messages,
-and reply approvals. Search the relevant displayed fields, preserve table headers
+Use a search toolbar followed by a table for channels, hosts, routes, and message
+conversations. Incoming messages and Agent replies share the same chronological
+conversation history, opened only from the Messages panel. Route rows have one
+Edit action; token rotation, enable/disable settings, and deletion are inside that
+dialog. Channel, Agent Host, and route management/edit dialogs expose deletion
+using the shared red outline button and official Alert Dialog confirmation. Do not add a
+separate reply activity page. Search the relevant displayed fields, preserve table headers
 for empty lists, and distinguish no records from no matches. Keep table overflow
 inside the table frame, including on mobile.
 
 Creation starts from an Add button in the toolbar and opens a shadcn Dialog.
-Editing credentials, route permissions, viewing details, and reviewing replies
+Editing credentials, route permissions, viewing details, and viewing reply details
 start from table row actions and open dialogs. Do not place permanent creation or
 per-record edit forms beside or below the list. Activity records are created by
 channel ingestion or agent execution and have no manual Add action.
 
-Use the official shadcn blocks, neutral theme, and components with minimal layout
-adjustments. Interface copy must not use middle-dot separators; use clear labels,
+Before changing console UI, consult the [official shadcn Blocks](https://ui.shadcn.com/blocks)
+and adapt the closest existing block's layout and interaction design. Retain its
+standard spacing, typography, component variants, and action placement. When no
+block covers the interaction, follow the [official component examples](https://ui.shadcn.com/docs/components):
+form actions use Dialog footers and destructive confirmation uses Alert Dialog.
+Keep the neutral theme and limit custom styling to necessary product and
+responsive adjustments; do not invent a custom design when an official pattern
+fits. Interface copy must not use middle-dot separators; use clear labels,
 or separate lines. Channel types use plain QQ and localized Weixin names, or
 OneBot followed by its transport, without parentheses. Dialogs need an accessible title and description, keyboard dismissal,
 focus restoration, inline errors, and a scrollable form on small screens. Preserve
 entered values on failure; close and clear form credentials after a successful
-save or cancellation. Keep group destination review and approval inside the reply
-dialog. Token displays remain in memory and appear only once in their own dialog.
+save or cancellation. Replies are read-only delivery records. Authorized private and group replies
+are sent automatically; do not add per-reply administrator review or decisions. Token displays remain in memory and appear only once in their own dialog.
 
 ## Console localization
 

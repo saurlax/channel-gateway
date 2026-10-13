@@ -19,7 +19,6 @@ import { api, ApiError, type AdminSession, type Snapshot } from "./api";
 import { Connections } from "@/components/connections";
 import { Routes } from "@/components/routes";
 import { Events } from "@/components/events";
-import { Replies } from "@/components/replies";
 import { ManagementDialog } from "@/components/management";
 import { Empty, FormField } from "@/components/form-controls";
 
@@ -28,7 +27,6 @@ const titles: Record<string, MessageKey> = {
   hosts: "Agent hosts",
   routes: "Routes & access",
   events: "Messages",
-  replies: "Reply approvals",
 };
 function readPage() {
   const hash = location.hash.slice(1);
@@ -63,6 +61,7 @@ export function App() {
   useEffect(() => {
     const change = () => {
       if (location.hash === "#connections") history.replaceState(null, "", "#channels");
+      if (location.hash === "#replies") history.replaceState(null, "", "#events");
       setPage(readPage());
       setError("");
     };
@@ -278,15 +277,7 @@ export function App() {
               {page === "events" && (
                 <Events
                   snapshot={snapshot}
-                  action={action}
-                  busy={busy}
-                  error={error}
-                  clearError={() => setError("")}
-                />
-              )}
-              {page === "replies" && (
-                <Replies
-                  snapshot={snapshot}
+                  csrfToken={csrfToken}
                   action={action}
                   busy={busy}
                   error={error}

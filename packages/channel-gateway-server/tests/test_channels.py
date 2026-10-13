@@ -54,6 +54,7 @@ class Providers:
         self.expired = False
         self.fail_send = False
         self.weixin_send_receipt = {"ret": 0}
+        self.qq_send_id = "qq-reply1"
 
     def __call__(self, request):
         self.requests.append(request)
@@ -84,7 +85,7 @@ class Providers:
             assert request.headers["authorization"] == "QQBot qq-access-token"
             if self.fail_send:
                 raise httpx.ReadTimeout("upstream private response")
-            return httpx.Response(200, json={"id": "qq-reply1"})
+            return httpx.Response(200, json={"id": self.qq_send_id})
         if request.method == "POST":
             return httpx.Response(
                 201, json={"thread": {"id": "thread1"}, "entry": {"id": "entry1"}, "run": {"id": "run1"}}
@@ -118,7 +119,34 @@ def add(client, **config):
     return response.json()
 
 
-def add_route(native, channel, *, group=False, automatic=True):
+@pytest.mark.parametrize("kind", ["qq", "weixin"])
+def test_delete_native_channel_stops_runtime_and_clears_pairing(native, kind):
+    import asyncio
+
+    client, app, _, _ = native
+    config = {"app_id": "app1", "app_secret": APP_SECRET} if kind == "qq" else {}
+    channel = add(client, kind=kind, **config)
+    identifier = channel["id"]
+
+    async def arrange():
+        task = asyncio.create_task(asyncio.Event().wait())
+        app.state.channels.tasks[identifier] = task
+        app.state.channels.logins[identifier] = {"id": "pending-login"}
+        await app.state.store.set_channel_state(identifier, "private-context", {"token": "private"})
+        return task
+
+    task = client.portal.call(arrange)
+    assert client.delete(f"/api/v1/connections/{identifier}").status_code == 200
+    assert task.cancelled()
+    assert identifier not in app.state.channels.tasks
+    assert identifier not in app.state.channels.logins
+    assert identifier not in app.state.channels.states
+    assert not client.portal.call(
+        app.state.store.rows, "SELECT * FROM channel_state WHERE connection_id=?", (identifier,)
+    )
+
+
+def add_route(native, channel, *, group=False):
     client, _, _, host = native
     response = client.post(
         "/api/v1/routes",
@@ -130,7 +158,6 @@ def add_route(native, channel, *, group=False, automatic=True):
             "conversation_kind": "group" if group else "private",
             "conversation_id": "group1" if group else "user1",
             "allowed_user_ids": ["user1"],
-            "auto_reply": automatic and not group,
         },
     )
     assert response.status_code == 201, response.text
@@ -147,6 +174,71 @@ def qq_hook(native, channel, event, *, valid=True):
         content=raw,
         headers={"X-Signature-Timestamp": timestamp, "X-Signature-Ed25519": signature},
     )
+
+
+@pytest.mark.parametrize("variant", ["unmatched", "notice", "media", "invalid", "bot"])
+def test_qq_archives_verified_events_without_a_route(native, variant):
+    client, app, _, _ = native
+    channel = add(client, kind="qq", transport="webhook", app_id="app1", app_secret=APP_SECRET)
+    event = qq_event(group=True)
+    if variant == "notice":
+        event = {"op": 0, "t": "GROUP_ADD_ROBOT", "d": {"group_openid": "group1"}}
+    elif variant == "media":
+        event["d"].update(content="", attachments=[{"url": "https://media.test/image", "content_type": "image/png"}])
+    elif variant == "invalid":
+        event["d"].pop("author")
+    elif variant == "bot":
+        event["d"]["author"]["bot"] = True
+    assert qq_hook(native, channel, event, valid=False).status_code == 401
+    response = qq_hook(native, channel, event)
+    assert response.status_code == (422 if variant == "invalid" else 200)
+    rows = client.portal.call(app.state.store.rows, "SELECT * FROM channel_events WHERE channel_id=?", (channel["id"],))
+    assert len(rows) == 1
+    assert json.loads(rows[0]["payload"]) == event
+    assert rows[0]["event_type"] == event["t"]
+    assert rows[0]["state"] == {"unmatched": "blocked", "invalid": "invalid"}.get(variant, "ignored")
+    assert not client.portal.call(app.state.store.pending)
+    assert "media.test" not in client.get("/api/v1/events").text
+
+
+def test_qq_archive_failure_does_not_advance_gateway_resume(native, monkeypatch):
+    import sqlite3
+
+    client, app, _, _ = native
+    channel = add(client, kind="qq", app_id="app1", app_secret=APP_SECRET)
+    stored = client.portal.call(app.state.store.connection, channel["id"])
+
+    async def scenario():
+        async def archive_failed(*args):
+            raise sqlite3.OperationalError("Disk unavailable")
+
+        class Socket:
+            async def close(self):
+                pass
+
+        runtime = QQGateway(app.state.channels.qq(stored), app.state.store, app.state.bridge.ingest, lambda state: None)
+        runtime.session = {"session_id": "existing", "seq": 1}
+        await app.state.store.set_channel_state(channel["id"], "qq_gateway", runtime.session)
+        monkeypatch.setattr(app.state.store, "archive_channel_event", archive_failed)
+        with pytest.raises(sqlite3.OperationalError):
+            await runtime.dispatch({"op": 0, "t": "GROUP_ADD_ROBOT", "s": 2, "d": {}}, Socket())
+        assert (await app.state.store.channel_state(channel["id"], "qq_gateway"))["seq"] == 1
+        assert not await app.state.store.events()
+
+    client.portal.call(scenario)
+
+
+def test_qq_duplicate_arrivals_are_archived_without_duplicate_delivery(native):
+    client, app, _, _ = native
+    channel = add(client, kind="qq", transport="webhook", app_id="app1", app_secret=APP_SECRET)
+    add_route(native, channel)
+    for _ in range(2):
+        assert qq_hook(native, channel, qq_event()).status_code == 200
+    rows = client.portal.call(app.state.store.rows, "SELECT * FROM channel_events ORDER BY rowid")
+    assert [row["state"] for row in rows] == ["accepted", "duplicate"]
+    assert len({row["message_event_id"] for row in rows}) == 1
+    assert len(client.portal.call(app.state.store.pending)) == 1
+    assert b"qq-access-token" not in b"".join(row["payload"] for row in rows)
 
 
 @pytest.mark.parametrize("group", [False, True])
@@ -172,12 +264,6 @@ def test_qq_signed_ingress_durable_host_delivery_and_reply(native, group):
     host_request = next(r for r in provider.requests if r.url.path.endswith("/threads"))
     assert '"channel": "qq"' in json.loads(host_request.content)["payload"]["content"][0]["text"]
     client.portal.call(app.state.bridge.tick)
-    reply = client.get("/api/v1/replies").json()[0]
-    if group:
-        assert reply["state"] == "draft"
-        assert not any(r.url.path.endswith("/messages") for r in provider.requests)
-        client.post(f"/api/v1/replies/{reply['id']}/approve", json={"text": "Reviewed reply"})
-        client.portal.call(app.state.bridge.tick)
     assert client.get("/api/v1/replies").json()[0]["state"] == "sent"
     outgoing = [r for r in provider.requests if r.url.path.endswith("/messages")]
     assert len(outgoing) == 1
@@ -205,6 +291,34 @@ def test_qq_callback_challenge_and_unknown_send(native):
     assert client.get("/api/v1/replies").json()[0]["state"] == "unknown"
     client.portal.call(app.state.bridge.tick)
     assert len([r for r in provider.requests if r.url.path.endswith("/messages")]) == 1
+
+
+@pytest.mark.parametrize("group", [False, True])
+def test_qq_long_message_ids_are_preserved_through_ingress_and_passive_replies(native, group):
+    client, app, provider, _ = native
+    channel = add(client, kind="qq", transport="webhook", app_id="app1", app_secret=APP_SECRET)
+    add_route(native, channel, group=group)
+    incoming_id = "ROBOT1.0_" + "a" * 128
+    provider.qq_send_id = "ROBOT1.0_" + "b" * 128
+    event = qq_event(group=group, mid=incoming_id)
+    for _ in range(2):
+        assert qq_hook(native, channel, event).status_code == 200
+    stored = client.get("/api/v1/events").json()
+    assert len(stored) == 1 and stored[0]["message"]["source_message_id"] == incoming_id
+    client.portal.call(app.state.bridge.tick)
+    client.portal.call(app.state.bridge.tick)
+    outgoing = [r for r in provider.requests if r.url.path.endswith("/messages")]
+    assert len(outgoing) == 1 and json.loads(outgoing[0].content)["msg_id"] == incoming_id
+    reply = client.get("/api/v1/replies").json()[0]
+    assert reply["state"] == "sent" and reply["message_id"] == provider.qq_send_id
+
+
+def test_qq_message_id_bound_does_not_expand_sender_or_conversation_bounds():
+    connection = {"id": "conn_test", "kind": "qq"}
+    with pytest.raises(ValueError, match="Invalid channel identifier"):
+        qq_message(qq_event(group=True, mid="m" * 1025), connection)
+    with pytest.raises(ValueError, match="Invalid channel identifier"):
+        qq_message(qq_event(group=True, mid="m" * 137, sender="u" * 129), connection)
 
 
 def test_weixin_pairing_account_binding_cancellation_and_redaction(native):
@@ -269,7 +383,7 @@ def test_weixin_context_is_private_and_account_scoped(native, receipt):
     assert body["msg"]["to_user_id"] == "user1"
     replies = client.get("/api/v1/replies").json()
     assert replies[0]["state"] == "sent" and replies[0]["message_id"] == body["msg"]["client_id"]
-    reply = client.portal.call(app.state.store.draft, second_route, "Do not cross accounts")
+    reply = client.portal.call(app.state.store.queue_reply, second_route, "Do not cross accounts")
     client.portal.call(app.state.bridge.send, reply)
     assert client.get("/api/v1/replies").json()[0]["state"] == "blocked"
     # A revoked context sender cannot authorize a new tool reply.
@@ -281,7 +395,6 @@ def test_weixin_context_is_private_and_account_scoped(native, receipt):
             **{k: v for k, v in configured.items() if k not in {"id", "thread_id", "agent_token"}},
             "conversation_kind": "group",
             "conversation_id": "g1",
-            "auto_reply": False,
         },
     )
     assert bad_group.status_code == 422
@@ -305,7 +418,12 @@ def test_weixin_poll_cursor_commits_after_ingestion_and_session_expiry(native):
                         200,
                         json={
                             "ret": 0,
-                            "msgs": [wx_event(), wx_event(user="intruder", mid=2)],
+                            "msgs": [
+                                wx_event(),
+                                wx_event(user="intruder", mid=2),
+                                {**wx_event(mid=4), "item_list": [{"type": 2, "image_item": {"url": "media"}}]},
+                                None,
+                            ],
                             "get_updates_buf": "cursor1",
                         },
                     )
@@ -320,6 +438,10 @@ def test_weixin_poll_cursor_commits_after_ingestion_and_session_expiry(native):
             await asyncio.wait_for(seen.wait(), 2)
             assert await app.state.store.channel_state(channel["id"], "weixin_cursor") == {"cursor": "cursor1"}
             assert len(await app.state.store.events()) == 2
+            archived = await app.state.store.rows("SELECT * FROM channel_events ORDER BY rowid")
+            assert [row["state"] for row in archived] == ["accepted", "blocked", "ignored", "invalid"]
+            assert json.loads(archived[2]["payload"])["item_list"][0]["type"] == 2
+            assert json.loads(archived[3]["payload"]) is None
             assert (
                 json.loads([r for r in calls if r.url.path.endswith("getupdates")][1].content)["get_updates_buf"]
                 == "cursor1"
@@ -396,9 +518,9 @@ def test_reverse_websocket_auth_receipts_rotation_and_offline_deferral(native):
     ):
         with pytest.raises(WebSocketDisconnect), client.websocket_connect(path, headers=bad):
             pass
-    reply = client.portal.call(app.state.store.draft, configured, "Hello")
+    reply = client.portal.call(app.state.store.queue_reply, configured, "Hello")
     client.portal.call(app.state.bridge.send, reply)
-    assert client.get("/api/v1/replies").json()[0]["state"] == "approved"
+    assert client.get("/api/v1/replies").json()[0]["state"] == "queued"
     with client.websocket_connect(path, headers=headers) as socket:
         with pytest.raises(WebSocketDisconnect), client.websocket_connect(path, headers=headers):
             pass
@@ -433,7 +555,7 @@ def test_onebot_pending_receipt_disconnect_is_unknown(native):
     client, app, _, _ = native
     channel = add(client, kind="onebots", transport="ws_reverse", self_id="99", token="bot-token")
     configured = add_route(native, channel)
-    reply = client.portal.call(app.state.store.draft, configured, "One attempt")
+    reply = client.portal.call(app.state.store.queue_reply, configured, "One attempt")
 
     async def scenario():
         started = asyncio.Event()
@@ -445,7 +567,7 @@ def test_onebot_pending_receipt_disconnect_is_unknown(native):
             return {"state": "ignored"}
 
         stored = await app.state.store.connection(channel["id"])
-        session = OneBotSession(stored, receive, send)
+        session = OneBotSession(stored, receive, send, app.state.store)
         app.state.channels.sessions[channel["id"]] = session
         sending = asyncio.create_task(app.state.bridge.send(reply))
         await started.wait()
@@ -540,6 +662,8 @@ def test_qq_gateway_identify_resume_and_persistence_failure(native):
         runtime = QQGateway(qq, app.state.store, receive, lambda state: None)
         socket = Socket([{"op": 0, "t": "READY", "s": 1, "d": {"session_id": "session1"}}, qq_event()])
         await runtime.run(socket)
+        archives = await app.state.store.rows("SELECT * FROM channel_events ORDER BY rowid")
+        assert [row["event_type"] for row in archives] == ["opcode:10", "READY", "C2C_MESSAGE_CREATE"]
         assert socket.sent[0]["op"] == 2 and socket.sent[0]["d"]["intents"] == 1 << 25
         assert await app.state.store.channel_state(channel["id"], "qq_gateway") == {"session_id": "session1", "seq": 2}
         resume = Socket([])
@@ -551,6 +675,17 @@ def test_qq_gateway_identify_resume_and_persistence_failure(native):
 
         runtime.receive = failed
         with pytest.raises(RuntimeError):
+            await runtime.dispatch({**qq_event(), "s": 3}, resume)
+        assert (await app.state.store.channel_state(channel["id"], "qq_gateway"))["seq"] == 2
+        assert (await app.state.store.rows("SELECT * FROM channel_events ORDER BY rowid DESC LIMIT 1"))[0][
+            "state"
+        ] == "received"
+
+        async def value_error(*args):
+            raise ValueError("Receiver failure must not be classified as invalid input")
+
+        runtime.receive = value_error
+        with pytest.raises(ValueError, match="Receiver failure"):
             await runtime.dispatch({**qq_event(), "s": 3}, resume)
         assert (await app.state.store.channel_state(channel["id"], "qq_gateway"))["seq"] == 2
         await runtime.dispatch({"op": 9, "d": False}, resume)
@@ -744,7 +879,7 @@ def test_weixin_any_sender_full_access_replies_with_authorized_context(native):
     # Any sender still needs an actual authenticated incoming reply context.
     child = client.portal.call(app.state.store.conversation_route, parent, "no-context")
     assert "agent_token" not in child
-    reply = client.portal.call(app.state.store.draft, child, "Missing context")
+    reply = client.portal.call(app.state.store.queue_reply, child, "Missing context")
     client.portal.call(app.state.bridge.send, reply)
     assert client.get("/api/v1/replies").json()[0]["state"] == "blocked"
     assert len([request for request in provider.requests if request.url.path.endswith("sendmessage")]) == 1

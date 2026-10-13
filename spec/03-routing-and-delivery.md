@@ -16,6 +16,19 @@ queued/submitted input per route advances, preserving attribution of a run's
 output to its source input. This is per-route sequencing, not concurrent or
 distributed worker scheduling.
 
+Administrator-only `DELETE /api/v1/routes/{id}` removes an active route and any
+concrete children of an all-conversation parent. One transaction blocks pending
+inputs and queued replies, clears their private incoming reply contexts, archives
+the source identity, policy and thread binding without token hashes, and releases
+the account/conversation uniqueness constraint. Removed route tokens no longer
+authorize MCP. Historical received messages, observations, replies, and receipts
+remain readable through administrator conversation history. Recreating the same
+source creates a new route identity and thread binding; it does not replay old
+inputs or restore an archived token. In-flight external requests or Agent runs
+cannot be retracted. Creating routes or children and updating bindings recheck
+resource existence in their storage transaction so deletion cannot be undone by
+a stale configuration write.
+
 ## All-conversation routes and identity discovery
 
 `conversation_id: "*"` creates an all-conversation route for one channel account
@@ -28,6 +41,10 @@ its parent at every authorization boundary. Parent edits apply to existing
 children; child access cannot be independently edited. The console lists parent
 configuration; management API views also expose concrete children and bindings.
 The source tuple remains unique and cannot fan out.
+MCP listing also materializes authorized previously observed conversations under
+an enabled `*` route, without queuing old inputs or creating upstream threads.
+Existing exact routes take priority even when disabled or assigned to another
+Host; history discovery cannot override that assignment.
 
 All-conversation a13n routes use final-output replies and cannot bind a single
 dedicated a13n MCP connection across their children. Generic MCP routes support
@@ -38,11 +55,18 @@ Verified supported messages without a route appear in management as `unmatched`,
 with nullable `route_id`. Denied ingress appears as `blocked`, also without a
 route binding. Both are durable administrator observations, deduplicated by the
 same account/conversation/source-message identity as delivered inputs. They
-never enter the worker queue or MCP history. Adding a route or provider
-redelivery does not replay them. A new message is required after configuration.
+never enter the worker queue. MCP can read their text after the source
+conversation and sender are authorized by its current route. Adding a route or
+provider redelivery does not replay them as Agent work. A new message is required
+to trigger execution after configuration.
 Earlier messages discarded by older versions cannot be recovered from local
 state. Pairing credentials and reply-context tokens are never included in these
 observations.
+
+Channel collection precedes routing: every bounded authenticated packet is
+retained under the [channel-event journal contract](01-channel-adapters.md#route-independent-event-retention),
+including events that cannot be projected to a supported text message. Route
+selection controls Agent delivery and capability access, never packet retention.
 
 ## Input lifecycle
 
@@ -105,46 +129,78 @@ clients choose their own polling and deduplication strategy using source message
 identities. Available history is always filtered by current access at tool time.
 
 No MCP notification, background client wakeup, or autonomous client run is
-promised. Clients request replies through MCP under the existing approval rules.
+promised. Clients request replies through MCP under the current route authorization rules.
 The gateway cannot infer that a client has finished processing a message.
 
 ## Reply lifecycle
 
 | Durable state | Meaning                                                                |
 | ------------- | ---------------------------------------------------------------------- |
-| `draft`       | Text awaits administrator review                                       |
-| `approved`    | Text is eligible for sending after current authorization checks        |
-| `rejected`    | Administrator rejected the draft                                       |
+| `queued`      | Text awaits automatic sending after current authorization checks       |
 | `sending`     | CG claimed the reply and may have issued the external request          |
 | `sent`        | A confirmed channel acceptance receipt is persisted                    |
 | `blocked`     | Route or linked-source authorization prevents sending                  |
 | `unknown`     | Delivery may have happened, but CG has no confirmed successful outcome |
 
+Both completed Agent output and MCP reply requests create queued replies for
+private and group conversations. There is no approve/reject API or manual review
+step. Permission mode controls a13n connection-tool selection, not sending policy.
+The worker rechecks route/source access, claims a queued reply, and issues one
+channel request. Disabling the route or revoking a linked input's sender blocks
+pending replies before sending.
+
 OneBot and QQ receipts contain platform message IDs; Weixin acceptance receipts
 use CG's client ID because the provider returns no platform message ID. `sent`
 does not prove recipient delivery/reading. Offline OneBot sockets and unpaired
-Weixin accounts leave replies `approved` until ready. Missing authorized native
+Weixin accounts leave replies `queued` until ready. Missing authorized native
 reply context becomes `blocked` before any send request; native platform reply
 windows still apply. [Channel adapters](01-channel-adapters.md) owns these protocol
 constraints and private context handling.
 
-Restricted group replies begin as drafts. Private replies begin approved only
-when the route explicitly enables automatic replies. Full-access routes enable
-automatic replies for their supported conversation kinds. If an automatic
-reply loses that permission before sending, it returns to `draft`; an explicit
-administrator approval remains distinct from automatic approval. An administrator can edit and
-approve, or reject, an existing draft; a non-draft decision returns a conflict.
-Approval does not itself prove sending.
+A timeout, rejected/malformed receipt, or interrupted sending request produces
+`unknown`; the baseline conservatively does not assume that such an operation is
+safe to repeat. On restart, persisted `sending` replies become `unknown`. Unknown
+replies are never automatically retransmitted, and no manual resend operation is
+defined. Verify the channel before separately deciding whether another message is
+necessary.
 
-The worker rechecks route/source access, claims an approved reply, and issues one
-channel request. A timeout, rejected/malformed receipt, or interrupted sending
-request produces `unknown`; the baseline conservatively does not assume that
-such an operation is safe to repeat. On restart, persisted `sending` replies
-become `unknown`. Unknown replies are never automatically retransmitted, and no
-manual resend operation is defined. Verify the channel before separately deciding
-whether another message is necessary.
+For existing databases, startup converts previously approved replies to `queued`
+and retires unreviewed drafts as `blocked` with a diagnostic; old drafts are never
+silently sent. Historical rejected, sent, blocked, and unknown records remain
+unchanged. Stored `auto_reply` settings are removed without changing sender access
+or Agent tool permission mode. New route inputs and updates reject that removed
+field. The console includes outgoing records in message conversation history, without
+reply editing, decisions, or a separate reply page.
 
 Input deduplication and Host idempotency do not imply exactly-once channel replies.
-Channel sending provides no external idempotency guarantee in this baseline. Persisted
-drafts, thread binding, and confirmed receipts survive restart without resending
-completed work.
+Channel sending provides no external idempotency guarantee in this baseline.
+Queued replies, thread binding, and confirmed receipts survive restart without
+resending completed work.
+
+## Administrator conversation history
+
+`GET /api/v1/history` requires an administrator session and the exact
+`channel_id`, `conversation_kind`, and `conversation_id`. It merges accepted
+incoming events, unmatched/blocked observations, and replies for that source
+account and concrete conversation. Incoming records have direction `incoming`;
+replies have direction `outgoing`. Parent all-conversation routes are not history
+destinations: Messages lists concrete conversations separately.
+
+Records expose ID, route ID, text, sender ID for incoming messages, delivery state,
+error, creation time, and any thread/run identifiers. They expose no credentials,
+private reply contexts, or frozen Host request bodies. Legacy incoming events
+without an address use their retained route's source identity. This is an
+administrator history API, independent of MCP capabilities; MCP conversation
+reads continue to return authorized incoming messages only.
+
+History uses persistence creation time and ID for deterministic chronological
+ordering. Each request reads the newest 100 records by default, with `limit`
+bounded to 1–100, and returns `messages` in ascending order plus `has_more`.
+Earlier pages require both `before_created_at` and `before_id` from the oldest
+record of the current page; the cursor uses an exclusive comparison. The console
+can load earlier messages and refresh the latest page without duplicating entries.
+The conversation overview combines recent activity with enabled concrete routes,
+so older route histories remain accessible. Conversation history opens only from
+Messages; route rows expose one Edit action with token rotation and enable/disable
+settings inside its dialog. Failed incoming deliveries retain their administrator
+retry action in conversation history.

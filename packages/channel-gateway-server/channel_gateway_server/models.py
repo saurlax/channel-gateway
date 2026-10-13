@@ -126,22 +126,17 @@ class RouteInput(Contract):
     access_mode: Literal["restricted", "full"] = "restricted"
     agent_id: Identifier | None = None
     enabled: bool = True
-    auto_reply: bool = False
     reply_source: Literal["output", "mcp"] = "output"
     mcp_connection_id: Identifier | None = None
 
     @model_validator(mode="after")
     def reply_policy(self) -> "RouteInput":
-        if self.access_mode == "full":
-            self.auto_reply = True
         if self.sender_policy == "allowlist" and not self.allowed_user_ids:
             raise ValueError("Allowlist routes require at least one sender ID")
         if self.sender_policy == "any" and self.allowed_user_ids:
             raise ValueError("Any-sender routes do not use an allowlist")
         if self.conversation_id == "*" and self.mcp_connection_id:
             raise ValueError("All-conversation routes cannot use a dedicated a13n MCP connection")
-        if self.conversation_kind == "group" and self.auto_reply and self.access_mode != "full":
-            raise ValueError("Group replies require administrator approval")
         if (
             self.conversation_kind == "private"
             and self.conversation_id != "*"
@@ -161,7 +156,6 @@ def route_allows_sender(route: dict, sender: str) -> bool:
 class RouteUpdate(Contract):
     sender_policy: Literal["allowlist", "any"] | None = None
     access_mode: Literal["restricted", "full"] | None = None
-    auto_reply: bool | None = None
     enabled: bool | None = None
     allowed_user_ids: SenderIds | None = None
     reply_source: Literal["output", "mcp"] | None = None

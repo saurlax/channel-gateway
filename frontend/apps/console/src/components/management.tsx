@@ -90,7 +90,7 @@ export function ManagementDialog({
   return (
     <Dialog open={open} onOpenChange={(value) => !busy && onOpenChange(value)}>
       <DialogContent
-        className={`max-h-[90svh] overflow-y-auto ${wide ? "sm:max-w-2xl" : ""}`}
+        className={`max-h-[90svh] overflow-y-auto ${wide ? "w-[calc(100%-2rem)] sm:max-w-2xl" : ""}`}
         onOpenAutoFocus={() => {
           opener.current =
             document.activeElement instanceof HTMLElement ? document.activeElement : null;

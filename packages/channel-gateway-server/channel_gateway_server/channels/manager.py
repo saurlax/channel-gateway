@@ -16,6 +16,7 @@ from ..adapters import AdapterError, HttpAdapters
 from ..models import route_allows_sender, weixin_url
 from ..storage import Store
 from .common import MAX_EVENT_BYTES, SendBlocked, identifier
+from .ingress import ProjectionError, ingest_event
 from .onebot import OneBotSession, ReceiveMessage
 from .qq import QQClient, QQGateway, gateway_url
 from .weixin import WEIXIN_BASE, LoginRequired, WeixinClient, qr_image, weixin_message
@@ -177,7 +178,7 @@ class ChannelManager:
         current = await self.store.connection(identifier)
         if current != connection:
             raise AdapterError("Connection changed; reconnect")
-        session = OneBotSession(connection, self.ingest, send)
+        session = OneBotSession(connection, self.ingest, send, self.store)
         self.sessions[identifier] = session
         self.session_closers[identifier] = close
         self.set_status(identifier, "connected")
@@ -185,7 +186,7 @@ class ChannelManager:
             async for raw in incoming:
                 try:
                     await session.dispatch(raw)
-                except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                except ProjectionError:
                     self.set_status(identifier, "connected", "Invalid channel event was ignored")
         finally:
             session.disconnected()
@@ -233,16 +234,19 @@ class ChannelManager:
                 if not isinstance(batch.get("msgs", []), list):
                     raise AdapterError("Weixin returned an invalid update batch")
                 for raw in batch.get("msgs", []):
-                    try:
-                        message = weixin_message(raw, connection)
-                        token = raw.get("context_token")
+
+                    def project(value: dict) -> tuple[Message | None, dict | None]:
+                        message = weixin_message(value, connection)
+                        token = value.get("context_token")
                         if token is not None and (not isinstance(token, str) or len(token) > 16384):
                             raise ValueError("Invalid reply context")
-                        context = {"context_token": token} if token else None
-                    except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                        return message, {"context_token": token} if token else None
+
+                    try:
+                        await ingest_event(self.store, connection, raw, self.ingest, project)
+                    except ProjectionError:
                         self.set_status(connection["id"], "connected", "Invalid channel event was ignored")
                         continue
-                    await self.ingest(connection, message, context)
                 next_cursor = batch.get("get_updates_buf")
                 if isinstance(next_cursor, str) and next_cursor:
                     await self.store.set_channel_state(connection["id"], "weixin_cursor", {"cursor": next_cursor})

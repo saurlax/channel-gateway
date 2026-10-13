@@ -88,8 +88,8 @@ jobs:
             --env CG_ADMIN_PASSWORD=container-smoke-test-password \
             "$image")
           trap 'docker logs "$container"; docker rm --force "$container"' EXIT
-          curl --fail --silent --show-error --retry 15 --retry-connrefused \
-            --retry-delay 1 --retry-max-time 30 http://127.0.0.1:18080/healthz
+          curl --fail --silent --show-error --retry 15 --retry-all-errors \
+            --retry-delay 1 --retry-max-time 30 --max-time 3 http://127.0.0.1:18080/healthz
           curl --fail --silent --show-error http://127.0.0.1:18080/ | grep -q '<html'
           curl --fail --silent --show-error --request POST \
             --header 'Content-Type: application/json' \

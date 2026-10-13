@@ -67,6 +67,7 @@ jobs:
           tags: |
             type=raw,value=latest
             type=raw,value=main
+            type=raw,value=dev
             type=sha,format=long
       - name: Build runtime image
         uses: docker/build-push-action@v7

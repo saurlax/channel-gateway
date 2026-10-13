@@ -9,9 +9,9 @@ includes the console and is checked for startup, health, console delivery, and
 administrator login before publication. No registry token needs to be added to
 repository secrets; publishing uses the workflow's scoped `GITHUB_TOKEN`.
 
-Tags are `latest`, `main`, and `sha-<full commit SHA>`. Prefer the commit tag for
-an explicit deployment and use the published digest when an immutable reference
-is needed. Image metadata links the package to this repository and source commit.
+Tags are `dev`, `latest`, `main`, and `sha-<full commit SHA>`. The first three
+point to the same latest successful `main` publication. Use the commit tag or published digest when an immutable
+reference is needed. Image metadata links the package to its source commit.
 Make the GHCR package public for anonymous platform pulls; private packages need
 a read-only registry credential configured in the hosting platform.
 

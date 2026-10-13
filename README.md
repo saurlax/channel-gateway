@@ -61,8 +61,9 @@ delivery was disabled. Platform permissions still determine which messages reach
 ## Run from source
 
 You need **Python 3.13**, [**uv**](https://docs.astral.sh/uv/), **Make**, **Node.js 24
-or later**, and **pnpm 10.34.5** for the console. There are no published packages or
-container images yet.
+or later**, and **pnpm 10.34.5** for the console. Python packages are not published
+yet. Linux AMD64 container images are available from
+`ghcr.io/saurlax/channel-gateway`; see the [deployment guide](docs/deployment.md).
 
 ```bash
 git clone https://github.com/saurlax/channel-gateway.git

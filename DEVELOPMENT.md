@@ -140,5 +140,8 @@ output is bundled into the server package when built, and is not committed.
 Installed Python packages do not require Node.js. A headless package can be built
 without console assets; `make build` includes the console.
 
-No release or publication automation is configured yet. Versioning and supported
-adapter contracts will be established before publishing packages.
+CI publishes the checked Linux AMD64 container to GHCR on `main` pushes and
+manual runs on `main`, with `main`, `latest`, and full commit SHA tags. Python
+package releases are not automated. Versioning and supported adapter contracts
+will be established before publishing Python packages. Deployment and image
+rollback instructions live in [docs/deployment.md](docs/deployment.md).

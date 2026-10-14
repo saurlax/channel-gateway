@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Waypoints } from "lucide-react";
 
 export function LoginForm({
   onLogin,
@@ -37,15 +36,6 @@ export function LoginForm({
   }
   return (
     <div className={cn("flex flex-col gap-6", className)}>
-      <div className="flex items-center justify-center gap-3">
-        <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <Waypoints className="size-5" aria-hidden="true" />
-        </div>
-        <div>
-          <p className="text-sm font-medium">Channel Gateway</p>
-          <p className="text-xs text-muted-foreground">{t("Channel gateway")}</p>
-        </div>
-      </div>
       <Card>
         <CardHeader>
           <CardTitle>{t("Sign in to Channel Gateway")}</CardTitle>

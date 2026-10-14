@@ -8,9 +8,9 @@ direct official platform connections. See the
 
 ## Connect a channel and host
 
-1. Set `CG_ADMIN_USERNAME` and `CG_ADMIN_PASSWORD` to your administrator
+1. Set `CGW_ADMIN_USERNAME` and `CGW_ADMIN_PASSWORD` to your administrator
    account and password of at least 8 characters.
-   Set `CG_DATA_DIR` to a private persistent directory and start
+   Set `CGW_DATA_DIR` to a private persistent directory and start
    `make serve`. Open the console and sign in with that account and password.
 2. In **Channels**, select **Add channel**, choose **OneBot reverse HTTP**,
    and add one account. The API

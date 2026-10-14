@@ -26,8 +26,8 @@ authorization is decided by the route sender policy, not by the message body.
 
 ## Administrator and credential handling
 
-Management uses one administrator account configured by `CG_ADMIN_USERNAME`
-and `CG_ADMIN_PASSWORD`; neither has a default. The username is 1-128 characters
+Management uses one administrator account configured by `CGW_ADMIN_USERNAME`
+and `CGW_ADMIN_PASSWORD`; neither has a default. The username is 1-128 characters
 and the password 8-4096 characters. The same length constraint applies to
 local and remote deployments. Configuring only one or an invalid length
 refuses startup. Without either, management and login return HTTP 503 while

@@ -135,19 +135,19 @@ def test_https_cookie_and_session_do_not_grant_mcp_access(tmp_path):
         )
 
 
-def test_settings_use_only_the_three_ac_environment_variables(tmp_path, monkeypatch):
-    monkeypatch.setenv("CG_ADMIN_USERNAME", "operator")
-    monkeypatch.setenv("CG_ADMIN_PASSWORD", PASSWORD)
-    monkeypatch.setenv("CG_DATA_DIR", str(tmp_path))
+def test_settings_use_only_the_three_cgw_environment_variables(tmp_path, monkeypatch):
+    monkeypatch.setenv("CGW_ADMIN_USERNAME", "operator")
+    monkeypatch.setenv("CGW_ADMIN_PASSWORD", PASSWORD)
+    monkeypatch.setenv("CGW_DATA_DIR", str(tmp_path))
     settings = Settings.from_env()
     assert (
         settings.admin_username == "operator" and settings.admin_password == PASSWORD and settings.data_dir == tmp_path
     )
     assert PASSWORD not in repr(settings)
-    monkeypatch.delenv("CG_ADMIN_USERNAME")
-    monkeypatch.delenv("CG_ADMIN_PASSWORD")
+    monkeypatch.delenv("CGW_ADMIN_USERNAME")
+    monkeypatch.delenv("CGW_ADMIN_PASSWORD")
     monkeypatch.setenv("CHANNEL_GATEWAY_ADMIN_TOKEN", "legacy-not-supported")
-    monkeypatch.setenv("CG_ADMIN_TOKEN", "legacy-not-supported")
+    monkeypatch.setenv("CGW_ADMIN_TOKEN", "legacy-not-supported")
     with TestClient(create_app(settings=Settings.from_env())) as client:
         assert client.get("/api/v1/status").json()["management_configured"] is False
         assert client.post("/api/v1/auth/login", json={"username": "admin", "password": PASSWORD}).status_code == 503

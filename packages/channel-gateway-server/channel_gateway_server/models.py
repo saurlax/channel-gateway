@@ -23,9 +23,9 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            admin_username=os.getenv("CG_ADMIN_USERNAME") or None,
-            admin_password=os.getenv("CG_ADMIN_PASSWORD") or None,
-            data_dir=Path(os.getenv("CG_DATA_DIR", ".channel-gateway")),
+            admin_username=os.getenv("CGW_ADMIN_USERNAME") or None,
+            admin_password=os.getenv("CGW_ADMIN_PASSWORD") or None,
+            data_dir=Path(os.getenv("CGW_DATA_DIR", ".channel-gateway")),
         )
 
 

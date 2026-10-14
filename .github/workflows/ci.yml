@@ -85,8 +85,8 @@ jobs:
         run: |
           image=$(jq -r '.tags[0]' <<< "$IMAGE_METADATA")
           container=$(docker run --detach --publish 127.0.0.1:18080:8080 \
-            --env CG_ADMIN_USERNAME=smoke \
-            --env CG_ADMIN_PASSWORD=container-smoke-test-password \
+            --env CGW_ADMIN_USERNAME=smoke \
+            --env CGW_ADMIN_PASSWORD=container-smoke-test-password \
             "$image")
           trap 'docker logs "$container"; docker rm --force "$container"' EXIT
           curl --fail --silent --show-error --retry 15 --retry-all-errors \

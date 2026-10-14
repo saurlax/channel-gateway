@@ -25,9 +25,9 @@ Mount a persistent volume at `/data` and configure these variables:
 
 | Variable | Value |
 | --- | --- |
-| `CG_ADMIN_USERNAME` | Your management username |
-| `CG_ADMIN_PASSWORD` | A private password of at least eight characters |
-| `CG_DATA_DIR` | `/data/state` |
+| `CGW_ADMIN_USERNAME` | Your management username |
+| `CGW_ADMIN_PASSWORD` | A private password of at least eight characters |
+| `CGW_DATA_DIR` | `/data/state` |
 
 The container prepares the private state directory on the mounted volume, then
 starts the service as UID/GID 10001. Use a single replica: SQLite storage, channel

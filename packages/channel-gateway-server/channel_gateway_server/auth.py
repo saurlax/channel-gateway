@@ -29,7 +29,7 @@ class AdministratorAuth:
         self.username = settings.admin_username
         self.configured = bool(settings.admin_username and settings.admin_password)
         if bool(settings.admin_username) != bool(settings.admin_password):
-            raise ValueError("Set both CG_ADMIN_USERNAME and CG_ADMIN_PASSWORD")
+            raise ValueError("Set both CGW_ADMIN_USERNAME and CGW_ADMIN_PASSWORD")
         if self.configured and (
             not 1 <= len(self.username or "") <= 128 or not 8 <= len(settings.admin_password or "") <= 4096
         ):
@@ -44,7 +44,7 @@ class AdministratorAuth:
 
     def check_request(self, request: Request) -> None:
         if not self.configured:
-            raise HTTPException(503, "Set CG_ADMIN_USERNAME and CG_ADMIN_PASSWORD to enable management")
+            raise HTTPException(503, "Set CGW_ADMIN_USERNAME and CGW_ADMIN_PASSWORD to enable management")
         origin = request.headers.get("origin")
         if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
             raise HTTPException(403, "Cross-origin management requests are not accepted")

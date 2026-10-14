@@ -11,6 +11,6 @@ COPY . .
 COPY --from=console /src/packages/channel-gateway-server/channel_gateway_server/static /src/packages/channel-gateway-server/channel_gateway_server/static
 COPY --from=ghcr.io/astral-sh/uv:0.12.3 /uv /usr/local/bin/uv
 RUN uv sync --locked --no-dev --package channel-gateway-server --no-editable && groupadd --gid 10001 ac && useradd --uid 10001 --gid ac --no-create-home ac && mkdir /data
-ENV CG_DATA_DIR=/data/state
+ENV CGW_DATA_DIR=/data/state
 EXPOSE 8080
 CMD ["python", "deploy/container-start.py"]

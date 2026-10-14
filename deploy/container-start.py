@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-state = Path(os.environ.get("CG_DATA_DIR", "/data/state"))
+state = Path(os.environ.get("CGW_DATA_DIR", "/data/state"))
 state.mkdir(parents=True, exist_ok=True, mode=0o700)
 if os.getuid() == 0:
     state.chmod(0o700)

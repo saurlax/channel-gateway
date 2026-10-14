@@ -69,8 +69,8 @@ yet. Linux AMD64 container images are available from
 git clone https://github.com/saurlax/channel-gateway.git
 cd channel-gateway
 make install
-export CG_ADMIN_USERNAME=admin
-export CG_ADMIN_PASSWORD='replace-with-your-password'
+export CGW_ADMIN_USERNAME=admin
+export CGW_ADMIN_PASSWORD='replace-with-your-password'
 make serve
 ```
 
@@ -104,8 +104,8 @@ To run only the backend, without Node.js or pnpm:
 
 ```bash
 uv sync --locked
-export CG_ADMIN_USERNAME=admin
-export CG_ADMIN_PASSWORD='replace-with-your-password'
+export CGW_ADMIN_USERNAME=admin
+export CGW_ADMIN_PASSWORD='replace-with-your-password'
 uv run --locked channel-gateway serve
 ```
 
@@ -119,7 +119,7 @@ health and status remain available but management is disabled; configuring only
 one refuses startup. Login uses an
 HttpOnly session cookie, survives page refresh, and expires after 12 hours or
 service restart. Sign-out revokes the session. MCP uses separate Host/route keys. SQLite state defaults to `.channel-gateway/`; set
-`CG_DATA_DIR` to a persistent private directory when hosting the service.
+`CGW_DATA_DIR` to a persistent private directory when hosting the service.
 Credentials and message history are stored there, without encryption at rest.
 Use one process and one replica. Expose authenticated endpoints through HTTPS.
 
@@ -129,9 +129,9 @@ Channel Gateway supports exactly three environment variables:
 
 | Variable            | Purpose                                         | Default          |
 | ------------------- | ----------------------------------------------- | ---------------- |
-| `CG_ADMIN_USERNAME` | Administrator login account                     | Unset            |
-| `CG_ADMIN_PASSWORD` | Administrator login password, 8-4096 characters | Unset            |
-| `CG_DATA_DIR`       | Private persistent state directory              | `.channel-gateway` |
+| `CGW_ADMIN_USERNAME` | Administrator login account                     | Unset            |
+| `CGW_ADMIN_PASSWORD` | Administrator login password, 8-4096 characters | Unset            |
+| `CGW_DATA_DIR`       | Private persistent state directory              | `.channel-gateway` |
 
 See [.env.example](.env.example). Export these values before running Make, or
 load a private environment file explicitly:
@@ -142,10 +142,10 @@ uv run --locked --env-file .env channel-gateway serve
 
 Choose your own password before starting; there is no built-in account or password.
 Passwords must contain at least 8 characters in every deployment.
-The server reads only `CG_` names; the previous `CHANNEL_GATEWAY_` variables and
+The server reads only `CGW_` names; the previous `CHANNEL_GATEWAY_` variables and
 administrator token are removed. Listener host and port remain CLI options
 (`--host`, `--port`), not additional environment variables. Keep the same
-`CG_DATA_DIR` when upgrading to preserve channels, credentials, and history.
+`CGW_DATA_DIR` when upgrading to preserve channels, credentials, and history.
 
 ## Develop
 

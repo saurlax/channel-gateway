@@ -365,8 +365,8 @@ export const diagnostics: Record<string, string> = {
   "Use an HTTP(S) or WS(S) URL without embedded credentials":
     "请使用不包含凭据的 HTTP(S) 或 WS(S) URL",
 
-  "Set CG_ADMIN_USERNAME and CG_ADMIN_PASSWORD to enable management":
-    "请设置 CG_ADMIN_USERNAME 和 CG_ADMIN_PASSWORD 以启用管理功能",
+  "Set CGW_ADMIN_USERNAME and CGW_ADMIN_PASSWORD to enable management":
+    "请设置 CGW_ADMIN_USERNAME 和 CGW_ADMIN_PASSWORD 以启用管理功能",
   "Administrator sign-in required": "请登录管理员账号",
   "Incorrect username or password": "账号或密码错误",
   "Refresh the page before making changes": "请刷新页面后再进行更改",

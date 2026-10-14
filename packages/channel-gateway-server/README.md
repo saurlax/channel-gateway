@@ -8,9 +8,9 @@ See [the bridge setup guide](../../docs/onebots-a13n.md),
 [official channel setup](../../docs/official-channels.md),
 [Agent Hosts](../../docs/agent-hosts.md), and the
 [technical contracts](../../spec/README.md). Management needs
-`CG_ADMIN_USERNAME` and `CG_ADMIN_PASSWORD` (at least 8 characters),
+`CGW_ADMIN_USERNAME` and `CGW_ADMIN_PASSWORD` (at least 8 characters),
 with administrator cookie sessions. State is stored under
-`CG_DATA_DIR`, defaulting to `.channel-gateway`; use one process/replica.
+`CGW_DATA_DIR`, defaulting to `.channel-gateway`; use one process/replica.
 
 From the repository root, `make serve` builds the console and starts the service.
 `make dev-api` starts the backend without requiring a frontend build. Run

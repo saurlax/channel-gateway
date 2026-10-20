@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from channel_gateway_server.adapters import host_body
 from channel_gateway_server.app import create_app
 from channel_gateway_server.channels.qq import QQ_INTENTS, qq_message, signing_key
 from channel_gateway_server.channels.qq_operations import GRANTS
@@ -27,6 +28,8 @@ class Platform:
         self.failure = None
         self.counter = 0
         self.host_output = "Automatic reply"
+        self.media_data = b"RIFFwave-audio"
+        self.media_type = "audio/wav"
 
     async def api(self, request):
         self.requests.append(request)
@@ -99,7 +102,7 @@ class Platform:
             await self.on_upload(request)
         if request.method == "PUT":
             return httpx.Response(200)
-        return httpx.Response(200, content=b"RIFFwave-audio", headers={"content-type": "audio/wav"})
+        return httpx.Response(200, content=self.media_data, headers={"content-type": self.media_type})
 
 
 @pytest.fixture
@@ -670,6 +673,45 @@ def test_audio_video_files_cards_and_nested_quotes_are_projected_without_private
     assert image["content"][0]["type"] == "audio" and image["content"][0]["mimeType"] == "audio/wav"
     message = qq_message(packet, {"id": "account", "kind": "qq"})
     assert message.sender_id == "7"
+    body = host_body(message.model_dump(mode="json"), route)
+    context = json.loads(body["payload"]["content"][0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
+    assert context["attachments"] == history["attachments"]
+    assert "url" not in str(context["attachments"])
+
+
+@pytest.mark.parametrize(
+    "declared,filename,data,mime,text",
+    [
+        ("video/mp4", "test.mp4", b"\x00\x00\x00\x20ftypisom", "video/mp4", None),
+        ("file", "notes.txt", "File verification: 中文 42".encode(), "text/plain", "File verification: 中文 42"),
+        ("file", "data.json", b'{"value":42}', "application/json", '{"value":42}'),
+        ("file", "notes.pdf", b"%PDF-1.7\n", "application/pdf", None),
+    ],
+)
+def test_attachment_reads_preserve_types_and_inline_text_from_generic_cdn(
+    platform, declared, filename, data, mime, text
+):
+    route = configure(platform)
+    platform[2].media_type = "application/octet-stream"
+    platform[2].media_data = data
+    incoming(platform, attachments=[{"content_type": declared, "filename": filename, "url": CDN}])
+    result = call(platform, route, "read_attachment", source_message_id="source1")
+    assert not result.get("isError"), result
+    resource = result["content"][0]["resource"]
+    assert resource["mimeType"] == mime
+    if text is not None:
+        assert resource["text"] == text and "blob" not in resource
+    else:
+        assert base64.b64decode(resource["blob"]) == data
+
+
+def test_non_utf8_text_attachment_returns_tool_error_without_binary_model_input(platform):
+    route = configure(platform)
+    platform[2].media_type = "application/octet-stream"
+    platform[2].media_data = b"\xff\xfeinvalid utf8"
+    incoming(platform, attachments=[{"content_type": "file", "filename": "notes.txt", "url": CDN}])
+    result = call(platform, route, "read_attachment", source_message_id="source1")
+    assert result["isError"] and all(part["type"] == "text" for part in result["content"])
 
 
 def test_scoped_notifications_are_durable_sanitized_and_not_agent_inputs(platform):

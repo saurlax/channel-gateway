@@ -155,9 +155,19 @@ credentials. Action results become unreadable after the required grant is revoke
 `read_conversation` exposes image and attachment indices and sanitized card data.
 `read_image` returns image pixels; `read_attachment(source_message_id,
 attachment_index=0, route_id=None)` returns native MCP audio or an embedded file
-resource, at most 16 MiB. Reads recheck current authority after download and
+resource, at most 16 MiB. UTF-8 text files return text resources. Generic binary
+CDN headers are resolved using the authenticated attachment type, common media
+signatures, and filename. Reads recheck current authority after download and
 never accept arbitrary source URLs. a13n receives native URL and JSON input parts;
 its model and outbound endpoint policy determine how these are consumed.
+For video and documents, let a13n place the delivered attachment in the Agent's
+sandbox. Use sandbox commands to inspect files, extract video frames, and parse
+documents. A video-specific model is optional; an image-capable primary model
+can inspect extracted frames. a13n's configured media-understanding models are
+used by its file tools, not an automatic fallback for arbitrary MCP binary output.
+Do not call `read_attachment` with an unsupported binary type directly into a
+model; use the delivered sandbox file instead. A filename without an extension
+can be copied to one matching the verified attachment metadata before parsing.
 
 `read_channel_events` returns sanitized notifications for the source conversation
 or verified parent guild. Account notifications require `bot.manage` in addition

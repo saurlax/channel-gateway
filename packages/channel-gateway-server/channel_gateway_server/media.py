@@ -4,6 +4,7 @@ import asyncio
 import base64
 import binascii
 import ipaddress
+import mimetypes
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -13,6 +14,24 @@ MAX_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_IMAGE_BASE64 = 4 * ((MAX_IMAGE_BYTES + 2) // 3)
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_MEDIA_BYTES = 16 * 1024 * 1024
+
+
+def attachment_media_type(data: bytes, response_type: str, declared_type: str, filename: str) -> str:
+    """Keep QQ's authenticated type when its CDN serves generic binary content."""
+    generic = {"", "application/octet-stream", "binary/octet-stream", "file", "voice"}
+    response_type = response_type.partition(";")[0].strip().lower()
+    declared_type = declared_type.partition(";")[0].strip().lower()
+    if response_type not in generic:
+        return response_type
+    if data[4:8] == b"ftyp" and len(data) >= 12:
+        return "audio/mp4" if declared_type == "audio/mp4" else "video/mp4"
+    if data.startswith(b"%PDF-"):
+        return "application/pdf"
+    if data.startswith(b"RIFF") and data[8:12] == b"WAVE":
+        return "audio/wav"
+    if declared_type not in generic:
+        return declared_type
+    return mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
 
 def public_media_url(value: str) -> str:

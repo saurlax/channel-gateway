@@ -23,6 +23,12 @@ Attachments retain private source URLs and expose opaque indices and safe metada
 in history. Native Host URL parts carry supported attachments; MCP can retrieve
 bounded attachment bytes separately. Private authentication fields are removed
 from structured projections. Unsupported packets remain in the private raw journal.
+Verified Host context includes each attachment's index, kind, media type, and
+filename. A Host can place video and documents in its sandbox for command-based
+parsing without passing their raw binary contents to the primary model. A generic
+CDN Content-Type must not replace a more specific authenticated attachment type
+in MCP reads. UTF-8 text attachments return text resources rather than binary
+model input; other attachments retain typed native resources.
 
 Platform notifications have their own sanitized durable projection, independent
 of messages and Agent activation. Authorized event reads match the selected

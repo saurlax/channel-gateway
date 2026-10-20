@@ -5,12 +5,12 @@ import json
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from mcp.types import AudioContent, BlobResourceContents, EmbeddedResource, ToolAnnotations
+from mcp.types import AudioContent, BlobResourceContents, EmbeddedResource, TextResourceContents, ToolAnnotations
 from pydantic import AnyUrl, Field
 
 from .channels.actions import known_message, message_delivery, reaction_authority
 from .channels.qq_operations import OPERATIONS, applicable, check_json, execute_operation, require_grant, safe_result
-from .media import MAX_MEDIA_BYTES, decode_media, image_type, public_media_url
+from .media import MAX_MEDIA_BYTES, attachment_media_type, decode_media, image_type, public_media_url
 from .models import route_allows_sender
 
 
@@ -301,7 +301,7 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
     async def read_attachment(
         source_message_id: str, attachment_index: Annotated[int, Field(ge=0, le=15)] = 0, route_id: str | None = None
     ) -> list[AudioContent | EmbeddedResource]:
-        """Read authorized received audio/video/file bytes (16 MiB max). Uses the same current read grant as conversation history, with no arbitrary URL input."""
+        """Read authorized received attachments (16 MiB max). UTF-8 text returns a text resource; other media returns typed native bytes. Clients whose model cannot accept a media type must parse the Host-delivered file in their sandbox instead. No arbitrary URL input."""
         route = await readable_route(route_id)
 
         async def attachment(current):
@@ -320,6 +320,14 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         current = await readable_route(route["id"])
         if await attachment(current) != item:
             raise ValueError("Attachment access changed during download")
+        mime = attachment_media_type(data, mime, item["media_type"], item["filename"])
+        uri = AnyUrl("channel-attachment:" + quote(source_message_id, safe="") + "/" + str(attachment_index))
+        if mime.startswith("text/") or mime in {"application/json", "application/xml", "application/yaml"}:
+            try:
+                text = data.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                raise ValueError("Text attachment is not UTF-8; parse the Host-delivered file in its sandbox") from None
+            return [EmbeddedResource(type="resource", resource=TextResourceContents(uri=uri, mimeType=mime, text=text))]
         encoded = base64.b64encode(data).decode()
         if mime.startswith("audio/"):
             return [AudioContent(type="audio", data=encoded, mimeType=mime)]
@@ -327,7 +335,7 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
             EmbeddedResource(
                 type="resource",
                 resource=BlobResourceContents(
-                    uri=AnyUrl("channel-attachment:" + quote(source_message_id, safe="") + "/" + str(attachment_index)),
+                    uri=uri,
                     mimeType=mime,
                     blob=encoded,
                 ),

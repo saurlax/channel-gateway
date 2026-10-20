@@ -108,6 +108,10 @@ def host_body(message: dict, route: dict) -> dict:
         "route_id": route["id"],
         "source_message_id": message["source_message_id"],
         "image_count": len(message.get("images", [])),
+        "attachments": [
+            {"index": index, **{key: item[key] for key in ("kind", "media_type", "filename")}}
+            for index, item in enumerate(message.get("attachments", []))
+        ],
         "reply_source": route["reply_source"],
         "default_delivery": ("proactive" if proactive else "passive")
         if route["reply_source"] == "mcp" or proactive

@@ -25,6 +25,8 @@ QQ supports C2C, groups, guild channels, and guild DMs, with media ingestion,
 C2C/group media uploads, Markdown/keyboards, C2C streaming, guild reactions,
 recall, and scoped native resource reads/actions. Platform action grants default
 to empty; application permissions and invitation restrictions still apply.
+QQ routes can combine passive final-text replies with proactive message/media
+tools under an explicit `message.proactive` grant and persistent send budgets.
 See the [QQ platform guide and operation inventory](docs/qq-platform.md).
 OneBot image tools and optional NapCat-compatible reactions remain supported.
 Weixin remains text-only. QQ official C2C/group reactions remain unavailable.

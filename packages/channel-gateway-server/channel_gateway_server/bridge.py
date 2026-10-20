@@ -9,7 +9,8 @@ from channel_gateway_core import Message
 from websockets.exceptions import ConnectionClosed
 
 from .adapters import AdapterError, HttpAdapters, event_key, host_body, output_text, resource_path
-from .channels.common import SendBlocked
+from .channels.actions import tool_message_allowed
+from .channels.common import OperationRejected, SendBlocked
 from .channels.manager import ChannelManager
 from .models import route_allows_sender
 from .routing import select_route
@@ -89,9 +90,8 @@ class Bridge:
                     error="Host request failed; check connection and Agent configuration",
                     state="failed" if attempts >= 5 else event["state"],
                 )
-        for reply in await self.store.replies():
-            if reply["state"] == "queued":
-                await self.send(reply)
+        for reply in await self.store.pending_replies():
+            await self.send(reply)
         if self.channels:
             for action in await self.store.pending_channel_actions():
                 await self.channels.execute_action(action)
@@ -173,7 +173,22 @@ class Bridge:
             return
         if connection and self.channels and not self.channels.ready(connection):
             return
-        if not connection or not await self.store.claim_reply(reply["id"]):
+        payload = await self.store.reply_payload(reply["id"])
+        proactive = connection["kind"] == "qq" and payload and payload.get("delivery") in {"proactive", "wakeup"}
+        if payload and (
+            not tool_message_allowed(route, connection)
+            or (proactive and "message.proactive" not in route.get("action_grants", []))
+        ):
+            await self.store.finish_reply(reply["id"], "blocked", error="Message tool authority was revoked")
+            return
+        claimed = (
+            await self.store.claim_qq_push(
+                reply["id"], connection["app_id"], route["conversation_kind"] + ":" + route["conversation_id"]
+            )
+            if proactive
+            else await self.store.claim_reply(reply["id"])
+        )
+        if not claimed:
             return
         try:
             message_id = (
@@ -183,6 +198,8 @@ class Bridge:
             )
         except SendBlocked as error:
             await self.store.finish_reply(reply["id"], "blocked", error=str(error))
+        except OperationRejected as error:
+            await self.store.finish_reply(reply["id"], "failed", error=str(error))
         except (
             AdapterError,
             httpx.HTTPError,

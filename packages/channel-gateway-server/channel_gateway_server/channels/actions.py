@@ -1,6 +1,7 @@
 """Independent, durable platform actions; these are not message-send requests."""
 
 import json
+from typing import Literal
 from urllib.parse import quote
 
 import httpx
@@ -10,6 +11,30 @@ from ..adapters import AdapterError
 from ..models import route_allows_sender
 from .common import OperationRejected, SendBlocked
 from .qq_operations import OPERATIONS, execute_operation, require_grant, safe_result
+
+type MessageDelivery = Literal["passive", "proactive", "wakeup"]
+
+
+def proactive_authority(route: dict, connection: dict) -> bool:
+    return connection["kind"] == "qq" and "message.proactive" in route.get("action_grants", [])
+
+
+def tool_message_allowed(route: dict, connection: dict) -> bool:
+    return route["reply_source"] == "mcp" or proactive_authority(route, connection)
+
+
+def message_delivery(route: dict, connection: dict, delivery: MessageDelivery | None = None) -> MessageDelivery:
+    """Freeze tool delivery at admission; existing ungranted MCP routes stay passive."""
+    if not tool_message_allowed(route, connection):
+        raise SendBlocked("This route forwards final output; QQ message tools require message.proactive")
+    selected = delivery or ("proactive" if proactive_authority(route, connection) else "passive")
+    if selected != "passive":
+        if connection["kind"] != "qq":
+            raise SendBlocked("Proactive delivery is supported only by official QQ")
+        require_grant(route, "message.proactive")
+    if selected == "wakeup" and route["conversation_kind"] != "private":
+        raise SendBlocked("Wakeup delivery is available in C2C conversations")
+    return selected
 
 
 async def known_message(store, route: dict, message_id: str) -> tuple[str, dict | None]:

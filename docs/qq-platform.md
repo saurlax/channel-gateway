@@ -40,8 +40,8 @@ in the Agent Host; CG never rewrites the Agent's enabled tool list. Readable-cha
 grants do not confer these permissions. Parent route grants propagate to their
 current source bindings and are checked again before execution.
 
-Guild reactions can run on a final-output route with `message.react`. Ordinary
-message creation still requires MCP replies. Legacy MCP OneBot reactions retain
+Guild reactions can run on a final-output route with `message.react`. QQ message
+tools can also run there with `message.proactive`. Legacy MCP OneBot reactions retain
 their existing scope and require the provider's optional compatible extension.
 
 ## Message creation
@@ -52,9 +52,33 @@ Guild messages may also supply native `embed` or `ark` content where QQ permits
 it. Structured message options are bounded to 64 KiB. Markdown and button
 availability remain governed by the QQ application and client.
 
-`delivery` defaults to `passive`. Set it to `proactive`, or to `wakeup` in C2C,
-only with an explicit `message.proactive` grant. Proactive messages do not invent
-a passive source ID. QQ user opt-outs, time windows, and quotas still apply.
+For automatic text replies plus proactive tool sends, choose **Final run output**,
+enable **Proactive messaging** (`message.proactive`), and configure the desired
+MCP tools on the Agent. Final text replies to the triggering message; calls to
+`send_message`, `send_image`, and `send_media` default to proactive delivery.
+An existing MCP route without the proactive grant keeps its passive default.
+`list_conversations` reports `default_delivery` and `can_send_proactively`.
+
+Pass `delivery: "passive"` explicitly when a tool should reply using the latest
+authorized incoming context. `delivery: "proactive"` and C2C-only `"wakeup"`
+require `message.proactive`. Proactive sends omit the original message/event ID
+and passive sequence. They need no fresh incoming message. Final output retains
+its own original context and never automatically becomes proactive after expiry.
+Delivery is fixed when queued, and authority is rechecked before sending and
+between upload steps. Avoid repeating tool-sent content in final output.
+
+QQ must allow proactive messages for the user/group; check `get_group_bot_state`
+and its `allow_proactive_msg` field for groups. A gateway grant does not change
+that QQ setting. Official group limits are 30 messages/minute per unverified bot
+or 60/minute per verified bot, 20/minute per group, and 1000/group/day, not 30 QPS.
+CG uses conservative persistent ceilings: 5 proactive attempts/second and
+30/minute per AppID, plus 20/minute and 1000/day per destination. Daily limits
+reset at midnight in China Standard Time. These apply to all proactive/wakeup
+tool sends; QQ's additional C2C/guild/DM limits remain authoritative.
+Throttled messages stay queued without uploads or API retries. Other
+destinations and passive replies continue. Reservations survive restart and
+consume budget even if a claimed attempt fails. Explicit rejection is `failed`;
+uncertain delivery is `unknown`. Neither is automatically retried.
 
 `send_media(media_kind, media_type, filename, data_base64=None, url=None,
 caption='', route_id=None)` accepts exactly one source. `media_kind` is `image`,

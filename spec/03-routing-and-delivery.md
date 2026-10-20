@@ -180,6 +180,10 @@ supported, with at most 16000 characters. Unsupported/oversized output completes
 the event with a diagnostic and no reply. Arbitrary structured data is not
 serialized into a channel message. For `reply_source: mcp`, run completion does
 not create an additional output reply; [MCP tools](04-agent-tools.md) own requests.
+QQ `message.proactive` permits message tools alongside final-output passive
+replies, under the [QQ delivery contract](06-qq-platform.md#passive-replies-and-proactive-tools).
+These are independent requests: a tool send never silently suppresses or
+promotes final text. Agent instructions must avoid repeating tool-sent content.
 
 ## Generic MCP delivery
 
@@ -203,6 +207,7 @@ The gateway cannot infer that a client has finished processing a message.
 | `sending`     | CG claimed the reply and may have issued the external request          |
 | `sent`        | A confirmed channel acceptance receipt is persisted                    |
 | `blocked`     | Route or linked-source authorization prevents sending                  |
+| `failed`      | QQ explicitly rejected the operation, including an HTTP rate rejection |
 | `unknown`     | Delivery may have happened, but CG has no confirmed successful outcome |
 
 Both completed Agent output and MCP reply requests create queued replies for
@@ -220,12 +225,15 @@ reply context becomes `blocked` before any send request; native platform reply
 windows still apply. [Channel adapters](01-channel-adapters.md) owns these protocol
 constraints and private context handling.
 
-A timeout, rejected/malformed receipt, or interrupted sending request produces
+A timeout, malformed/unconfirmed receipt, or interrupted sending request produces
 `unknown`; the baseline conservatively does not assume that such an operation is
 safe to repeat. On restart, persisted `sending` replies become `unknown`. Unknown
 replies are never automatically retransmitted, and no manual resend operation is
 defined. Verify the channel before separately deciding whether another message is
 necessary.
+An explicit QQ rejection (including HTTP 429 or a nonzero native error code)
+produces `failed` and is not automatically retried. Local proactive rate limits
+leave unattempted requests `queued`, independently of these failure states.
 
 For existing databases, startup converts previously approved replies to `queued`
 and retires unreviewed drafts as `blocked` with a diagnostic; old drafts are never

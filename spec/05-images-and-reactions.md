@@ -53,7 +53,9 @@ supported image formats and optional protocol extensions.
   image with an optional caption of at most 16000 characters. Input is strict
   base64, at most 4 MiB decoded, with a matching image signature. QQ accepts PNG
   and JPEG; OneBot also accepts GIF and WebP. It requires the same current
-  destination authority and `reply_source: mcp` as `send_message`.
+  destination authority as `send_message`: MCP replies, or an explicitly granted
+  QQ proactive tool send alongside final-output replies. Optional `delivery`
+  follows the [QQ delivery contract](06-qq-platform.md#passive-replies-and-proactive-tools).
 - `set_message_reaction(source_message_id, emoji_id, add=True, route_id=None)`
   queues a reaction to a locally received, currently source-authorized message
   in that exact conversation. Read-only account grants cannot authorize reactions.
@@ -81,7 +83,7 @@ are preserved.
 An additive private `reply_payloads` table stores immutable action data separately
 from public reply records; text replies and existing databases need no rewrite.
 History exposes a caption/compact action summary, never base64 or platform upload
-tokens. The same queued/sending/sent/blocked/unknown semantics apply, including
+tokens. The same queued/sending/sent/blocked/failed/unknown semantics apply, including
 interrupted-send recovery and no automatic resend after a possible external effect.
 Repeating an MCP call may create another action.
 

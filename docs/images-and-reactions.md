@@ -42,9 +42,11 @@ remain in the private raw journal. a13n applies its own attachment limits.
 
 ## Send images
 
-Choose **MCP send_message tool** as the route's reply source, and enable CG's
-`send_image` tool in the Agent Host. a13n routes need their existing dedicated MCP
-connection binding. Final-run-output routes continue forwarding text only.
+Enable CG's `send_image` tool in the Agent Host. For QQ, choose **Final run output**
+and grant `message.proactive` to combine automatic text replies with proactive
+image tools. Existing **MCP send_message tool** routes without that grant keep
+passive image replies. OneBot images still require MCP replies. Configure a
+dedicated a13n MCP connection for the route when needed.
 Check `list_conversations` capability fields for the channel's supported formats.
 
 ```json
@@ -65,8 +67,10 @@ or arbitrary remote URL. A caption may contain up to 16000 characters.
 
 The tool returns a queued reply ID. Replies are sent automatically and appear in
 the existing conversation history with their delivery state. QQ uploads first,
-then sends a passive image reply tied to the authorized incoming message; QQ's
-reply window and quotas still apply. `sent` means the platform confirmed
+then sends the image. With `message.proactive`, QQ tools default to proactive
+delivery; `delivery: "passive"` explicitly uses incoming reply context and its
+reply window. Proactive sends obey the [QQ permission and queue limits](qq-platform.md#message-creation).
+`sent` means the platform confirmed
 acceptance. `unknown` means a send might have taken effect: inspect the channel
 before invoking the tool again. CG does not automatically resend uncertain actions.
 

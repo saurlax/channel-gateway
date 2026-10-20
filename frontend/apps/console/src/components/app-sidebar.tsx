@@ -1,3 +1,4 @@
+import { ConsoleLink } from "@/components/console-link";
 import { useLocale } from "@/i18n";
 // Adapted from the official shadcn sidebar-07 block.
 import { Bot, Cable, Waypoints, LogOut, MessageSquare, Route, LayoutDashboard } from "lucide-react";
@@ -21,7 +22,7 @@ export function AppSidebar({ onLogout, page }: { onLogout: () => void; page: str
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <a href="#overview">
+              <ConsoleLink href="/overview">
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                   <Waypoints className="size-4" aria-hidden="true" />
                 </div>
@@ -29,29 +30,29 @@ export function AppSidebar({ onLogout, page }: { onLogout: () => void; page: str
                   <span className="truncate font-medium">Channel Gateway</span>
                   <span className="truncate text-xs">{t("Channel gateway")}</span>
                 </div>
-              </a>
+              </ConsoleLink>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
         <NavMain
-          activeUrl={`#${page}`}
+          activeUrl={`/${page}`}
           groups={[
             {
               id: "gateway",
               title: t("Gateway"),
               items: [
-                { title: t("Overview"), url: "#overview", icon: LayoutDashboard },
-                { title: t("Channels"), url: "#channels", icon: Cable },
-                { title: t("Agent hosts"), url: "#hosts", icon: Bot },
-                { title: t("Routes & access"), url: "#routes", icon: Route },
+                { title: t("Overview"), url: "/overview", icon: LayoutDashboard },
+                { title: t("Channels"), url: "/channels", icon: Cable },
+                { title: t("Agent hosts"), url: "/hosts", icon: Bot },
+                { title: t("Routes & access"), url: "/routes", icon: Route },
               ],
             },
             {
               id: "activity",
               title: t("Activity"),
-              items: [{ title: t("Messages"), url: "#events", icon: MessageSquare }],
+              items: [{ title: t("Messages"), url: "/events", icon: MessageSquare }],
             },
           ]}
         />

@@ -8,8 +8,24 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from .media import MAX_IMAGE_BASE64, decode_image
+
 type Identifier = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:@-]+$")]
 type SenderIds = Annotated[list[Identifier], Field(max_length=256)]
+type ReadChannels = Annotated[list[Identifier | Literal["*"]], Field(max_length=100)]
+type ThreadPolicy = Literal["conversation", "sender", "fixed", "message"]
+type ActionGrant = Literal[
+    "resource.read",
+    "message.react",
+    "message.recall",
+    "message.recall_members",
+    "message.proactive",
+    "group.manage",
+    "guild.manage",
+    "content.manage",
+    "bot.manage",
+]
+type ActionGrants = Annotated[list[ActionGrant], Field(max_length=9)]
 
 
 @dataclass(frozen=True)
@@ -46,6 +62,7 @@ class ConnectionInput(Contract):
     token: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
     self_id: Identifier | None = None
     webhook_secret: SecretStr | None = Field(default=None, min_length=16, max_length=4096)
+    qq_intents: int | None = Field(default=None, ge=1, le=2147483647)
     app_id: Identifier | None = None
     app_secret: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
 
@@ -103,7 +120,7 @@ class ConnectionInput(Contract):
             raise ValueError("a13n requires an HTTP API URL and workspace API key")
         elif urlsplit(self.api_url).scheme not in {"http", "https"}:
             raise ValueError("a13n requires an HTTP API URL")
-        if self.kind != "qq" and (self.app_id or self.app_secret):
+        if self.kind != "qq" and (self.app_id or self.app_secret or self.qq_intents is not None):
             raise ValueError("Only QQ uses application credentials")
         return self
 
@@ -115,27 +132,61 @@ class ConnectionInput(Contract):
         return value
 
 
+class RouteSource(Contract):
+    channel_id: Identifier | Literal["*"]
+    conversation_kind: Literal["private", "group", "guild", "guild_dm"]
+    conversation_id: Identifier | Literal["*"]
+
+
 class RouteInput(Contract):
     name: str = Field(min_length=1, max_length=80)
-    channel_id: Identifier
+    channel_id: Identifier | Literal["*"] | None = None
     host_id: Identifier
-    conversation_kind: Literal["private", "group"]
-    conversation_id: Identifier | Literal["*"]
+    conversation_kind: Literal["private", "group", "guild", "guild_dm"] | None = None
+    conversation_id: Identifier | Literal["*"] | None = None
+    sources: Annotated[list[RouteSource], Field(min_length=1, max_length=100)] | None = None
+    read_channel_ids: ReadChannels | None = None
+    action_grants: ActionGrants = []
     allowed_user_ids: SenderIds = []
     sender_policy: Literal["allowlist", "any"] = "allowlist"
-    access_mode: Literal["restricted", "full"] = "restricted"
     agent_id: Identifier | None = None
+    thread_policy: ThreadPolicy = "conversation"
+    fixed_thread_id: Identifier | None = None
     enabled: bool = True
     reply_source: Literal["output", "mcp"] = "output"
     mcp_connection_id: Identifier | None = None
 
     @model_validator(mode="after")
     def reply_policy(self) -> "RouteInput":
+        if len(set(self.action_grants)) != len(self.action_grants):
+            raise ValueError("Choose distinct action grants")
+        if self.fixed_thread_id and self.thread_policy != "fixed":
+            raise ValueError("A fixed thread requires the fixed thread policy")
+        if self.read_channel_ids is not None and (
+            len(set(self.read_channel_ids)) != len(self.read_channel_ids)
+            or ("*" in self.read_channel_ids and self.read_channel_ids != ["*"])
+        ):
+            raise ValueError("Choose distinct readable channels or all channels")
+        if self.sources is not None:
+            if len({(s.channel_id, s.conversation_kind, s.conversation_id) for s in self.sources}) != len(self.sources):
+                raise ValueError("Duplicate route sources are not allowed")
+            if (self.channel_id, self.conversation_kind, self.conversation_id) not in {
+                (None, None, None),
+                ("*", "private", "*"),
+            }:
+                raise ValueError("Use sources instead of a legacy conversation destination")
+            self.channel_id, self.conversation_kind, self.conversation_id = "*", "private", "*"
+            if self.mcp_connection_id and (
+                len(self.sources) != 1 or self.sources[0].channel_id == "*" or self.sources[0].conversation_id == "*"
+            ):
+                raise ValueError("A dedicated MCP connection requires one specific source")
+        elif not self.channel_id or self.channel_id == "*" or not self.conversation_kind or not self.conversation_id:
+            raise ValueError("Choose a channel and conversation or provide sources")
         if self.sender_policy == "allowlist" and not self.allowed_user_ids:
             raise ValueError("Allowlist routes require at least one sender ID")
         if self.sender_policy == "any" and self.allowed_user_ids:
             raise ValueError("Any-sender routes do not use an allowlist")
-        if self.conversation_id == "*" and self.mcp_connection_id:
+        if not self.sources and self.conversation_id == "*" and self.mcp_connection_id:
             raise ValueError("All-conversation routes cannot use a dedicated a13n MCP connection")
         if (
             self.conversation_kind == "private"
@@ -154,8 +205,15 @@ def route_allows_sender(route: dict, sender: str) -> bool:
 
 
 class RouteUpdate(Contract):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    sources: Annotated[list[RouteSource], Field(min_length=1, max_length=100)] | None = None
+    read_channel_ids: ReadChannels | None = None
+    action_grants: ActionGrants | None = None
+    host_id: Identifier | None = None
+    agent_id: Identifier | None = None
+    thread_policy: ThreadPolicy | None = None
+    fixed_thread_id: Identifier | None = None
     sender_policy: Literal["allowlist", "any"] | None = None
-    access_mode: Literal["restricted", "full"] | None = None
     enabled: bool | None = None
     allowed_user_ids: SenderIds | None = None
     reply_source: Literal["output", "mcp"] | None = None
@@ -163,6 +221,7 @@ class RouteUpdate(Contract):
 
 
 class ConnectionSecrets(Contract):
+    qq_intents: int | None = Field(default=None, ge=1, le=2147483647)
     token: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
     webhook_secret: SecretStr | None = Field(default=None, min_length=16, max_length=4096)
     app_secret: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
@@ -192,6 +251,23 @@ def weixin_url(value: str) -> str:
 
 class ReplyInput(Contract):
     text: str = Field(min_length=1, max_length=16000)
+
+
+class ImageReplyInput(Contract):
+    image_base64: str = Field(min_length=1, max_length=MAX_IMAGE_BASE64)
+    media_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp"]
+    caption: str = Field(default="", max_length=16000)
+
+    @model_validator(mode="after")
+    def valid_image(self) -> "ImageReplyInput":
+        decode_image(self.image_base64, self.media_type)
+        return self
+
+
+class ReactionInput(Contract):
+    source_message_id: str = Field(min_length=1, max_length=1024)
+    emoji_id: str = Field(min_length=1, max_length=20, pattern=r"^[0-9]+$")
+    add: bool = True
 
 
 def public_connection(row: dict) -> dict:

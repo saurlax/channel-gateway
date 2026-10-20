@@ -12,6 +12,7 @@ from .adapters import AdapterError, HttpAdapters, event_key, host_body, output_t
 from .channels.common import SendBlocked
 from .channels.manager import ChannelManager
 from .models import route_allows_sender
+from .routing import select_route
 from .storage import Store
 
 logger = logging.getLogger("channel-gateway.bridge")
@@ -31,36 +32,17 @@ class Bridge:
         if message is None:
             return {"state": "ignored"}
         current = await self.store.connection(connection["id"])
-        keys = ("kind", "transport", "api_url", "token", "webhook_secret", "app_id", "app_secret")
+        keys = ("kind", "transport", "api_url", "token", "webhook_secret", "app_id", "app_secret", "qq_intents")
         if not current or any(current.get(key) != connection.get(key) for key in keys):
             return {"state": "blocked"}
         kind, conversation_id = message.address.conversation_id.split(":", 1)
         routes = await self.store.routes()
-        route = next(
-            (
-                route
-                for route in routes
-                if route["channel_id"] == connection["id"]
-                and route["conversation_kind"] == kind
-                and route["conversation_id"] == conversation_id
-            ),
-            None,
-        )
-        if not route:
-            parent = next(
-                (
-                    row
-                    for row in routes
-                    if row["channel_id"] == connection["id"]
-                    and row["conversation_kind"] == kind
-                    and row["conversation_id"] == "*"
-                ),
-                None,
-            )
-            if parent and route_allows_sender(parent, message.sender_id):
-                route = await self.store.conversation_route(parent, conversation_id)
-            elif parent:
-                route = parent
+        route = select_route(routes, connection["id"], kind, conversation_id)
+        if route and route["conversation_id"] == "*" and route_allows_sender(route, message.sender_id):
+            try:
+                route = await self.store.conversation_route(route, conversation_id, connection["id"], kind)
+            except ValueError:
+                return {"state": "blocked"}
         identifier = event_key(message)
         if not route or not route_allows_sender(route, message.sender_id):
             await self.store.observe(
@@ -75,6 +57,8 @@ class Bridge:
             "message_id": message.source_message_id,
             "sender_id": message.sender_id,
             "source_time": message.occurred_at.timestamp(),
+            **({"guild_id": message.guild_id} if message.guild_id else {}),
+            **({"event_id": message.reply_event_id} if message.reply_event_id else {}),
         }
         inserted = await self.store.ingest(identifier, route["id"], message.model_dump(mode="json"), reply_context)
         self.wake.set()
@@ -108,6 +92,9 @@ class Bridge:
         for reply in await self.store.replies():
             if reply["state"] == "queued":
                 await self.send(reply)
+        if self.channels:
+            for action in await self.store.pending_channel_actions():
+                await self.channels.execute_action(action)
 
     async def advance(self, event: dict) -> None:
         route = await self.store.route(event["route_id"])
@@ -126,9 +113,15 @@ class Bridge:
             # original command even after another receipt binds the route's thread.
             target = event["target"]
             body = json.loads(event["body"]) if event["body"] else host_body(message, route)
+            if "connection_tools" in body.get("options", {}).get("overrides", {}):
+                # A frozen command may already have reached the Host. Retire it
+                # rather than replay a removed policy or change an idempotent body.
+                await self.store.update_event(
+                    event["id"], state="blocked", error="Legacy tool override retired; send a new message"
+                )
+                return
             if not target:
-                target = resource_path("threads", route["thread_id"]) + "/inbox" if route["thread_id"] else "/threads"
-                await self.store.update_event(event["id"], target=target, body=json.dumps(body))
+                target = await self.store.prepare_delivery(event, route, body)
             receipt = await self.adapters.host(connection, "POST", target, body=body, key=event["id"])
             await self.store.submitted(event["id"], route["id"], receipt)
             return
@@ -175,6 +168,9 @@ class Bridge:
                 await self.store.finish_reply(reply["id"], "blocked", error="Source permission could not be confirmed")
                 return
         connection = await self.store.connection(route["channel_id"])
+        if not connection:
+            await self.store.finish_reply(reply["id"], "blocked", error="Channel is unavailable")
+            return
         if connection and self.channels and not self.channels.ready(connection):
             return
         if not connection or not await self.store.claim_reply(reply["id"]):

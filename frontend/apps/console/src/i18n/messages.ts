@@ -1,4 +1,97 @@
 export const chinese = {
+  "Route or channel is unavailable": "路由或渠道不可用",
+  "Route or channel changed before action delivery": "动作执行前路由或渠道已更改",
+  "Action not confirmed; verify in QQ before repeating": "动作结果未确认，重复执行前请在 QQ 中核实",
+  "Action interrupted; verify in QQ": "动作被中断，请在 QQ 中核实",
+  "Operation is not supported in this conversation type": "此会话类型不支持该操作",
+  "Choose a platform message, not an interaction entry":
+    "请选择平台消息，互动事件不能作为消息操作目标",
+
+  "Source conversation": "来源会话",
+  "All guild channels": "全部频道子频道",
+  "All guild direct messages": "全部频道私信",
+  "Guild channel {id}": "频道子频道 {id}",
+  "Guild direct message {id}": "频道私信 {id}",
+  "Choose a conversation": "选择会话",
+  "Search or enter a conversation ID…": "搜索或输入会话 ID…",
+  "Platform action authorization": "平台动作授权",
+  "Source-scoped resource authority. Bot settings apply to the entire account. Agent tools are configured in the Host.":
+    "资源权限限定于路由来源；机器人设置作用于整个账号。Agent 工具在宿主中配置。",
+  "Read platform resources": "读取平台资源",
+  "React to messages": "回应消息表情",
+  "Recall bot messages": "撤回机器人消息",
+  "Recall member messages": "撤回成员消息",
+  "Send proactive messages": "主动发送消息",
+  "Manage group members and approvals": "管理群成员和入群审批",
+  "Manage guilds and permissions": "管理频道和权限",
+  "Manage guild content and audio": "管理频道内容和音频",
+  "Manage account-wide bot settings": "管理机器人账号全局设置",
+  "Channel action": "渠道动作",
+  guild: "频道子频道",
+  guild_dm: "频道私信",
+  succeeded: "已完成",
+  "QQ Gateway intents": "QQ Gateway 事件订阅",
+  "Default event subscriptions": "默认事件订阅",
+
+  Sources: "来源",
+  Destination: "去向",
+  Channel: "渠道",
+  "Route configuration": "路由配置",
+  "Thread delivery": "Thread 投递",
+  "Conversation continuity": "上下文延续方式",
+  "Continue each private chat or group": "按私聊或群聊延续",
+  "Keep each group member separate": "群内每人单独延续",
+  "Start fresh for every message": "每条消息重新开始",
+  "Share context across all sources": "所有来源共用上下文",
+  "Shared thread": "共用 Thread",
+  "For ongoing conversations. Each private chat or group on a bot account keeps its own thread; group members share history.":
+    "日常对话。同一机器人账号下，每个私聊或群聊分别保留上下文；群内成员共用。",
+  "For personal assistance in groups. Each member keeps separate history within that group, without sharing across groups or bot accounts.":
+    "群内个人助手。每人分别保留上下文，不跨群聊或机器人账号共享。",
+  "For independent questions and tasks. Each message starts a new thread without prior chat history; a new environment may also be created.":
+    "独立问答或任务。每条消息新建 Thread，不延续上文；也可能新建运行环境。",
+  "For cross-source collaboration. All private chats and groups selected by this route share one thread and its history.":
+    "跨来源协作。此路由选中的全部私聊和群聊共用一个 Thread 和上下文。",
+  Agent: "Agent",
+  Thread: "Thread",
+  "Load more": "加载更多",
+  "Separate thread per sender": "按人独立 Thread",
+  "Fixed thread": "固定 Thread",
+  "New thread per message": "每条消息独立 Thread",
+  "Each sender has a separate thread within this conversation.":
+    "同一会话内按发送者独立，不跨群聊共享。",
+  "All sources on this route share conversation history.": "此路由的全部来源共享会话上下文。",
+  "Each message creates a new thread and may create a new environment.":
+    "每条消息创建新 Thread，也可能创建新的运行环境。",
+  "Choose an agent": "选择 Agent",
+  "Search by name or ID…": "按名称或 ID 搜索…",
+  "Choose an a13n agent host": "请选择 a13n Agent 宿主",
+  "Host resources could not be loaded; check its connection and permissions":
+    "无法加载宿主资源，请检查连接和读取权限",
+  "The selected thread is not accessible on this Host": "此宿主无法访问所选 Thread",
+  "Choose an open thread on this Host": "请选择此宿主中未归档的 Thread",
+  "Wait for the current input to finish before changing the delivery policy":
+    "请等待当前消息处理完成后再修改投递策略",
+  "Basic information": "基础信息",
+  Routing: "路由",
+  Permissions: "权限",
+  "Enter the a13n MCP connection ID.": "请输入 a13n MCP 连接 ID。",
+  "Readable channels": "可读取渠道",
+  "Read all conversations in selected channels. Does not trigger agents or grant reply access.":
+    "可读取所选渠道的全部会话，不触发 Agent 或授予回复权限。",
+  "Choose existing channels for message reads": "请选择现有渠道作为消息读取范围",
+  "Save route": "保存路由",
+  "All channels": "全部渠道",
+  "All users": "全部用户",
+  "All groups": "全部群",
+  "User or group": "用户或群",
+  "User {id}": "用户 {id}",
+  "Group {id}": "群 {id}",
+  "Choose a user or group": "选择用户或群",
+  "Search or enter a user/group ID…": "搜索或输入用户 / 群 ID…",
+  "Remove source {number}": "删除来源 {number}",
+  "Add source": "添加来源",
+  "All channels includes channels added later.": "全部渠道包含以后新增的渠道。",
   "Delete agent host": "删除 Agent 宿主",
   "Delete agent host {name}?": "删除 Agent 宿主 {name}？",
   "This removes the host and its credentials, revokes its MCP key, disables assigned routes, and blocks pending work. Message and reply history is retained. This cannot be undone.":
@@ -61,9 +154,6 @@ export const chinese = {
   "Any sender": "任意发送者",
   "Sender access": "发送者权限",
   "Sender ID": "发送者 ID",
-  "Permission mode": "权限模式",
-  "Restricted access": "受限权限",
-  "Full access": "完全权限",
   "Automatic replies": "自动回复",
   "Separate thread per conversation": "每个会话独立创建线程",
   "New conversations get separate threads. Specific routes take priority.":
@@ -116,8 +206,8 @@ export const chinese = {
     "连接该账号的通用 WebSocket 端点，接收事件并发送消息。",
   "Configure the bot to connect to the gateway URL with the access token, self ID, and Universal client role.":
     "配置机器人连接网关 URL，携带访问令牌、自身 ID，并使用 Universal 客户端角色。",
-  "Use a QQ official Bot AppID and AppSecret. Supports private and group text messages.":
-    "使用 QQ 官方机器人的 AppID 和 AppSecret。支持私聊和群聊文本消息。",
+  "Use a QQ official Bot AppID and AppSecret. Supports private, group, guild channel, and guild direct messages.":
+    "使用 QQ 官方机器人的 AppID 和 AppSecret。支持私聊、群聊、频道及频道私信。",
   "Save the channel, then scan the login QR code with Weixin. Supports private text messages.":
     "保存渠道后，使用微信扫描登录二维码。支持私聊文本消息。",
   Endpoint: "连接端点",
@@ -185,6 +275,7 @@ export const chinese = {
   "Unable to read the server response.": "无法读取服务器响应。",
   Connections: "连接",
   "Routes & access": "路由与权限",
+  "Back to routes": "返回路由列表",
   Messages: "消息",
   Replies: "回复记录",
   Conversation: "会话",
@@ -318,6 +409,13 @@ export const chinese = {
 export type MessageKey = keyof typeof chinese;
 
 export const diagnostics: Record<string, string> = {
+  "Enter a route name.": "请输入路由名称。",
+  "Choose at least one channel and user or group.": "请至少选择一组渠道和用户或群。",
+  "Complete the agent destination.": "请填写完整的 Agent 去向配置。",
+  "Duplicate route sources are not allowed": "来源不能重复。",
+  "An equally specific source already belongs to another route": "同等精确的来源已配置到其他路由。",
+  "A dedicated MCP connection requires one specific source": "专用 MCP 连接只能绑定一个指定来源。",
+  "Route source or agent changed": "路由来源或 Agent 已变更",
   "No matching route": "尚未配置匹配此会话的路由",
   "Sender or route is not authorized": "发送者未获授权或路由已停用",
   "Allowlist routes require at least one sender ID": "白名单路由需要至少一个发送者 ID",

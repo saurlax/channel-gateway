@@ -56,8 +56,24 @@ those stages only when the user has authorized them.
   states inside the table; keep the layout usable on narrow screens with table
   scrolling contained in its frame.
 - For resources users can create, put an Add button in the toolbar and open the
-  creation form in a modal. Editing, credentials, details, and reply details also
-  open from row actions in modals. Read-only activity lists need no Add button.
+  creation form in a modal, except routes, whose creation and editing use dedicated
+  pages. Channel and Host editing, credentials, details, and reply details open
+  from row actions in modals. Modal fields always use one column at every width.
+  Read-only activity lists need no Add button.
+- Route configuration uses Basic information, Routing, and Connections tabs
+  without a Card wrapper. Basic information contains name and enabled state;
+  Routing shows Sources and Destination together; Connections contains reply source,
+  the supported a13n MCP connection binding, and readable channel accounts.
+  Agent tool permissions are configured in the Agent Host interface; CG always
+  inherits the Agent's configured connection tools.
+  Each source row has channel and user/group input columns, followed by a delete
+  button; a compact plus button adds another row. All channels includes future
+  channels. Source rows are the complete console activation condition; do not add
+  separate sender permissions. Read grants cover all received conversations in
+  selected bot accounts and do not grant activation or reply authority. Preserve
+  existing API policies until explicitly updated. Thread delivery defaults to
+  per-conversation isolation; administrators may explicitly choose per-sender,
+  fixed-thread, or per-message delivery.
 - Before changing console UI, consult the [official shadcn Blocks](https://ui.shadcn.com/blocks)
   and reuse the closest existing block's layout and interaction design. Prefer
   its standard spacing, typography, component variants, and action placement;
@@ -72,8 +88,8 @@ those stages only when the user has authorized them.
   messages and Agent replies together in conversation history under Messages.
   Conversation history is opened only from Messages, not from route rows. Route
   rows have one Edit action; token rotation, enable/disable settings, and deletion
-  belong inside the edit dialog. Channels, Agent Hosts, and routes must expose
-  deletion in their management/edit dialogs using the shared red outline Delete
+  belong on the route edit page. Channels and Agent Hosts expose deletion in
+  their management dialogs; routes expose it on the edit page, using the shared red outline Delete
   button and official Alert Dialog confirmation. Do not add a separate reply page or per-reply
   administrator review or approval flows.
 

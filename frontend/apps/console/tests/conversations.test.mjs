@@ -1,5 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { newRoutePath, routeSourceFromSearch } from "../src/conversations.ts";
+
+test("route creation links preserve exact source identity across reloads", () => {
+  const source = {
+    channel_id: "conn_example",
+    conversation_kind: "group",
+    conversation_id: "id:with spaces&?#",
+  };
+  const url = new URL(newRoutePath(source), "https://gateway.example");
+  assert.equal(url.pathname, "/routes/new");
+  assert.deepEqual(routeSourceFromSearch(url.searchParams), source);
+  assert.equal(routeSourceFromSearch(new URLSearchParams()), undefined);
+  assert.equal(
+    routeSourceFromSearch(new URLSearchParams({ ...source, conversation_kind: "unknown" })),
+    undefined,
+  );
+});
 import { conversations, mergeHistory } from "../src/conversations.ts";
 
 const route = {
@@ -115,4 +132,35 @@ test("deleted route replies remain in their original conversation", () => {
   assert.equal(groups[0].name, "Old route");
   assert.equal(groups[0].source.conversation_id, "user1");
   assert.equal(groups[0].latest.text, "Retained answer");
+});
+
+test("guild channels and guild direct messages retain separate identities and action history", () => {
+  for (const kind of ["guild", "guild_dm"]) {
+    const source = { channel_id: "qq", conversation_kind: kind, conversation_id: "same-id" };
+    const url = new URL(newRoutePath(source), "https://gateway.example");
+    assert.deepEqual(routeSourceFromSearch(url.searchParams), source);
+  }
+  const snapshot = {
+    connections: [],
+    routes: [],
+    events: [],
+    replies: [],
+    actions: ["guild", "guild_dm"].map((kind, index) => ({
+      id: `action${index}`,
+      route_id: `route${index}`,
+      operation: "reaction",
+      text: "[reaction]",
+      address: { account_id: "qq", conversation_id: `${kind}:same-id` },
+      state: "succeeded",
+      error: null,
+      created_at: "2026-10-20T00:00:00Z",
+    })),
+  };
+  const groups = conversations(snapshot);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(
+    new Set(groups.map((group) => group.source.conversation_kind)),
+    new Set(["guild", "guild_dm"]),
+  );
+  assert.ok(groups.every((group) => group.latest.direction === "action"));
 });

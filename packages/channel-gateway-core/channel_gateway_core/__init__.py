@@ -1,5 +1,5 @@
 """Reusable communication models with no process or transport ownership."""
 
-from .messages import ChannelAddress, Message
+from .messages import Attachment, ChannelAddress, ImageAttachment, Message
 
-__all__ = ["ChannelAddress", "Message"]
+__all__ = ["Attachment", "ChannelAddress", "ImageAttachment", "Message"]

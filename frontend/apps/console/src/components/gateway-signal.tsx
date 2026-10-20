@@ -22,7 +22,7 @@ export function GatewaySignal({
       </span>
       <span className="flex shrink-0 items-center gap-2 font-medium text-primary">
         <Waypoints className="size-4" aria-hidden="true" />
-        <span aria-label="Channel Gateway">CG</span>
+        <span aria-label="Channel Gateway">CGW</span>
       </span>
       <span className="signal-track" aria-hidden="true">
         {accepted && <span key={sequence} className="signal-packet" />}

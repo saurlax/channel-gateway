@@ -18,13 +18,18 @@ runtime scope. These standards govern how components are implemented.
 - **Console** calls the management API and contains no channel credentials or
   independent routing rules.
 
-The bridge implements OneBot v11 HTTP/WebSocket, native QQ official Bot, and
-Weixin iLink text adapters, an a13n HTTP adapter, SQLite persistence, and generic MCP Hosts with official
+The bridge implements OneBot v11 HTTP/WebSocket and native QQ official media/guild
+adapters, a Weixin iLink text adapter, an a13n HTTP adapter, SQLite persistence, and generic MCP Hosts with official
 MCP Streamable HTTP tools. `channels/` owns protocol parsing, connection tasks,
 pairing, capabilities, and native sending.
 `models.py` owns validated management inputs; `storage.py` owns short storage
 operations; `bridge.py` owns durable workflow; `app.py` owns authentication and
 process lifecycle. Keep new adapters outside HTTP route handlers.
+The [QQ platform contract](spec/06-qq-platform.md) owns guild/DM routing, resource grants,
+independent action execution, and the fixed resource operation catalog.
+`qq_operations.py` defines permitted native paths and schemas; no MCP tool accepts
+a raw method/path. The [image and reaction contract](spec/05-images-and-reactions.md) owns image
+projection, credential-free CDN reads, and optional OneBot reaction actions.
 
 ## Implementation
 
@@ -86,17 +91,52 @@ confirm destructive actions and destination authorization.
 Use a search toolbar followed by a table for channels, hosts, routes, and message
 conversations. Incoming messages and Agent replies share the same chronological
 conversation history, opened only from the Messages panel. Route rows have one
-Edit action; token rotation, enable/disable settings, and deletion are inside that
-dialog. Channel, Agent Host, and route management/edit dialogs expose deletion
-using the shared red outline button and official Alert Dialog confirmation. Do not add a
+Edit action opening `/routes/{id}/edit`; token rotation, enable/disable settings,
+and deletion are on that page. Channel and Agent Host management dialogs and route
+edit pages expose deletion using the shared red outline button and official Alert
+Dialog confirmation. Do not add a
 separate reply activity page. Search the relevant displayed fields, preserve table headers
 for empty lists, and distinguish no records from no matches. Keep table overflow
 inside the table frame, including on mobile.
 
-Creation starts from an Add button in the toolbar and opens a shadcn Dialog.
-Editing credentials, route permissions, viewing details, and viewing reply details
-start from table row actions and open dialogs. Do not place permanent creation or
-per-record edit forms beside or below the list. Activity records are created by
+Creation starts from an Add button in the toolbar. Routes open `/routes/new`;
+channel and Agent Host creation open a shadcn Dialog. Creating a route from Messages
+opens the same page with the source conversation prefilled. Route pages support
+direct visits and reloads, show missing routes without redirecting, and return to
+the list after saving or deleting. Token rotation keeps the edit page open and
+shows the new token once in its own dialog. Use a single-column form directly on
+the page without a Card wrapper, and provide a Back to routes link and Cancel action.
+Route configuration uses Basic information, Routing, and Connections tabs. Basic
+information contains name and enabled state. Routing shows Sources and Destination
+together; Connections contains reply source, the supported a13n MCP connection
+binding, and readable channels. Sources use repeatable rows with two input columns
+(channel, user/group) and a trailing delete button,
+including at narrow widths. A compact plus button adds a row. Channel choices
+include All channels, which includes future channels; target choices distinguish
+All users and All groups and support observed identities or explicit platform IDs.
+Sources are the complete console trigger condition; do not add a separate sender
+permission control. Destination selects the Host and Agent from its published,
+unarchived Agent list, then chooses thread delivery: per conversation (default),
+per sender within a conversation, one fixed thread, or a fresh thread per message.
+Present Conversation continuity choices in use-case order: ongoing private/group
+chats, personal assistance within groups, independent messages, then shared
+context across sources. Each choice has a concise scope/use description in the
+menu and below the selected value; connect the latter with aria-describedby.
+Fixed delivery offers existing unarchived Host threads and create-on-first-message.
+Use searchable shadcn comboboxes with paginated resource loading, loading/error
+states and retry. Host changes clear the selected Agent and fixed thread.
+Connections configures reply source and the supported a13n MCP connection binding,
+and selects readable
+channel accounts using checkboxes. Agent tool permissions are configured in the
+Agent Host interface; CG never overrides its connection-tool list. Enabled state
+uses a Switch. Read grants cover every received
+conversation on a selected account, with no per-user visibility controls. They
+do not add activation sources or authorize replies. All channels includes future
+accounts, and selecting no channels denies reads.
+Tab switching preserves unsaved values, and validation selects the relevant tab.
+Editing credentials, viewing details, and viewing reply details start from table
+row actions and open dialogs. Modal fields always use one column at every width.
+Do not place permanent creation or per-record edit forms beside or below the list. Activity records are created by
 channel ingestion or agent execution and have no manual Add action.
 
 Before changing console UI, consult the [official shadcn Blocks](https://ui.shadcn.com/blocks)

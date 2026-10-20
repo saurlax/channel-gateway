@@ -40,6 +40,13 @@ forwarded headers so cookies and same-origin checks use the public HTTPS origin.
 Only the platform proxy may reach the container listener; do not expose this
 configuration directly to untrusted clients. Public health checks use `/healthz`.
 
+The console uses `/overview`, `/channels`, `/hosts`, `/routes`, and `/events`,
+with `/routes/new` and `/routes/{id}/edit` for route configuration.
+Forward these paths to the gateway along with `/`, `/assets/`, `/api/`, and
+`/mcp/`; the bundled server serves console pages directly, including on reload.
+No proxy rewrite or redirect is needed. `/` displays Overview. Replace old
+hash-based bookmarks with the corresponding path; legacy hashes are ignored.
+
 For Zeabur, deploy into the intended project, attach the volume, configure the
 three variables, and assign an HTTPS domain. Reuse the recorded service ID for
 later deployments. Verify management login before configuring channels and Hosts.

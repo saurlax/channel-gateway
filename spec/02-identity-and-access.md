@@ -15,7 +15,7 @@ cross-channel identity linking, or general information-flow enforcement.
 | OneBot callback signing secret  | Verify incoming account event bytes                                         |
 | a13n workspace API key          | Submit input and read execution within the upstream principal's permissions |
 | CG host MCP key                 | Use MCP for enabled routes assigned to one Host                             |
-| CG route bearer token           | Use MCP for exactly one enabled route                                       |
+| CG route bearer token           | Use MCP for the enabled conversations selected by one configured route      |
 
 Private protocol reply contexts and pairing sessions are server-only state,
 not Agent capabilities. [Channel adapters](01-channel-adapters.md) owns their
@@ -74,36 +74,69 @@ HTTPS and protection of the persistent volume. The default listener is loopback.
 
 ## Route access
 
-A [route](03-routing-and-delivery.md#conversation-routes) authorizes one exact
-channel account and conversation scope. `sender_policy` is `allowlist` by default,
+A [route](03-routing-and-delivery.md#conversation-routes) has separate activation
+and message-read scopes. Sources select incoming conversations that trigger the
+Agent and authorize replies to those conversations. `read_channel_ids` explicitly
+authorizes incoming message and image reads across every private/group conversation received
+by the selected channel accounts, regardless of source matching or sender policy.
+An empty list grants no reads; `["*"]` includes current and future channels.
+Missing/null retains legacy source-and-sender-scoped reads for existing API clients
+and stored routes. Channel read grants never create routing bindings, wake an
+Agent, or grant reply authority. The console configures them in Connections,
+defaulting to the source channels on an existing unconfigured form; saving is an
+explicit update.
+
+The configured source scopes govern activation. A wildcard channel includes future channel
+accounts; it does not link people across platforms. The same user/group ID is
+matched literally on each selected account. Group selection authorizes the group
+as a destination; sender restrictions are checked separately.
+`sender_policy` is `allowlist` by default at the API boundary,
 requiring a nonempty `allowed_user_ids`, or explicitly `any`, requiring an empty
 list and accepting any verified platform sender within the source scope. A
 specific private allowlist route authorizes exactly its conversation user.
-An all-conversation route can allow selected sender IDs or any sender.
+An all-conversation or multi-source route can allow selected sender IDs or any
+sender. The console uses Sources as the complete trigger condition and submits `any`
+with an empty sender list when creating or saving a route. It exposes no separate
+sender-policy control. Existing API allowlists remain enforced until explicitly
+replaced by a management update. Removing a source revokes its child capability and blocks
+pending work atomically; other selected sources remain authorized.
 
-`access_mode` is `restricted` by default and limits a13n connection tools to the
-route's explicit binding. `full` retains the selected a13n Agent's configured
-tools. Both modes automatically send replies to authorized private and group
-conversations; there is no per-reply administrator review or automatic-reply
-opt-in. Neither mode grants gateway management access or destinations outside
-the route. For generic MCP clients permission mode does not change client
-execution permissions. Native platform reply limits still apply.
-The console exposes these choices separately; neither is silently enabled on
-existing routes. Full access with any sender trusts every sender who can reach
-that channel scope to invoke the selected Agent's configured capabilities.
+Thread delivery policy does not change activation, read grants, or reply
+authority. Fixed delivery intentionally combines the upstream history of all
+source conversations on its route. Per-sender delivery separates threads only
+within each source conversation; it does not link identities across channels.
+Host resource discovery is administrator-only and uses the selected Host's
+server-side key, without exposing that key or upstream message history to the
+selector. Existing fixed destinations are checked against the same Host.
+
+Agent tool permissions are configured only in the Agent Host interface. CG
+always preserves the Agent's configured connection tools and exposes no route
+tool-permission mode. Historical `access_mode` values are ignored; the management
+API rejects that removed field. Readable channel grants, source reply authority,
+and explicit [platform resource action grants](06-qq-platform.md#explicit-action-grants)
+remain enforced independently by CG. Resource grants are not Agent tool selection.
+Neither a route nor a Host key grants CG administrator access. QQ resource
+administration requires its separate, initially empty route grants and upstream
+permissions. Authorized source replies are sent automatically;
+there is no per-reply review or automatic-reply opt-in. Native platform reply
+limits still apply. Select an Agent whose configured capabilities are appropriate
+for every sender admitted by the source scope.
 
 All bounded authenticated arrivals are privately retained regardless of routes
 and sender allowlists. Supported messages without an authorized route are also
 persisted for administrator identity discovery. They do not wake a Host or
 create an Agent capability. An enabled route can subsequently authorize MCP
-reads of that source conversation's observed history under its current sender
-policy, without replaying old inputs. Raw packets and their private protocol
+reads of observed history under the current read grant, without replaying old inputs.
+Explicit channel reads include retained history from archived/deleted bindings;
+legacy reads keep the original source/sender and archived-history exclusions.
+Raw packets and their private protocol
 metadata remain excluded from MCP. Management views show verified account, conversation and
 sender IDs and received text, without private protocol reply contexts.
 
 Authorization is checked at ingress, when advancing input delivery, during MCP
-access, and before sending a reply. Removing a sender hides that sender's messages
-from subsequent MCP reads and blocks pending inputs from that sender. Replies
+access, and before sending a reply. Removing a legacy allowed sender blocks pending inputs from that sender and hides
+their messages from legacy source-scoped MCP reads. An explicit account-wide
+read grant continues to authorize those messages independently. Replies
 linked to such an input are blocked before sending. MCP-created replies have no
 source event link; their authority is the route credential and current route
 state, with the same automatic sending lifecycle.
@@ -114,6 +147,10 @@ message, or cancel an a13n run. Re-enabling a route restores its still-current
 token; rotate the token when the previous credential must remain revoked.
 
 ## Resource deletion
+
+Deleting a channel also removes its explicit ID from active readable-channel
+lists atomically. Wildcard grants continue to cover only currently present channels.
+Other readable accounts remain authorized.
 
 `DELETE /api/v1/connections/{id}` requires an administrator session and CSRF token.
 For an Agent Host, it removes upstream credentials and the Host MCP key hash,
@@ -127,9 +164,10 @@ deletion has the [channel lifecycle](01-channel-adapters.md#account-binding).
 
 `DELETE /api/v1/routes/{id}` revokes that route and, for an all-conversation parent,
 its concrete children. The [delivery contract](03-routing-and-delivery.md#conversation-routes)
-owns binding removal and history retention. Deletion never grants access to old
-history through a replacement route's MCP capability. Console deletion starts
-inside each resource's edit/management dialog using the shared red outline button
+owns binding removal and history retention. Deletion never grants access to old history through a replacement route's legacy
+source-scoped MCP capability. Explicit readable-channel grants authorize retained
+incoming channel history independently of deleted routing bindings. Console deletion starts
+inside channel and Host management dialogs or on the route edit page using the shared red outline button
 and official Alert Dialog confirmation; ordinary row actions remain compact.
 
 ## Route capabilities
@@ -140,8 +178,9 @@ token can fail after rotation. Ordinary route views never reveal it.
 
 The MCP endpoint rejects browser origins and requires a valid token for an enabled
 route. Administrator sessions grant no MCP route access. Tools also recheck the
-route at invocation. Tokens convey neither arbitrary destination selection nor
-the right to manage configuration. [Agent tools](04-agent-tools.md) owns tool
+route at invocation. Tokens convey configured channel reads, source reply authority,
+and explicitly configured platform resource grants, never
+arbitrary send destinations or the right to manage configuration. [Agent tools](04-agent-tools.md) owns tool
 behavior and a13n connection binding.
 
 ## Host capabilities
@@ -153,10 +192,13 @@ neither key nor hash. Existing Hosts gain a key by rotation without changing
 upstream credentials or route tokens.
 
 A host key authorizes all currently enabled routes assigned to that Host, and
-requires explicit `route_id` for reads and replies. Every invocation rechecks the
+requires explicit `route_id` for reads and replies. Readable channels are the union
+of explicit read grants on its currently enabled assigned configurations; legacy
+configurations retain source-scoped reads. Every invocation rechecks the
 credential, Host assignment, route status, and current sender policy. A key
 for another Host, an administrator session, or an upstream credential conveys no
-access. Route keys retain their narrower scope and cannot select another route.
+access. Route keys retain their own configured read grants and source reply scope.
+Read-only conversation handles never authorize sending.
 Host keys cannot configure routes or select arbitrary channel destinations.
 
 A Host represents one client trust boundary: issue separate Hosts and keys to
@@ -167,8 +209,7 @@ thread tools. Rotation does not cancel an operation already in flight.
 ## Privacy boundary
 
 Separate conversation threads, scoped tools, and allowlists reduce exposure. They do not guarantee that an Agent with access to
-other private resources will never disclose those resources. The a13n connection
-tool override does not remove built-in toolsets, plugins, skills, or other Host
-resource permissions. Administrators must select an Agent whose remaining access
+other private resources will never disclose those resources. CG does not change built-in toolsets, plugins, skills, connection tools, or other
+Host resource permissions. Administrators must select an Agent whose remaining access
 is appropriate for the conversation. Prompts and upstream event filters do not
 replace these authorization boundaries.

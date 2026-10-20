@@ -4,7 +4,7 @@
 
 | Component          | Responsibility                                                             |
 | ------------------ | -------------------------------------------------------------------------- |
-| Core               | Reusable channel addresses and text message models                         |
+| Core               | Reusable channel addresses, messages, and image references                  |
 | Channel adapter    | Authenticate/project platform events and execute channel operations        |
 | Agent Host adapter | Submit input and observe execution through the Host's public APIs          |
 | Gateway workflow   | Authorize routes, persist work, bind conversations, and coordinate replies |
@@ -44,14 +44,25 @@ a connection resource with channel `kind: onebots`, `qq`, or `weixin`, and Host
 does not merge their domain roles. The console exposes separate Channels and
 Agent hosts pages, followed by routes and message conversations with incoming and outgoing history.
 
+The console uses browser history paths: `/overview`, `/channels`, `/hosts`,
+`/routes`, and `/events`. Route creation uses `/routes/new` and access editing
+uses `/routes/{id}/edit`. Missing or generated child routes have no editable form.
+`/` also displays Overview without redirecting. When
+console assets are installed, the server serves the console at these paths
+so direct visits and reloads work. Unknown paths remain 404 responses. URL
+fragments do not select console pages; legacy hash links are not migrated or
+redirected. API and MCP endpoints retain their own routing and authentication.
+
 | API group                                      | Operations                                                               |
 | ---------------------------------------------- | ------------------------------------------------------------------------ |
 | `/auth/login`, `/auth/session`, `/auth/logout` | Administrator login, session restoration, and revocation                 |
 | `/connections`                                 | List/create/delete connections, replace credentials, rotate Host MCP keys       |
+| `/connections/{id}/host-resources/{resource}` | List a13n Agent/thread choices with server-side credentials |
 | `/routes`                                      | List/create/delete routes, update access/binding, and rotate route tokens       |
 | `/events`                                      | List accepted messages and retry failed input delivery                   |
 | `/history`                                     | Read chronological received/reply history for one account conversation |
 | `/replies`                                     | List reply delivery records                   |
+| `/actions`                                     | List sanitized independent platform action records |
 | `/hooks/onebots/{connection_id}`               | Receive account-specific signed OneBot events                            |
 | `/hooks/qq/{connection_id}`                    | Validate and receive signed official QQ callbacks                        |
 | `/ws/onebots/{connection_id}`                  | Accept an authenticated reverse universal WebSocket                      |

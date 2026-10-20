@@ -263,7 +263,13 @@ function ConnectionForm({
               }
             : {}),
           ...(type.kind === "qq"
-            ? { app_id: field(data, "app_id"), app_secret: field(data, "app_secret") }
+            ? {
+                app_id: field(data, "app_id"),
+                app_secret: field(data, "app_secret"),
+                ...(field(data, "qq_intents")
+                  ? { qq_intents: Number(field(data, "qq_intents")) }
+                  : {}),
+              }
             : {}),
         };
     const saved = await action("connections", body);
@@ -378,6 +384,16 @@ function ConnectionForm({
             <FormField id="qq-app-id" label="AppID">
               <Input id="qq-app-id" name="app_id" required maxLength={128} />
             </FormField>
+            <FormField id="qq-intents" label={t("QQ Gateway intents")}>
+              <Input
+                id="qq-intents"
+                name="qq_intents"
+                type="number"
+                min={1}
+                max={2147483647}
+                placeholder={t("Default event subscriptions")}
+              />
+            </FormField>
             <FormField id="qq-app-secret" label="AppSecret">
               <Input
                 id="qq-app-secret"
@@ -481,6 +497,9 @@ function ConnectionDetails({
                 {
                   ...(value ? { [qq ? "app_secret" : "token"]: value } : {}),
                   ...(secret ? { webhook_secret: secret } : {}),
+                  ...(qq && field(data, "qq_intents")
+                    ? { qq_intents: Number(field(data, "qq_intents")) }
+                    : {}),
                 },
                 "PATCH",
               )
@@ -494,6 +513,19 @@ function ConnectionDetails({
           >
             <Input id="new-token" name="token" type="password" autoComplete="off" />
           </FormField>
+          {qq && (
+            <FormField id="update-qq-intents" label={t("QQ Gateway intents")}>
+              <Input
+                id="update-qq-intents"
+                name="qq_intents"
+                type="number"
+                min={1}
+                max={2147483647}
+                defaultValue={connection.qq_intents ?? ""}
+                placeholder={t("Default event subscriptions")}
+              />
+            </FormField>
+          )}
           {reverseHTTP && (
             <FormField id="new-secret" label={t("New signing secret (optional)")}>
               <Input

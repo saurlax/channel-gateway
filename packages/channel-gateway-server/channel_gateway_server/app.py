@@ -21,7 +21,9 @@ from .channels.common import event_object
 from .channels.ingress import ProjectionError, begin_event, event_type, ingest_event
 from .channels.manager import ChannelManager, capabilities, transport
 from .channels.qq import qq_message, validation_response, verify_callback
+from .channels.qq_notifications import record_notification
 from .mcp_tools import RouteAuthorization, create_mcp
+from .media import MediaReader
 from .models import (
     AdministratorLogin,
     ConnectionInput,
@@ -33,21 +35,27 @@ from .models import (
     Settings,
     public_connection,
 )
+from .routing import RouteConflict, route_sources
 from .storage import Store
 
 MAX_WEBHOOK_BYTES = 1024 * 1024
 
 
 def create_app(
-    *, static_dir: Path | None = None, settings: Settings | None = None, client: httpx.AsyncClient | None = None
+    *,
+    static_dir: Path | None = None,
+    settings: Settings | None = None,
+    client: httpx.AsyncClient | None = None,
+    media_client: httpx.AsyncClient | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     authentication = AdministratorAuth(settings)
     store = Store(settings.data_dir / "gateway.sqlite3")
     http = client or httpx.AsyncClient(timeout=15.0, follow_redirects=False, trust_env=False)
-    channels = ChannelManager(store, http)
+    image_http = media_client or httpx.AsyncClient(timeout=15.0, follow_redirects=False, trust_env=False)
+    channels = ChannelManager(store, http, image_http)
     bridge = Bridge(store, HttpAdapters(http), settings.poll_interval, channels)
-    mcp = create_mcp(store, bridge)
+    mcp = create_mcp(store, bridge, MediaReader(image_http))
     mcp_app = mcp.streamable_http_app()
 
     @asynccontextmanager
@@ -68,6 +76,8 @@ def create_app(
             await channels.close()
             if client is None:
                 await http.aclose()
+            if media_client is None:
+                await image_http.aclose()
             await store.close()
 
     app = FastAPI(
@@ -206,6 +216,23 @@ def create_app(
             raise HTTPException(404, "Agent host not found")
         return {"id": connection_id, "name": row["name"], "mcp_key": await store.rotate_host_key(connection_id)}
 
+    @app.get("/api/v1/connections/{connection_id}/host-resources/{resource}")
+    async def host_resources(
+        connection_id: Identifier,
+        resource: Literal["agents", "threads"],
+        cursor: str | None = Query(default=None, max_length=2048),
+        _admin: None = Depends(admin),
+    ) -> dict:
+        connection = await store.connection(connection_id)
+        if not connection or connection["kind"] != "a13n":
+            raise HTTPException(422, "Choose an a13n agent host")
+        try:
+            return await bridge.adapters.choices(connection, resource, cursor)
+        except (AdapterError, httpx.HTTPError, ValueError, TypeError, AttributeError):
+            raise HTTPException(
+                502, "Host resources could not be loaded; check its connection and permissions"
+            ) from None
+
     @app.patch("/api/v1/connections/{connection_id}")
     async def change_credentials(connection_id: str, body: ConnectionSecrets, _admin: None = Depends(admin)) -> dict:
         row = await store.connection(connection_id)
@@ -214,7 +241,7 @@ def create_app(
         expected = row.copy()
         values = body.model_dump(exclude_none=True)
         for key, value in values.items():
-            row[key] = value.get_secret_value()
+            row[key] = value.get_secret_value() if key != "qq_intents" else value
         try:
             ConnectionInput.model_validate({key: value for key, value in row.items() if key != "id"})
         except ValueError:
@@ -253,12 +280,45 @@ def create_app(
 
     def validate_host_route(host: dict, body: RouteInput) -> None:
         if host["kind"] == "mcp":
-            if body.agent_id or body.mcp_connection_id or body.reply_source != "mcp":
+            if (
+                body.agent_id
+                or body.mcp_connection_id
+                or body.reply_source != "mcp"
+                or body.thread_policy != "conversation"
+                or body.fixed_thread_id
+            ):
                 raise HTTPException(422, "MCP hosts require MCP replies without a13n bindings")
         elif not body.agent_id:
             raise HTTPException(422, "a13n routes require an agent ID")
         elif body.reply_source == "mcp" and not body.mcp_connection_id:
             raise HTTPException(422, "MCP replies require an a13n MCP connection ID")
+
+    async def validate_route_resources(body: RouteInput, *, check_thread: bool = True) -> None:
+        host = await store.connection(body.host_id)
+        if not host or host["kind"] not in {"a13n", "mcp"}:
+            raise HTTPException(422, "Choose a channel and an agent host")
+        validate_host_route(host, body)
+        if check_thread and body.fixed_thread_id:
+            try:
+                thread = await bridge.adapters.host(host, "GET", "/threads/" + body.fixed_thread_id)
+            except (AdapterError, httpx.HTTPError, ValueError):
+                raise HTTPException(422, "The selected thread is not accessible on this Host") from None
+            if thread.get("id") != body.fixed_thread_id or thread.get("archived_at"):
+                raise HTTPException(422, "Choose an open thread on this Host")
+        for channel_id in body.read_channel_ids or []:
+            if channel_id == "*":
+                continue
+            channel = await store.connection(channel_id)
+            if not channel or channel["kind"] not in {"onebots", "qq", "weixin"}:
+                raise HTTPException(422, "Choose existing channels for message reads")
+        for source in route_sources(body.model_dump()):
+            if source["channel_id"] == "*":
+                continue
+            channel = await store.connection(source["channel_id"])
+            if not channel or channel["kind"] not in {"onebots", "qq", "weixin"}:
+                raise HTTPException(422, "Choose a channel and an agent host")
+            if source["conversation_kind"] not in capabilities(channel)["conversations"]:
+                raise HTTPException(422, "This channel does not support that conversation type")
 
     @app.get("/api/v1/routes")
     async def routes(_admin: None = Depends(admin)) -> list[dict]:
@@ -266,18 +326,7 @@ def create_app(
 
     @app.post("/api/v1/routes", status_code=201)
     async def add_route(body: RouteInput, _admin: None = Depends(admin)) -> dict:
-        channel = await store.connection(body.channel_id)
-        host = await store.connection(body.host_id)
-        if (
-            not channel
-            or channel["kind"] not in {"onebots", "qq", "weixin"}
-            or not host
-            or host["kind"] not in {"a13n", "mcp"}
-        ):
-            raise HTTPException(422, "Choose a channel and an agent host")
-        validate_host_route(host, body)
-        if body.conversation_kind not in capabilities(channel)["conversations"]:
-            raise HTTPException(422, "This channel does not support that conversation type")
+        await validate_route_resources(body)
         if body.mcp_connection_id and any(
             route["host_id"] == body.host_id and route.get("mcp_connection_id") == body.mcp_connection_id
             for route in await store.routes()
@@ -285,6 +334,8 @@ def create_app(
             raise HTTPException(409, "Use a dedicated a13n MCP connection for each route")
         try:
             route, token = await store.add_route(body.model_dump())
+        except RouteConflict as error:
+            raise HTTPException(409, str(error)) from None
         except sqlite3.IntegrityError:
             raise HTTPException(409, "This conversation or MCP connection already has a route") from None
         except ValueError:
@@ -303,32 +354,51 @@ def create_app(
         row = await store.route(route_id)
         if row is None:
             raise HTTPException(404, "Route not found")
-        if not await store.connection(row["channel_id"]):
+        if not row.get("sources") and not await store.connection(row["channel_id"]):
             raise HTTPException(409, "This route's channel has been deleted")
         updates = body.model_dump(exclude_unset=True)
+        if not row.get("sources") and any(
+            key in updates and updates[key] != row.get(key)
+            for key in ("host_id", "agent_id", "thread_policy", "fixed_thread_id")
+        ):
+            updates.setdefault("sources", route_sources(row))
+        if (
+            updates.get("sources") == route_sources(row)
+            and not row.get("sources")
+            and all(
+                updates.get(key, row.get(key)) == row.get(key)
+                for key in ("host_id", "agent_id", "thread_policy", "fixed_thread_id")
+            )
+        ):
+            updates.pop("sources")
         if any(
             key in updates and updates[key] != row.get(key)
-            for key in ("reply_source", "mcp_connection_id", "access_mode")
+            for key in ("reply_source", "mcp_connection_id", "host_id", "agent_id", "thread_policy", "fixed_thread_id")
         ):
             active = await store.rows(
                 "SELECT e.id FROM events e JOIN routes r ON r.id=e.route_id WHERE (r.id=? OR json_extract(r.value,'$.parent_route_id')=?) AND e.state IN ('queued','submitted')",
                 (route_id, route_id),
             )
             if active:
-                raise HTTPException(409, "Wait for the current input to finish before changing the MCP binding")
+                raise HTTPException(409, "Wait for the current input to finish before changing the delivery policy")
         if row.get("parent_route_id"):
             raise HTTPException(422, "Edit the parent route to change this conversation's access")
         value = {key: item for key, item in row.items() if key not in {"id", "thread_id", "parent_route_id"}}
+        if updates.get("sources"):
+            value.update(channel_id=None, conversation_kind=None, conversation_id=None)
         try:
             validated = RouteInput.model_validate({**value, **updates})
         except ValueError:
             raise HTTPException(422, "Invalid route access or reply policy") from None
-        host = await store.connection(validated.host_id)
-        if not host:
-            raise HTTPException(422, "Agent host not found")
-        validate_host_route(host, validated)
+        await validate_route_resources(
+            validated,
+            check_thread=any(
+                getattr(validated, key) != row.get(key) for key in ("host_id", "thread_policy", "fixed_thread_id")
+            ),
+        )
         if validated.mcp_connection_id and any(
             other["id"] != route_id
+            and other.get("parent_route_id") != route_id
             and other["host_id"] == validated.host_id
             and other.get("mcp_connection_id") == validated.mcp_connection_id
             for other in await store.routes()
@@ -337,12 +407,14 @@ def create_app(
         stored = {**validated.model_dump(), "id": route_id}
         try:
             updated = await store.update_route(route_id, stored, row)
+        except RouteConflict as error:
+            raise HTTPException(409, str(error)) from None
         except sqlite3.IntegrityError:
             raise HTTPException(409, "This MCP connection is already bound to another route") from None
         if not updated:
             raise HTTPException(409, "Route changed; refresh before editing")
         bridge.wake.set()
-        return {**stored, "thread_id": row["thread_id"]}
+        return {**stored, "thread_id": None if stored.get("sources") else row["thread_id"]}
 
     @app.post("/api/v1/routes/{route_id}/token")
     async def rotate_token(route_id: str, _admin: None = Depends(admin)) -> dict:
@@ -361,7 +433,7 @@ def create_app(
     @app.get("/api/v1/history")
     async def conversation_history(
         channel_id: Identifier,
-        conversation_kind: Literal["private", "group"],
+        conversation_kind: Literal["private", "group", "guild", "guild_dm"],
         conversation_id: Identifier,
         limit: int = Query(default=100, ge=1, le=100),
         before_created_at: str | None = Query(default=None, max_length=64),
@@ -377,6 +449,10 @@ def create_app(
             before_created_at=before_created_at,
             before_id=before_id,
         )
+
+    @app.get("/api/v1/actions")
+    async def channel_actions(_admin: None = Depends(admin)) -> list[dict]:
+        return await store.public_channel_actions()
 
     @app.post("/api/v1/events/{event_id}/retry")
     async def retry(event_id: str, _admin: None = Depends(admin)) -> dict:
@@ -429,8 +505,13 @@ def create_app(
                 connection["app_secret"],
             ):
                 raise HTTPException(401, "Invalid event signature")
-            await ingest_event(
-                store, connection, raw, bridge.ingest, lambda event: (qq_message(event, connection), None)
+            archive_id, event = await begin_event(store, connection, raw)
+            if archive_id is not None:
+                await record_notification(store, connection, event, channels.qq(connection))
+            from .channels.ingress import ingest_parsed
+
+            await ingest_parsed(
+                store, connection, archive_id, event, bridge.ingest, lambda value: (qq_message(value, connection), None)
             )
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
             raise HTTPException(422, "Invalid QQ text event") from None
@@ -505,6 +586,13 @@ def create_app(
             app.mount("/assets", StaticFiles(directory=assets / "assets"), name="assets")
 
         @app.get("/", include_in_schema=False)
+        @app.get("/overview", include_in_schema=False)
+        @app.get("/channels", include_in_schema=False)
+        @app.get("/hosts", include_in_schema=False)
+        @app.get("/routes", include_in_schema=False)
+        @app.get("/routes/new", include_in_schema=False)
+        @app.get("/routes/{route_id}/edit", include_in_schema=False)
+        @app.get("/events", include_in_schema=False)
         async def console() -> FileResponse:
             return FileResponse(index)
 

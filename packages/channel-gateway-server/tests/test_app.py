@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from channel_gateway_server.app import create_app
 from channel_gateway_server.models import Settings
 from fastapi.testclient import TestClient
@@ -16,6 +17,23 @@ def test_headless_service_exposes_health_status_and_openapi(tmp_path: Path) -> N
         assert all(item["state"] == "available" for item in status["integrations"])
         assert client.get("/api/openapi.json").status_code == 200
         assert client.get("/").status_code == 404
+        assert client.get("/channels").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/", "/overview", "/channels", "/hosts", "/routes", "/routes/new", "/routes/route_example/edit", "/events"],
+)
+def test_console_paths_serve_the_app_without_redirects(tmp_path: Path, path: str) -> None:
+    (tmp_path / "index.html").write_text("<html>Channel Gateway</html>")
+    with TestClient(
+        create_app(static_dir=tmp_path, settings=Settings(data_dir=tmp_path / "state", worker_enabled=False))
+    ) as client:
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 200
+        assert response.text == "<html>Channel Gateway</html>"
+        assert response.headers["content-type"].startswith("text/html")
+        assert "location" not in response.headers
 
 
 def test_console_does_not_swallow_unknown_api_routes(tmp_path: Path) -> None:
@@ -31,3 +49,6 @@ def test_console_does_not_swallow_unknown_api_routes(tmp_path: Path) -> None:
         missing = client.get("/api/v1/missing")
         assert missing.status_code == 404
         assert missing.headers["content-type"] == "application/json"
+        for path in ("/missing", "/assets/missing.js", "/channels/missing", "/connections", "/replies"):
+            assert client.get(path, follow_redirects=False).status_code == 404
+        assert client.get("/mcp/", follow_redirects=False).status_code == 401

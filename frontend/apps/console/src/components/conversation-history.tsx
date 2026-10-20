@@ -166,10 +166,12 @@ function ConversationMessages({
                 <ItemContent className="min-w-0">
                   <ItemTitle className="break-all">
                     {entry.direction === "incoming"
-                      ? source.conversation_kind === "group"
+                      ? ["group", "guild"].includes(source.conversation_kind)
                         ? `${t("Sender ID")}: ${entry.sender_id}`
                         : t("Received message")
-                      : t("Agent reply")}
+                      : entry.direction === "action"
+                        ? t("Channel action")
+                        : t("Agent reply")}
                   </ItemTitle>
                   <ItemDescription>{date(entry.created_at)}</ItemDescription>
                   <p className="whitespace-pre-wrap break-words text-sm">{entry.text}</p>

@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 
 import httpx
-from channel_gateway_core import ChannelAddress, Message
+from channel_gateway_core import ChannelAddress, ImageAttachment, Message
 
 from ..adapters import AdapterError
 
@@ -13,6 +13,10 @@ MAX_EVENT_BYTES = 1024 * 1024
 
 class SendBlocked(AdapterError):
     """A reply cannot be issued; no channel request was attempted."""
+
+
+class OperationRejected(AdapterError):
+    """The platform explicitly rejected an operation, without a success receipt."""
 
 
 def event_object(raw: str | bytes) -> dict:
@@ -51,8 +55,11 @@ def text_message(
     when: datetime,
     *,
     message_id_limit: int = 128,
+    images: tuple[ImageAttachment, ...] = (),
 ) -> Message | None:
-    if not isinstance(text, str) or not text.strip():
+    if text is None and images:
+        text = ""
+    if not isinstance(text, str) or (not text.strip() and not images):
         return None
     if len(text) > 60000:
         raise ValueError("Message exceeds the text size limit")
@@ -64,6 +71,7 @@ def text_message(
         ),
         source_message_id=identifier(message_id, max_length=message_id_limit),
         sender_id=identifier(sender),
-        text=text,
+        text=text if text.strip() else "[Image]",
+        images=images,
         occurred_at=when,
     )

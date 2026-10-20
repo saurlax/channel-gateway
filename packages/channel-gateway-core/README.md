@@ -2,7 +2,8 @@
 
 Reusable, transport-independent communication models for Channel Gateway.
 
-The initial package defines a channel address and an incoming text message. It has
+The package defines a channel address, an incoming text/media message, and private
+attachment references. It has
 no web framework, process startup, storage, or Agent Host dependencies. These
 models are an initial foundation, not a stable external protocol.
 

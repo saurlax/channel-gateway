@@ -247,7 +247,7 @@ def test_qq_signed_ingress_durable_host_delivery_and_reply(native, group):
     channel = add(client, kind="qq", transport="webhook", app_id="app1", app_secret=APP_SECRET)
     configured = add_route(native, channel, group=group)
     assert "app_secret" not in channel
-    assert channel["capabilities"]["conversations"] == ["private", "group"]
+    assert channel["capabilities"]["conversations"] == ["private", "group", "guild", "guild_dm"]
     assert qq_hook(native, channel, qq_event(group=group), valid=False).status_code == 401
     assert qq_hook(native, channel, qq_event(group=group, sender="intruder", mid="intruder-msg")).json() == {
         "op": 12,
@@ -664,7 +664,10 @@ def test_qq_gateway_identify_resume_and_persistence_failure(native):
         await runtime.run(socket)
         archives = await app.state.store.rows("SELECT * FROM channel_events ORDER BY rowid")
         assert [row["event_type"] for row in archives] == ["opcode:10", "READY", "C2C_MESSAGE_CREATE"]
-        assert socket.sent[0]["op"] == 2 and socket.sent[0]["d"]["intents"] == 1 << 25
+        assert socket.sent[0]["op"] == 2
+        assert socket.sent[0]["d"]["intents"] & (1 << 25)
+        assert socket.sent[0]["d"]["intents"] & (1 << 30)
+        assert not socket.sent[0]["d"]["intents"] & (1 << 9)
         assert await app.state.store.channel_state(channel["id"], "qq_gateway") == {"session_id": "session1", "seq": 2}
         resume = Socket([])
         await runtime.run(resume)
@@ -860,7 +863,6 @@ def test_weixin_any_sender_full_access_replies_with_authorized_context(native):
             "conversation_kind": "private",
             "conversation_id": "*",
             "sender_policy": "any",
-            "access_mode": "full",
         },
     ).json()
     stored = client.portal.call(app.state.store.connection, channel["id"])

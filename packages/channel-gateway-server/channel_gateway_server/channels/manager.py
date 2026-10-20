@@ -1,4 +1,4 @@
-"""Owned channel tasks, account status, and provider-specific text sending."""
+"""Owned channel tasks, account status, and provider-specific message actions."""
 
 import asyncio
 import secrets
@@ -13,8 +13,10 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
 from ..adapters import AdapterError, HttpAdapters
+from ..media import IMAGE_TYPES, decode_image
 from ..models import route_allows_sender, weixin_url
 from ..storage import Store
+from .actions import execute_action
 from .common import MAX_EVENT_BYTES, SendBlocked, identifier
 from .ingress import ProjectionError, ingest_event
 from .onebot import OneBotSession, ReceiveMessage
@@ -39,15 +41,36 @@ def capabilities(connection: dict) -> dict:
     return {
         "receive": not (connection["kind"] == "onebots" and transport(connection) == "http"),
         "send": connection["kind"] not in {"a13n", "mcp"},
-        "conversations": ["private"] if connection["kind"] == "weixin" else ["private", "group"],
-        "content": ["text"],
+        "conversations": ["private"]
+        if connection["kind"] == "weixin"
+        else ["private", "group", "guild", "guild_dm"]
+        if connection["kind"] == "qq"
+        else ["private", "group"],
+        "content": ["text", "image", "audio", "video", "file", "markdown", "card", "quote"]
+        if connection["kind"] == "qq"
+        else ["text", "image"]
+        if connection["kind"] == "onebots"
+        else ["text"],
+        "image_read_types": sorted(IMAGE_TYPES) if connection["kind"] in {"qq", "onebots"} else [],
+        "image_send_types": sorted(IMAGE_TYPES)
+        if connection["kind"] == "onebots"
+        else ["image/jpeg", "image/png"]
+        if connection["kind"] == "qq"
+        else [],
+        "message_reactions": "guild only"
+        if connection["kind"] == "qq"
+        else "optional:set_msg_emoji_like"
+        if connection["kind"] == "onebots"
+        else "unsupported",
+        "resource_operations": connection["kind"] == "qq",
     }
 
 
 class ChannelManager:
-    def __init__(self, store: Store, http: httpx.AsyncClient):
+    def __init__(self, store: Store, http: httpx.AsyncClient, media_http: httpx.AsyncClient | None = None):
         self.store = store
         self.http = http
+        self.media_http = media_http
         self.enabled = False
         self.receive: ReceiveMessage | None = None
         self.tasks: dict[str, asyncio.Task] = {}
@@ -200,7 +223,7 @@ class ChannelManager:
     def qq(self, connection: dict) -> QQClient:
         identifier = connection["id"]
         if identifier not in self.qq_clients:
-            self.qq_clients[identifier] = QQClient(connection, self.http)
+            self.qq_clients[identifier] = QQClient(connection, self.http, self.media_http)
         return self.qq_clients[identifier]
 
     async def connect_qq(self, connection: dict) -> None:
@@ -267,28 +290,59 @@ class ChannelManager:
         return True
 
     async def send(self, connection: dict, route: dict, text: str, reply: dict) -> str:
+        payload = await self.store.reply_payload(reply["id"])
+        if payload:
+            await self.check_action_access(connection, route)
+        if payload and route["reply_source"] != "mcp":
+            raise SendBlocked("This route no longer permits MCP actions")
+        if payload and payload["kind"] == "reaction":
+            if connection["kind"] != "onebots":
+                raise SendBlocked("Message reactions are not supported by this channel")
+            messages = await self.store.received_messages(
+                route, source_message_id=payload["source_message_id"], limit=1
+            )
+            if not messages:
+                raise SendBlocked("Reaction target is no longer authorized")
+            await self.check_action_access(connection, route)
+            await self.onebot_call(
+                connection,
+                "set_msg_emoji_like",
+                {"message_id": payload["source_message_id"], "emoji_id": payload["emoji_id"], "set": payload["add"]},
+            )
+            return payload["source_message_id"]
+        if payload and payload["kind"] == "image":
+            if payload["media_type"] not in capabilities(connection)["image_send_types"]:
+                raise SendBlocked("Image format is not supported by this channel")
+            decode_image(payload["image_base64"], payload["media_type"])
         if connection["kind"] == "onebots":
-            if transport(connection) in {"http", "http_reverse"}:
+            if not payload and transport(connection) in {"http", "http_reverse"}:
                 return await HttpAdapters(self.http).send(connection, route, text)
-            session = self.sessions.get(connection["id"])
-            if not session:
-                raise SendBlocked("Channel is disconnected")
             target = "group_id" if route["conversation_kind"] == "group" else "user_id"
-            receipt = await session.call(
+            segments = [{"type": "text", "data": {"text": payload["caption"] if payload else text}}]
+            if payload:
+                segments = segments if payload["caption"] else []
+                segments.append({"type": "image", "data": {"file": "base64://" + payload["image_base64"]}})
+            receipt = await self.onebot_call(
+                connection,
                 "send_msg",
                 {
                     "message_type": route["conversation_kind"],
                     target: int(route["conversation_id"])
                     if route["conversation_id"].isdecimal()
                     else route["conversation_id"],
-                    "message": [{"type": "text", "data": {"text": text}}],
+                    "message": segments,
                 },
             )
             return identifier(receipt["data"]["message_id"])
         context = await self.store.channel_state(
             connection["id"], "context:" + route["conversation_kind"] + ":" + route["conversation_id"]
         )
-        if (
+        delivery = payload.get("delivery", "passive") if payload else "passive"
+        if delivery != "passive":
+            from .qq_operations import require_grant
+
+            require_grant(route, "message.proactive")
+        if delivery == "passive" and (
             not isinstance(context.get("sender_id"), str)
             or not context["sender_id"]
             or not route_allows_sender(route, context["sender_id"])
@@ -298,13 +352,40 @@ class ChannelManager:
             if reply.get("event_id"):
                 source = await self.store.event(reply["event_id"])
                 if source:
-                    context = {**context, "message_id": source["message"]["source_message_id"]}
-            return await self.qq(connection).send(route, text, context, self.store)
+                    saved = await self.store.event_reply_context(reply["event_id"])
+                    context = saved or {**context, "message_id": source["message"]["source_message_id"]}
+            file_info = None
+            if payload and payload["kind"] in {"image", "media"} and route["conversation_kind"] in {"private", "group"}:
+                await self.check_action_access(connection, route)
+                file_info = (
+                    await self.qq(connection).upload_image(route, payload)
+                    if payload["kind"] == "image"
+                    else await self.qq(connection).upload_media(route, payload, connection, self.check_action_access)
+                )
+                await self.check_action_access(connection, route)
+            return await self.qq(connection).send(
+                route, payload.get("caption", text) if payload else text, context, self.store, file_info, payload
+            )
         if not isinstance(context.get("context_token"), str) or not context["context_token"]:
             raise SendBlocked("No Weixin context token; wait for an incoming message")
         return await WeixinClient(connection, self.http).send(
             route["conversation_id"], text, context["context_token"], reply["id"]
         )
+
+    async def onebot_call(self, connection: dict, action: str, params: dict) -> dict:
+        if transport(connection) in {"http", "http_reverse"}:
+            return await HttpAdapters(self.http).onebot_call(connection, action, params)
+        session = self.sessions.get(connection["id"])
+        if not session:
+            raise SendBlocked("Channel is disconnected")
+        return await session.call(action, params)
+
+    async def execute_action(self, action: dict) -> None:
+        await execute_action(self, action)
+
+    async def check_action_access(self, connection: dict, route: dict) -> None:
+        if await self.store.route(route["id"]) != route or await self.store.connection(connection["id"]) != connection:
+            raise SendBlocked("Route or channel changed before action delivery")
 
     async def begin_login(self, connection: dict) -> dict:
         async with self.login_locks.setdefault(connection["id"], asyncio.Lock()):

@@ -1,12 +1,13 @@
 import type { MessageKey } from "@/i18n/messages";
 import { useLocale } from "@/i18n";
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { LoginForm } from "@/components/login-form";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import {
   Breadcrumb,
   BreadcrumbItem,
+  BreadcrumbLink,
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
@@ -18,24 +19,25 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { api, ApiError, type AdminSession, type Snapshot } from "./api";
 import { Connections } from "@/components/connections";
 import { Routes } from "@/components/routes";
+import { ConsoleLink } from "@/components/console-link";
 import { Events } from "@/components/events";
 import { ManagementDialog } from "@/components/management";
 import { Empty, FormField } from "@/components/form-controls";
 import { Dashboard } from "@/components/dashboard";
 import { useMessageActivity } from "@/hooks/use-message-activity";
+import { readPage, routeEditor, subscribeNavigation, type Page } from "@/lib/navigation";
 
-const titles: Record<string, MessageKey> = {
+const titles: Record<Page, MessageKey> = {
   overview: "Overview",
   channels: "Channels",
   hosts: "Agent hosts",
   routes: "Routes & access",
   events: "Messages",
 };
-function readPage() {
-  const hash = location.hash.slice(1);
-  return Object.hasOwn(titles, hash) ? hash : "overview";
-}
 const empty: Snapshot = { connections: [], routes: [], events: [], replies: [] };
+const RoutePage = lazy(() =>
+  import("@/components/route-page").then((module) => ({ default: module.RoutePage })),
+);
 export function App() {
   const { t, message, locale } = useLocale();
   useEffect(() => {
@@ -45,35 +47,44 @@ export function App() {
   const [csrfToken, setCsrfToken] = useState("");
   const [restoringSession, setRestoringSession] = useState(true);
   const [snapshot, setSnapshot] = useState(empty);
-  const [page, setPage] = useState(readPage);
+  const [url, setUrl] = useState(() => new URL(window.location.href));
+  const page = readPage(url.pathname);
+  const editor = routeEditor(url.pathname);
+  const title = editor
+    ? "create" in editor
+      ? "Add a route"
+      : "Route configuration"
+    : titles[page];
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (loaded && csrfToken) heading.current?.focus();
+  }, [url.pathname, loaded, csrfToken]);
   const [updatedAt, setUpdatedAt] = useState("");
   const activity = useMessageActivity(snapshot.events, loaded && !!csrfToken);
   const [capability, setCapability] = useState("");
   const [capabilityLabel, setCapabilityLabel] = useState("");
   const refresh = useCallback(async () => {
-    const [connections, routes, events, replies] = await Promise.all([
+    const [connections, routes, events, replies, actions] = await Promise.all([
       api<Snapshot["connections"]>(csrfToken, "connections"),
       api<Snapshot["routes"]>(csrfToken, "routes"),
       api<Snapshot["events"]>(csrfToken, "events"),
       api<Snapshot["replies"]>(csrfToken, "replies"),
+      api<NonNullable<Snapshot["actions"]>>(csrfToken, "actions"),
     ]);
-    setSnapshot({ connections, routes, events, replies });
+    setSnapshot({ connections, routes, events, replies, actions });
     setUpdatedAt(new Date().toISOString());
     setLoaded(true);
   }, [csrfToken]);
   useEffect(() => {
     const change = () => {
-      if (location.hash === "#connections") history.replaceState(null, "", "#channels");
-      if (location.hash === "#replies") history.replaceState(null, "", "#events");
-      setPage(readPage());
+      setUrl(new URL(window.location.href));
       setError("");
     };
     change();
-    window.addEventListener("hashchange", change);
-    return () => window.removeEventListener("hashchange", change);
+    return subscribeNavigation(change);
   }, []);
   useEffect(() => {
     let active = true;
@@ -197,8 +208,18 @@ export function App() {
               <BreadcrumbList>
                 <BreadcrumbItem className="hidden md:block">Channel Gateway</BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
+                {editor && (
+                  <>
+                    <BreadcrumbItem>
+                      <BreadcrumbLink asChild>
+                        <ConsoleLink href="/routes">{t("Routes & access")}</ConsoleLink>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                  </>
+                )}
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{t(titles[page])}</BreadcrumbPage>
+                  <BreadcrumbPage>{t(title)}</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -206,7 +227,9 @@ export function App() {
         </header>
         <div className="flex flex-1 flex-col gap-5 p-4 md:p-6">
           <div className="flex items-center justify-between gap-4">
-            <h1 className="text-2xl font-semibold">{t(titles[page])}</h1>
+            <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold outline-none">
+              {t(title)}
+            </h1>
             <Button
               variant="outline"
               disabled={busy}
@@ -274,14 +297,19 @@ export function App() {
                   clearError={() => setError("")}
                 />
               )}
-              {page === "routes" && (
-                <Routes
-                  snapshot={snapshot}
-                  action={action}
-                  busy={busy}
-                  error={error}
-                  clearError={() => setError("")}
-                />
+              {page === "routes" && !editor && <Routes snapshot={snapshot} busy={busy} />}
+              {editor && (
+                <Suspense fallback={<Empty>{t("Loading…")}</Empty>}>
+                  <RoutePage
+                    key={url.pathname + url.search}
+                    url={url}
+                    snapshot={snapshot}
+                    action={action}
+                    busy={busy}
+                    error={error}
+                    clearError={() => setError("")}
+                  />
+                </Suspense>
               )}
               {page === "events" && (
                 <Events

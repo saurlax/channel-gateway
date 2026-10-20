@@ -15,11 +15,19 @@ Channel ingestion and Agent Host delivery have separate adapters. This allows a
 conversation to reach an agent in a13n or another Host, while the agent can consult
 other authorized channels before deciding where and how to respond.
 
-> **Project status:** A text bridge from OneBot v11, QQ official Bot, and Weixin iLink
+> **Project status:** A bridge from OneBot v11, QQ official Bot, and Weixin iLink
 > to a13n is implemented, with verified event ingestion, conversation routes, persistent delivery records,
 > scoped MCP tools, generic MCP client Hosts with independent keys, and a management console built from official shadcn blocks.
-> Cross-channel identity linking, full RBAC, moderation actions, and voice/radio
+> Cross-channel identity linking, full RBAC, and live voice/radio
 > integrations remain planned. This is a single-process prototype.
+
+QQ supports C2C, groups, guild channels, and guild DMs, with media ingestion,
+C2C/group media uploads, Markdown/keyboards, C2C streaming, guild reactions,
+recall, and scoped native resource reads/actions. Platform action grants default
+to empty; application permissions and invitation restrictions still apply.
+See the [QQ platform guide and operation inventory](docs/qq-platform.md).
+OneBot image tools and optional NapCat-compatible reactions remain supported.
+Weixin remains text-only. QQ official C2C/group reactions remain unavailable.
 
 ## How it fits together
 
@@ -82,7 +90,18 @@ records of each type, not lifetime totals. Route counts exclude automatically
 created conversation children. It also provides separate channel and Agent Host
 panels, conversation routes, and conversation histories with received messages
 and Agent replies. Management pages use a search toolbar and table; Add and
-row actions open dialogs. Sign in
+row actions open dialogs for channels and Agent Hosts. Route creation and editing
+use separate pages with Basic information, Routing, and Connections tabs.
+Routing shows Sources and Destination together. Sources support multiple
+channel/user-or-group rows, including all current and future channels, all users,
+or all groups. Sources govern Agent activation and reply destinations. Connections
+contains reply source and the supported a13n MCP connection binding, and selects
+readable bot accounts independently, granting reads across their received
+conversations. Agent tools are configured in the Agent Host interface and
+CG always preserves that configuration. Select Agents from the Host list. Thread
+delivery defaults to one thread per source conversation, with per-sender, fixed,
+and per-message choices. Modal forms keep
+one field per row at every width. Sign in
 with the account and password you configured. Follow the
 [OneBots and a13n setup guide](docs/onebots-a13n.md) or the
 [QQ and Weixin guide](docs/official-channels.md) to connect real accounts.
@@ -169,7 +188,7 @@ Run `make dev-api` and `make dev-web` in separate terminals. The frontend at
 
 ```text
 packages/
-  channel-gateway-core/    Reusable channel addresses and text message models
+  channel-gateway-core/    Reusable channel addresses, messages, and image references
   channel-gateway-server/    FastAPI application, CLI, and optional console assets
 frontend/
   apps/console/         React + TypeScript + Vite management console

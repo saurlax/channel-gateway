@@ -25,10 +25,34 @@ class Upstreams:
         self.output = "Hello from the agent"
         self.unique_threads = False
         self.thread_count = 0
+        self.archived_threads: set[str] = set()
+        self.missing_threads: set[str] = set()
+        self.agent_page = {
+            "items": [
+                {"id": "ap_example", "name": "Example agent", "default_revision_id": "rev_1", "archived_at": None}
+            ],
+            "next_cursor": None,
+        }
+        self.thread_page = {
+            "items": [{"id": "thread_existing", "labels": {"name": "Existing conversation"}}],
+            "next_cursor": None,
+        }
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
+        if request.method == "GET" and path.endswith("/agents"):
+            return httpx.Response(200, json=self.agent_page)
+        if request.method == "GET" and path.endswith("/threads"):
+            return httpx.Response(200, json=self.thread_page)
+        if request.method == "GET" and path.startswith("/api/v1/threads/") and "/inbox" not in path:
+            identifier = path.rsplit("/", 1)[-1]
+            if identifier in self.missing_threads:
+                return httpx.Response(404, json={"detail": "Private upstream error"})
+            return httpx.Response(
+                200,
+                json={"id": identifier, "archived_at": "2026-01-01" if identifier in self.archived_threads else None},
+            )
         if path.endswith("send_msg"):
             if self.fail_send:
                 raise httpx.ReadTimeout("Simulated lost reply", request=request)
@@ -155,11 +179,11 @@ def test_verified_events_enforce_actor_and_account_and_deduplicate(gateway):
     assert request.headers["Idempotency-Key"].startswith("evt_")
     body = json.loads(request.content)
     assert body["delivery"] == "next_run"
-    assert body["options"]["overrides"]["connection_tools"] == []
+    assert "options" not in body
     assert '"sender_id": "7"' in body["payload"]["content"][0]["text"]
 
 
-def test_restricted_group_reply_is_automatic_and_does_not_repeat(gateway):
+def test_group_reply_is_automatic_and_does_not_repeat(gateway):
     client, _, upstream, _, _ = gateway
     configured = route(gateway)
     webhook(gateway)
@@ -310,7 +334,9 @@ def test_legacy_reply_upgrade_does_not_send_old_drafts_or_expand_access(gateway,
 
     async def old_setting():
         async with app.state.store.transaction() as db:
-            await db.execute("UPDATE routes SET value=json_set(value,'$.auto_reply',json('false'))")
+            await db.execute(
+                "UPDATE routes SET value=json_set(value,'$.auto_reply',json('false'),'$.access_mode','restricted')"
+            )
 
     client.portal.call(old_setting)
     other = Store(tmp_path / "gateway.sqlite3")
@@ -320,7 +346,7 @@ def test_legacy_reply_upgrade_does_not_send_old_drafts_or_expand_access(gateway,
     assert upgraded[approved["id"]]["state"] == "queued"
     assert upgraded[rejected["id"]]["state"] == "rejected"
     stored = client.portal.call(other.routes)[0]
-    assert "auto_reply" not in stored and stored["access_mode"] == "restricted"
+    assert "auto_reply" not in stored and "access_mode" not in stored
     assert stored["allowed_user_ids"] == ["7"]
     client.portal.call(other.close)
     tick(gateway)
@@ -558,17 +584,14 @@ def test_access_changes_reauthorize_pending_events_and_mcp_history(gateway):
     assert "Hello" not in response.text
 
 
-def test_mcp_connection_override_is_scoped_and_cannot_change_in_flight(gateway):
+def test_mcp_binding_preserves_agent_tools_and_cannot_change_in_flight(gateway):
     client, _, upstream, *_ = gateway
     configured = route(gateway, source="mcp")
     webhook(gateway)
     changed = client.patch(f"/api/v1/routes/{configured['id']}", json={"mcp_connection_id": "conn_other"})
     assert changed.status_code == 409
     tick(gateway)
-    selections = json.loads(upstream.requests[0].content)["options"]["overrides"]["connection_tools"]
-    assert selections == [
-        {"connection_id": configured["mcp_connection_id"], "tools": ["read_conversation", "send_message"]}
-    ]
+    assert "options" not in json.loads(upstream.requests[0].content)
     tick(gateway)
     assert client.get("/api/v1/replies").json() == []
 
@@ -889,7 +912,7 @@ def test_mcp_hosts_reject_upstream_credentials_and_a13n_bindings(gateway):
     assert client.patch(f"/api/v1/routes/{created['id']}", json={"reply_source": "output"}).status_code == 422
 
 
-def catchall(gateway, *, kind="private", access="full", host=None):
+def catchall(gateway, *, kind="private", host=None):
     client, _, _, channel, configured_host = gateway
     response = client.post(
         "/api/v1/routes",
@@ -900,7 +923,6 @@ def catchall(gateway, *, kind="private", access="full", host=None):
             "conversation_kind": kind,
             "conversation_id": "*",
             "sender_policy": "any",
-            "access_mode": access,
             "agent_id": None if host else "agt_example",
             "reply_source": "mcp" if host else "output",
         },
@@ -974,7 +996,7 @@ def test_specific_route_precedes_catchall_even_when_disabled(gateway):
 def test_parent_policy_revokes_child_ingress_pending_work_and_mcp_history(gateway):
     client, _, upstream, *_ = gateway
     host = client.post("/api/v1/connections", json={"name": "Client", "kind": "mcp"}).json()
-    parent = catchall(gateway, host=host, access="restricted")
+    parent = catchall(gateway, host=host)
     webhook(gateway, kind="private", user=7, text="First sender")
     webhook(gateway, kind="private", user=8, text="Second sender")
     child = next(row for row in client.get("/api/v1/routes").json() if row["conversation_id"] == "8")
@@ -1002,7 +1024,7 @@ def test_parent_policy_revokes_child_ingress_pending_work_and_mcp_history(gatewa
     assert webhook(gateway, kind="private", user=7, message_id=3).json()["state"] == "blocked"
 
 
-def test_full_group_access_retains_tools_and_automatically_replies(gateway):
+def test_group_route_retains_agent_tools_and_automatically_replies(gateway):
     client, _, upstream, *_ = gateway
     catchall(gateway, kind="group")
     webhook(gateway, user=8)
@@ -1012,22 +1034,465 @@ def test_full_group_access_retains_tools_and_automatically_replies(gateway):
     assert "options" not in json.loads(upstream.requests[0].content)
 
 
-def test_full_access_downgrade_keeps_automatic_group_delivery(gateway):
+def test_legacy_restricted_setting_does_not_override_agent_tools(gateway):
     client, app, upstream, *_ = gateway
     parent = catchall(gateway, kind="group")
-    child = client.portal.call(app.state.store.conversation_route, parent, "123")
-    reply = client.portal.call(app.state.store.queue_reply, child, "Automatic reply after downgrade")
-    assert reply["state"] == "queued"
-    response = client.patch(f"/api/v1/routes/{parent['id']}", json={"access_mode": "restricted"})
-    assert response.status_code == 200, response.text
+
+    async def old_setting():
+        async with app.state.store.transaction() as db:
+            await db.execute("UPDATE routes SET value=json_set(value,'$.access_mode','restricted')")
+
+    client.portal.call(old_setting)
+    assert "access_mode" not in client.get("/api/v1/routes").json()[0]
+    assert client.patch(f"/api/v1/routes/{parent['id']}", json={"name": "Updated"}).status_code == 200
+    webhook(gateway, user=8)
     tick(gateway)
-    assert len(upstream.requests) == 1
+    tick(gateway)
+    assert "options" not in json.loads(upstream.requests[0].content)
     assert client.get("/api/v1/replies").json()[0]["state"] == "sent"
 
 
-def test_permission_mode_change_waits_for_current_run(gateway):
+@pytest.mark.parametrize("mode", ["restricted", "full"])
+def test_removed_tool_mode_is_not_configurable(gateway, mode):
     client, *_ = gateway
     parent = catchall(gateway)
     webhook(gateway, kind="private")
-    response = client.patch(f"/api/v1/routes/{parent['id']}", json={"access_mode": "restricted"})
+    response = client.patch(f"/api/v1/routes/{parent['id']}", json={"access_mode": mode})
+    assert response.status_code == 422
+    assert (
+        "access_mode" not in client.get("/api/openapi.json").json()["components"]["schemas"]["RouteInput"]["properties"]
+    )
+
+
+@pytest.mark.parametrize("state", ["queued", "failed"])
+def test_frozen_legacy_tool_override_is_blocked_without_changing_the_command(gateway, state):
+    client, app, upstream, *_ = gateway
+    configured = route(gateway)
+    accepted = webhook(gateway).json()
+    body = {"agent_id": configured["agent_id"], "options": {"overrides": {"connection_tools": []}}}
+    client.portal.call(
+        lambda: app.state.store.update_event(
+            accepted["event_id"],
+            target="/threads",
+            body=json.dumps(body),
+            state=state,
+        )
+    )
+    if state == "failed":
+        assert client.post(f"/api/v1/events/{accepted['event_id']}/retry").status_code == 200
+    tick(gateway)
+    assert not upstream.requests
+    event = client.get("/api/v1/events").json()[0]
+    assert event["state"] == "blocked" and "Legacy tool override retired" in event["error"]
+    stored = client.portal.call(app.state.store.rows, "SELECT body FROM events WHERE id=?", (accepted["event_id"],))
+    assert json.loads(stored[0]["body"]) == body
+
+
+def source(channel="*", kind="private", conversation="*"):
+    return {"channel_id": channel, "conversation_kind": kind, "conversation_id": conversation}
+
+
+def create_rule(gateway, sources, **overrides):
+    client, _, _, _, host = gateway
+    response = client.post(
+        "/api/v1/routes",
+        json={
+            "name": "Sources",
+            "sources": sources,
+            "host_id": host["id"],
+            "agent_id": "agt_example",
+            "sender_policy": "any",
+            **overrides,
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def new_channel(client):
+    response = client.post(
+        "/api/v1/connections",
+        json={
+            "name": "Another channel",
+            "kind": "onebots",
+            "self_id": "99",
+            "api_url": "https://onebots.test/other",
+            "token": "other-token",
+            "webhook_secret": SECRET,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def children(client, parent):
+    return [row for row in client.get("/api/v1/routes").json() if row.get("parent_route_id") == parent["id"]]
+
+
+def test_sources_route_users_and_groups_across_current_and_future_channels(gateway):
+    client, _, upstream, channel, host = gateway
+    upstream.unique_threads = True
+    configured = create_rule(gateway, [source(conversation="7"), source(channel["id"], "group", "123")])
+    assert webhook(gateway, kind="private").json()["state"] == "accepted"
+    assert webhook(gateway, kind="group", message_id=2).json()["state"] == "accepted"
+    assert webhook(gateway, kind="private", user=8, message_id=3).json()["state"] == "blocked"
+    added = new_channel(client)
+    other = (client, gateway[1], upstream, added, host)
+    assert webhook(other, kind="private", message_id=4).json()["state"] == "accepted"
+    assert webhook(other, kind="group", message_id=5).json()["state"] == "blocked"
+    assert len(children(client, configured)) == 3
+    tick(gateway)
+    assert len({row["thread_id"] for row in children(client, configured)}) == 3
+
+
+def test_source_specificity_does_not_fall_back_after_denial(gateway):
+    client, _, _, channel, _ = gateway
+    broad = create_rule(gateway, [source()])
+    specific = create_rule(gateway, [source(channel["id"], conversation="7")], enabled=False)
+    assert webhook(gateway, kind="private").json()["state"] == "blocked"
+    assert webhook(gateway, kind="private", user=8, message_id=2).json()["state"] == "accepted"
+    assert len(children(client, broad)) == 1 and not children(client, specific)
+
+
+def test_more_specific_source_retires_old_binding_without_reassigning_history(gateway):
+    client, _, _, channel, _ = gateway
+    broad = create_rule(gateway, [source()])
+    webhook(gateway, kind="private", text="Old input")
+    old = children(client, broad)[0]
+    specific = create_rule(gateway, [source(channel["id"], conversation="7")])
+    assert not children(client, broad)
+    assert client.get("/api/v1/events").json()[0]["state"] == "blocked"
+    assert webhook(gateway, kind="private", message_id=2, text="New input").json()["state"] == "accepted"
+    current = children(client, specific)[0]
+    assert current["id"] != old["id"]
+    response = rpc(client, specific["agent_token"], "tools/call", {"name": "read_conversation", "arguments": {}})
+    assert "New input" in response.text and "Old input" not in response.text
+    history = client.get(
+        "/api/v1/history", params={"channel_id": channel["id"], "conversation_kind": "private", "conversation_id": "7"}
+    ).json()
+    assert {row["text"] for row in history["messages"]} == {"Old input", "New input"}
+
+
+def test_removing_a_source_revokes_mcp_and_blocks_pending_delivery(gateway):
+    client, _, upstream, channel, _ = gateway
+    configured = create_rule(gateway, [source(channel["id"], "group", "123"), source(channel["id"], "group", "456")])
+    webhook(gateway)
+    old = children(client, configured)[0]
+    response = client.patch(
+        f"/api/v1/routes/{configured['id']}", json={"sources": [source(channel["id"], "group", "456")]}
+    )
+    assert response.status_code == 200, response.text
+    tick(gateway)
+    assert not upstream.requests
+    assert client.get("/api/v1/events").json()[0]["state"] == "blocked"
+    denied = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "read_conversation", "arguments": {"route_id": old["id"]}},
+    )
+    assert denied.json()["result"]["isError"]
+    assert webhook(gateway, message_id=2).json()["state"] == "blocked"
+
+
+def test_legacy_exact_route_expands_without_losing_its_thread_or_sender_policy(gateway):
+    client, _, _, channel, _ = gateway
+    configured = route(gateway)
+    webhook(gateway)
+    tick(gateway)
+    tick(gateway)
+    response = client.patch(
+        f"/api/v1/routes/{configured['id']}",
+        json={"sources": [source(channel["id"], "group", "123"), source(channel["id"], "group", "456")]},
+    )
+    assert response.status_code == 200, response.text
+    child = children(client, configured)[0]
+    assert child["thread_id"] == "thread_1"
+    assert child["allowed_user_ids"] == ["7"]
+    assert client.get("/api/v1/events").json()[0]["route_id"] == child["id"]
+    assert client.get("/api/v1/replies").json()[0]["route_id"] == child["id"]
+    assert webhook(gateway, user=8, conversation=456, message_id=2).json()["state"] == "blocked"
+    assert webhook(gateway, conversation=456, message_id=3).json()["state"] == "accepted"
+
+
+def test_destination_change_starts_new_threads_and_revokes_old_host(gateway):
+    client, _, _, channel, host = gateway
+    configured = create_rule(gateway, [source(channel["id"], "group", "123")])
+    webhook(gateway)
+    assert client.patch(f"/api/v1/routes/{configured['id']}", json={"agent_id": "agt_other"}).status_code == 409
+    tick(gateway)
+    tick(gateway)
+    old = children(client, configured)[0]
+    other = client.post("/api/v1/connections", json={"name": "New host", "kind": "mcp"}).json()
+    changed = client.patch(
+        f"/api/v1/routes/{configured['id']}", json={"host_id": other["id"], "agent_id": None, "reply_source": "mcp"}
+    )
+    assert changed.status_code == 200, changed.text
+    assert not children(client, configured)
+    listed = rpc(client, host["mcp_key"], "tools/call", {"name": "list_conversations", "arguments": {}})
+    assert old["id"] not in listed.text
+    webhook(gateway, message_id=2)
+    new = children(client, configured)[0]
+    assert new["id"] != old["id"] and new["thread_id"] is None
+    assert new["host_id"] == other["id"]
+
+
+def test_mcp_rule_materializes_observed_sources_and_enforces_scope(gateway):
+    client, _, _, channel, _ = gateway
+    webhook(gateway, kind="private", text="Allowed history")
+    webhook(gateway, kind="private", user=8, message_id=2, text="Other history")
+    host = client.post("/api/v1/connections", json={"name": "MCP", "kind": "mcp"}).json()
+    configured = create_rule(
+        gateway,
+        [source(channel["id"], conversation="7"), source(channel["id"], "group", "123")],
+        host_id=host["id"],
+        agent_id=None,
+        reply_source="mcp",
+    )
+    listed = rpc(client, configured["agent_token"], "tools/call", {"name": "list_conversations", "arguments": {}})
+    assert not listed.json()["result"].get("isError"), listed.text
+    rows = children(client, configured)
+    assert {(row["conversation_kind"], row["conversation_id"]) for row in rows} == {("private", "7"), ("group", "123")}
+    private = next(row for row in rows if row["conversation_kind"] == "private")
+    read = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "read_conversation", "arguments": {"route_id": private["id"]}},
+    )
+    assert "Allowed history" in read.text and "Other history" not in read.text
+    assert client.patch(f"/api/v1/routes/{configured['id']}", json={"enabled": False}).status_code == 200
+    assert rpc(client, configured["agent_token"], "tools/list", {}).status_code == 401
+
+
+def test_source_conflicts_and_invalid_configuration_are_atomic(gateway):
+    client, _, _, channel, host = gateway
+    legacy = route(gateway)
+    payload = {
+        "name": "Conflict",
+        "sources": [source(channel["id"], "group", "123"), source(conversation="*")],
+        "host_id": host["id"],
+        "agent_id": "agt_example",
+        "sender_policy": "any",
+    }
+    assert client.post("/api/v1/routes", json=payload).status_code == 409
+    assert [row["id"] for row in client.get("/api/v1/routes").json()] == [legacy["id"]]
+    for invalid in [[], [source(), source()], [source(host["id"])], [source("missing")]]:
+        assert client.post("/api/v1/routes", json={**payload, "sources": invalid}).status_code == 422
+    assert (
+        client.post(
+            "/api/v1/routes", json={**payload, "sources": [source()], "mcp_connection_id": "conn_scope"}
+        ).status_code
+        == 422
+    )
+
+
+def test_deleted_channel_blocks_only_its_bindings_and_rule_delete_revokes_all(gateway):
+    client, app, upstream, channel, host = gateway
+    configured = create_rule(gateway, [source()])
+    other_channel = new_channel(client)
+    other = (client, app, upstream, other_channel, host)
+    webhook(gateway, kind="private")
+    webhook(other, kind="private", message_id=2)
+    client.delete(f"/api/v1/connections/{channel['id']}")
+    assert webhook(other, kind="private", user=8, message_id=3).json()["state"] == "accepted"
+    remaining = children(client, configured)
+    assert all(not row["enabled"] for row in remaining if row["channel_id"] == channel["id"])
+    assert any(row["enabled"] for row in remaining if row["channel_id"] == other_channel["id"])
+    client.delete(f"/api/v1/routes/{configured['id']}")
+    assert not client.get("/api/v1/routes").json()
+    assert rpc(client, configured["agent_token"], "tools/list", {}).status_code == 401
+
+
+def test_multi_source_rules_persist_across_reopening(gateway):
+    client, app, _, channel, _ = gateway
+    configured = create_rule(gateway, [source(channel["id"], conversation="7"), source(conversation="8")])
+    webhook(gateway, kind="private")
+    before = client.get("/api/v1/routes").json()
+    client.portal.call(app.state.store.close)
+    client.portal.call(app.state.store.open)
+    assert client.get("/api/v1/routes").json() == before
+    assert rpc(client, configured["agent_token"], "tools/list", {}).status_code == 200
+
+
+def test_legacy_catchall_mcp_listing_respects_new_source_specificity(gateway):
+    client, _, _, channel, _ = gateway
+    webhook(gateway, kind="private", text="Previously observed")
+    broad = catchall(gateway)
+    specific = create_rule(gateway, [source(channel["id"], conversation="7")])
+    listing = rpc(client, broad["agent_token"], "tools/call", {"name": "list_conversations", "arguments": {}})
+    assert not listing.json()["result"].get("isError"), listing.text
+    assert not children(client, broad)
+    read = rpc(client, specific["agent_token"], "tools/call", {"name": "read_conversation", "arguments": {}})
+    assert "Previously observed" in read.text
+
+
+def test_single_source_dedicated_mcp_binding_is_inherited_and_unique(gateway):
+    client, _, _, channel, _ = gateway
+    configured = create_rule(
+        gateway, [source(channel["id"], "group", "123")], reply_source="mcp", mcp_connection_id="conn_scope"
+    )
+    webhook(gateway)
+    tick(gateway)
+    child = children(client, configured)[0]
+    assert child["mcp_connection_id"] == "conn_scope"
+    read = rpc(client, configured["agent_token"], "tools/call", {"name": "read_conversation", "arguments": {}})
+    assert "Hello" in read.text and not read.json()["result"].get("isError")
+    response = client.post(
+        "/api/v1/routes",
+        json={
+            "name": "Other",
+            "sources": [source(channel["id"], "group", "456")],
+            "host_id": configured["host_id"],
+            "agent_id": "agt_example",
+            "sender_policy": "any",
+            "reply_source": "mcp",
+            "mcp_connection_id": "conn_scope",
+        },
+    )
     assert response.status_code == 409
+
+
+def test_saving_unchanged_legacy_source_preserves_route_and_thread(gateway):
+    client, _, _, channel, _ = gateway
+    configured = route(gateway)
+    webhook(gateway)
+    response = client.patch(
+        f"/api/v1/routes/{configured['id']}",
+        json={
+            "name": "Renamed",
+            "sources": [source(channel["id"], "group", "123")],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert not response.json().get("sources")
+    assert client.get("/api/v1/events").json()[0]["route_id"] == configured["id"]
+    assert not children(client, configured)
+
+
+def mcp_result(client, token, tool, **arguments):
+    response = rpc(client, token, "tools/call", {"name": tool, "arguments": arguments})
+    result = response.json()["result"]
+    assert not result.get("isError"), response.text
+    return json.loads(result["content"][0]["text"])
+
+
+def test_channel_reads_do_not_expand_agent_triggers_or_reply_authority(gateway):
+    client, _, _, channel, _ = gateway
+    configured = create_rule(
+        gateway,
+        [source(channel["id"], conversation="7")],
+        read_channel_ids=[channel["id"]],
+        reply_source="mcp",
+        mcp_connection_id="conn_scope",
+    )
+    assert webhook(gateway, kind="private", text="Trigger input").json()["state"] == "accepted"
+    assert webhook(gateway, kind="private", user=8, message_id=2, text="Other private").json()["state"] == "blocked"
+    assert webhook(gateway, kind="group", user=9, message_id=3, text="Group history").json()["state"] == "blocked"
+    listed = mcp_result(client, configured["agent_token"], "list_conversations")["conversations"]
+    assert len(listed) == 3
+    assert len(children(client, configured)) == 1
+    group = next(row for row in listed if row["conversation_kind"] == "group")
+    assert group["can_read"] and not group["can_reply"]
+    assert "Group history" in str(
+        mcp_result(client, configured["agent_token"], "read_conversation", route_id=group["id"])
+    )
+    denied = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {
+            "name": "send_message",
+            "arguments": {"route_id": group["id"], "text": "Unauthorized reply"},
+        },
+    )
+    assert denied.json()["result"]["isError"]
+    assert not client.get("/api/v1/replies").json()
+
+
+def test_read_channels_can_exclude_the_source_and_include_another_account(gateway):
+    client, app, upstream, channel, host = gateway
+    other_channel = new_channel(client)
+    other = (client, app, upstream, other_channel, host)
+    configured = create_rule(gateway, [source(channel["id"], conversation="7")], read_channel_ids=[other_channel["id"]])
+    webhook(gateway, kind="private", text="Source input")
+    webhook(other, kind="private", text="Readable account")
+    unrelated = client.post("/api/v1/connections", json={"name": "Unrelated", "kind": "mcp"}).json()
+    for token in (configured["agent_token"], host["mcp_key"]):
+        listed = mcp_result(client, token, "list_conversations")["conversations"]
+        own = next(row for row in listed if row["channel_id"] == channel["id"])
+        external = next(row for row in listed if row["channel_id"] == other_channel["id"])
+        assert not own["can_read"] and external["can_read"]
+        read = mcp_result(client, token, "read_conversation", route_id=external["id"])
+        assert "Readable account" in str(read) and "Source input" not in str(read)
+        denied = rpc(client, token, "tools/call", {"name": "read_conversation", "arguments": {"route_id": own["id"]}})
+        assert denied.json()["result"]["isError"]
+    assert mcp_result(client, unrelated["mcp_key"], "list_conversations")["conversations"] == []
+    assert len([event for event in client.get("/api/v1/events").json() if event["state"] == "queued"]) == 1
+
+
+def test_read_grants_revoke_immediately_and_all_channels_include_future_accounts(gateway):
+    client, app, upstream, channel, host = gateway
+    configured = create_rule(gateway, [source(channel["id"], conversation="7")], read_channel_ids=["*"])
+    added = new_channel(client)
+    webhook((client, app, upstream, added, host), kind="private", text="Future account")
+    listing = mcp_result(client, configured["agent_token"], "list_conversations")["conversations"]
+    external = next(row for row in listing if row["channel_id"] == added["id"])
+    assert "Future account" in str(
+        mcp_result(client, configured["agent_token"], "read_conversation", route_id=external["id"])
+    )
+    assert client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": []}).status_code == 200
+    denied = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "read_conversation", "arguments": {"route_id": external["id"]}},
+    )
+    assert denied.json()["result"]["isError"]
+    assert (
+        client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": [added["id"]]}).status_code == 200
+    )
+    client.portal.call(app.state.store.close)
+    client.portal.call(app.state.store.open)
+    assert "Future account" in str(
+        mcp_result(client, configured["agent_token"], "read_conversation", route_id=external["id"])
+    )
+    client.delete(f"/api/v1/connections/{added['id']}")
+    denied = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "read_conversation", "arguments": {"route_id": external["id"]}},
+    )
+    assert denied.json()["result"]["isError"]
+    assert client.patch(f"/api/v1/routes/{configured['id']}", json={"enabled": False}).status_code == 200
+    assert rpc(client, configured["agent_token"], "tools/list", {}).status_code == 401
+
+
+def test_explicit_channel_reads_include_archived_history_and_all_senders(gateway):
+    client, _, _, channel, _ = gateway
+    old = route(gateway)
+    webhook(gateway, text="Archived input")
+    client.delete(f"/api/v1/routes/{old['id']}")
+    configured = create_rule(
+        gateway,
+        [source(channel["id"], "group", "123")],
+        sender_policy="allowlist",
+        allowed_user_ids=["7"],
+        read_channel_ids=[channel["id"]],
+    )
+    assert webhook(gateway, user=8, message_id=2, text="Other participant").json()["state"] == "blocked"
+    read = mcp_result(client, configured["agent_token"], "read_conversation")
+    assert "Archived input" in str(read) and "Other participant" in str(read)
+    assert client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": []}).status_code == 200
+    denied = rpc(client, configured["agent_token"], "tools/call", {"name": "read_conversation", "arguments": {}})
+    assert denied.json()["result"]["isError"]
+
+
+def test_invalid_read_channel_grants_are_rejected_without_changing_authority(gateway):
+    client, _, _, channel, host = gateway
+    configured = create_rule(gateway, [source(channel["id"], conversation="7")], read_channel_ids=[])
+    for invalid in [[host["id"]], ["missing"], [channel["id"], channel["id"]], ["*", channel["id"]]]:
+        response = client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": invalid})
+        assert response.status_code == 422, response.text
+    assert client.get("/api/v1/routes").json()[0]["read_channel_ids"] == []

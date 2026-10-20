@@ -1,6 +1,6 @@
 # Channel Gateway Server
 
-FastAPI management service, OneBot v11 and official QQ/Weixin text channels to
+FastAPI management service, OneBot v11 and official QQ media/guild/platform channels plus Weixin text channels to
 a13n, SQLite persistence,
 host/route-scoped MCP tools and generic MCP client Hosts, and a bundled shadcn management console.
 

@@ -1,3 +1,4 @@
+import { ConsoleLink } from "@/components/console-link";
 import { useState } from "react";
 import { ArrowUpRight, Bot, Cable, MessageSquare, Route } from "lucide-react";
 import type { Snapshot } from "@/api";
@@ -35,14 +36,14 @@ export function Dashboard({
       title: t("Channels"),
       value: summary.channels,
       icon: Cable,
-      href: "#channels",
+      href: "/channels",
       detail: "",
     },
     {
       title: t("Agent hosts"),
       value: summary.hosts,
       icon: Bot,
-      href: "#hosts",
+      href: "/hosts",
       detail: t("API {api} / MCP {mcp}", {
         api: summary.apiHosts,
         mcp: summary.mcpHosts,
@@ -52,25 +53,25 @@ export function Dashboard({
       title: t("Routes & access"),
       value: summary.routes,
       icon: Route,
-      href: "#routes",
+      href: "/routes",
       detail: t("{count} enabled", { count: summary.enabledRoutes }),
     },
     {
       title: t("Recent messages"),
       value: summary.messages,
       icon: MessageSquare,
-      href: "#events",
+      href: "/events",
       detail: t("Latest 100"),
     },
   ];
   const states = ["queued", "submitted", "available", "completed"] as const;
   const attention = [
-    { label: t("Replies blocked or unconfirmed"), count: summary.replyIssues, href: "#events" },
-    { label: t("Messages without a route"), count: summary.unmatched, href: "#events" },
+    { label: t("Replies blocked or unconfirmed"), count: summary.replyIssues, href: "/events" },
+    { label: t("Messages without a route"), count: summary.unmatched, href: "/events" },
     {
       label: t("Messages failed or blocked"),
       count: summary.failed + summary.blocked,
-      href: "#events",
+      href: "/events",
     },
   ];
   const channelName = (event: Snapshot["events"][number]) => {
@@ -100,13 +101,13 @@ export function Dashboard({
           <Card key={metric.href} className="gap-3">
             <CardHeader>
               <CardTitle className="text-sm font-medium">
-                <a
+                <ConsoleLink
                   href={metric.href}
                   className="flex items-center justify-between gap-2 rounded-sm hover:text-primary"
                 >
                   {metric.title}
                   <metric.icon className="size-4 text-primary" aria-hidden="true" />
-                </a>
+                </ConsoleLink>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -148,7 +149,7 @@ export function Dashboard({
             <ul className="divide-y">
               {attention.map((item) => (
                 <li key={item.label}>
-                  <a
+                  <ConsoleLink
                     href={item.href}
                     className="flex items-center gap-3 rounded-sm py-3 text-sm hover:text-primary"
                   >
@@ -157,7 +158,7 @@ export function Dashboard({
                       {item.count}
                     </Badge>
                     <ArrowUpRight className="size-4 text-muted-foreground" aria-hidden="true" />
-                  </a>
+                  </ConsoleLink>
                 </li>
               ))}
             </ul>
@@ -172,10 +173,10 @@ export function Dashboard({
         </div>
         <ListToolbar query={query} onQueryChange={setQuery} label={t("Search messages…")}>
           <Button asChild variant="outline">
-            <a href="#events">
+            <ConsoleLink href="/events">
               {t("View all messages")}
               <ArrowUpRight aria-hidden="true" />
-            </a>
+            </ConsoleLink>
           </Button>
         </ListToolbar>
         <TableFrame>

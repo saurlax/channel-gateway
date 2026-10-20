@@ -1,27 +1,39 @@
+export type ConversationKind = "private" | "group" | "guild" | "guild_dm";
 export type Connection = {
   id: string;
   name: string;
   kind: "onebots" | "qq" | "weixin" | "a13n" | "mcp";
   transport?: string;
   app_id?: string | null;
+  qq_intents?: number | null;
   state?: string;
   error?: string | null;
   capabilities?: { receive: boolean; send: boolean; conversations: string[]; content: string[] };
   api_url: string | null;
   self_id: string | null;
 };
+export type RouteSource = {
+  channel_id: string;
+  conversation_kind: ConversationKind;
+  conversation_id: string;
+};
+export type ThreadPolicy = "conversation" | "sender" | "fixed" | "message";
 export type Route = {
   id: string;
   name: string;
   channel_id: string;
+  sources?: RouteSource[] | null;
+  read_channel_ids?: string[] | null;
+  action_grants?: string[];
   host_id: string;
-  conversation_kind: "private" | "group";
+  conversation_kind: ConversationKind;
   conversation_id: string;
   allowed_user_ids: string[];
   sender_policy: "allowlist" | "any";
-  access_mode: "restricted" | "full";
   parent_route_id: string | null;
   agent_id: string | null;
+  thread_policy?: ThreadPolicy;
+  fixed_thread_id?: string | null;
   enabled: boolean;
   reply_source: "output" | "mcp";
   mcp_connection_id: string | null;
@@ -57,6 +69,7 @@ export type Snapshot = {
   routes: Route[];
   events: ChannelEvent[];
   replies: Reply[];
+  actions?: (Reply & { operation: string })[];
 };
 
 export type AdminSession = { username: string; csrf_token: string };
@@ -64,7 +77,7 @@ export type AdminSession = { username: string; csrf_token: string };
 export type HistoryMessage = {
   id: string;
   route_id: string | null;
-  direction: "incoming" | "outgoing";
+  direction: "incoming" | "outgoing" | "action";
   text: string;
   sender_id: string | null;
   state: string;

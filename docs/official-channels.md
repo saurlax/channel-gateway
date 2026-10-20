@@ -2,8 +2,10 @@
 
 Native channels connect directly to the platform, without a OneBots process.
 Both use the existing a13n routing, sender allowlists, MCP scope, and automatic replies.
-The current adapters support text; voice, images, calls, QQ guild channels, and
-Weixin groups are not supported. See the [channel contract](../spec/01-channel-adapters.md)
+QQ supports private/group/guild/DM messages and scoped platform operations; Weixin
+supports private text. Live calls and Weixin groups are not supported. See
+[QQ platform tools](qq-platform.md) for media, streaming, reactions, resource
+grants, and platform restrictions, and the [channel contract](../spec/01-channel-adapters.md)
 for authentication and delivery details.
 
 ## QQ official Bot
@@ -19,11 +21,11 @@ for authentication and delivery details.
    URL into the QQ platform callback configuration. CG handles official URL
    verification and verifies event signatures using the AppSecret.
 5. Create a conversation route using the platform **user OpenID** or **group
-   OpenID**, and allowed sender OpenIDs. These are account-scoped identifiers,
+   OpenID**. These are account-scoped identifiers,
    not ordinary QQ numbers. The bot/application must already have access to the
    conversation. Select the a13n host and Agent as described in the
    [bridge guide](onebots-a13n.md#connect-a-channel-and-host).
-6. Send a text message through the supported bot interaction. Replies are sent automatically after route authorization checks, for both
+6. Send a text or image message through the supported bot interaction. Replies are sent automatically after route authorization checks, for both
    private and group conversations.
 
 QQ replies are passive replies tied to incoming message IDs, with platform limits
@@ -56,13 +58,13 @@ group message IDs longer than 128 characters.
    CG displays the received sender ID and `private:USER_ID` conversation ID.
    The channel's `@im.bot` ID identifies the bot, not your user account.
 5. Select **Create route** on the conversation row to prefill the channel and user ID.
-   Choose the a13n Host and Agent ID. Save the route and send a new message. Select **Full access** only when the
-   Agent should retain its configured connection tools. Discovery messages are not
+   Choose the a13n Host and select its Agent. Save the route and send a new message.
+   Configure connection tools and permissions in the Agent interface. Discovery messages are not
    replayed; iLink replies require a newly authorized incoming context token.
-6. For a personal assistant or testing, instead choose **All conversations** and
-   **Any sender**. Each new private conversation gets its own thread. Select
-   **Full access** to retain the Agent's configured tools. Replies are automatic
-   in both permission modes.
+6. For a personal assistant or testing, instead choose **All users** in **Sources**;
+   each new private conversation gets its own thread by default. Change **Conversation continuity**
+   for per-sender, fixed-thread, or per-message context. Agent tools follow the
+   configuration in the Agent interface. Replies are automatic.
    This allows anyone who can contact the bot to invoke those capabilities;
    use a specific user route when only your account should have access.
 7. If the session expires, open **Manage** and pair the same bot account again.
@@ -87,8 +89,10 @@ remains deduplicated. Invalid callback signatures and oversized traffic are
 rejected. Journal rows remain after route/channel deletion and server restart.
 
 Messages received without an enabled authorized route do not trigger the Agent.
-Once their conversation and sender are authorized, MCP can read their stored
-text, including history from before route creation or while delivery was disabled.
+Select readable bot accounts in **Connections** to allow MCP reads of their stored
+messages across all received conversations, including history from before route creation
+or while delivery was disabled. Legacy API routes without an explicit channel
+grant retain their conversation/sender restrictions.
 This does not replay old inputs. Media processing and raw protocol-event reads
 are not MCP tools; private context tokens never enter Agent inputs or tool results.
 
@@ -96,7 +100,7 @@ For QQ, receiving every ordinary group message additionally requires enabling
 **receive all messages** in QQ's bot settings. CG already subscribes to the
 group/C2C intent and handles `GROUP_MESSAGE_CREATE`; it cannot collect messages
 QQ does not push or recover packets discarded before this journal was added.
-The current route policy activates the Agent for every authorized incoming text;
+The current route policy activates the Agent for every authorized incoming message, including media and verified button/menu input;
 there is no separate **record all, reply only when mentioned** switch yet.
 
 See the [QQ full-message event](https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_message_create.html)
@@ -105,8 +109,9 @@ and [channel retention contract](../spec/01-channel-adapters.md#route-independen
 ## Host binding and failure handling
 
 To remove a channel, open **Channels → Manage → Delete channel** and confirm its
-name. This stops its connection, removes its stored credentials, disables all
-associated routes, and blocks pending inputs and replies. Message and reply
+name. This stops its connection, removes its stored credentials, disables that channel’s
+conversation bindings, and blocks their pending inputs and replies. Multi-source
+routes continue to serve their other channels. Message and reply
 history remains available to the administrator. Existing upstream runs and
 messages already sent are unaffected. Adding the account again requires new
 credentials and routes.

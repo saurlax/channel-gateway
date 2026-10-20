@@ -1,0 +1,103 @@
+# Images and message reactions
+
+QQ official private/group/guild/DM conversations and OneBot support received images and
+image replies. Weixin remains text-only. Image-only messages activate the Agent
+under the same sources and sender policies as text. The console shows `[Image]`
+for image-only input; it does not preview image pixels.
+
+## Receive and read images
+
+For a13n API Hosts, CG sends native URL attachment parts alongside the message.
+The Host must allow the QQ CDN endpoints in its outbound endpoint policy and
+use a model/configuration supporting image input. Temporary QQ download links
+can expire; send the image again if the Host can no longer fetch it.
+
+For MCP clients, call `list_conversations`, select a readable `id`, then call
+`read_conversation`. Messages include `source_message_id` and `images` with
+zero-based indices. Fetch the pixels using:
+
+```json
+{
+  "name": "read_image",
+  "arguments": {
+    "route_id": "route_EXAMPLE",
+    "source_message_id": "PLATFORM_MESSAGE_ID",
+    "image_index": 0
+  }
+}
+```
+
+The result is native MCP image content. Reads require the current conversation
+read grant; read access never adds activation sources or reply authority. A
+specific route token may omit `route_id`; a Host key or account-history handle
+requires it. History never exposes signed image URLs.
+
+Up to four images per message are projected. MCP downloads accept PNG, JPEG,
+GIF, and WebP, at most 4 MiB each, from `qpic.cn` and its subdomains,
+`multimedia.nt.qq.com`, `multimedia.nt.qq.com.cn`, and regional
+`*.cos.*.myqcloud.com` hosts. HTTP URLs on those hosts
+are upgraded to HTTPS. Other download hosts, local file paths, redirects,
+unsupported formats, and expired links are refused. These attachment sources
+remain in the private raw journal. a13n applies its own attachment limits.
+
+## Send images
+
+Choose **MCP send_message tool** as the route's reply source, and enable CG's
+`send_image` tool in the Agent Host. a13n routes need their existing dedicated MCP
+connection binding. Final-run-output routes continue forwarding text only.
+Check `list_conversations` capability fields for the channel's supported formats.
+
+```json
+{
+  "name": "send_image",
+  "arguments": {
+    "route_id": "route_EXAMPLE",
+    "image_base64": "BASE64_IMAGE_BYTES",
+    "media_type": "image/png",
+    "caption": "Optional caption"
+  }
+}
+```
+
+Supply strict base64 without a `data:` prefix, at most 4 MiB decoded. QQ official
+supports PNG/JPEG; OneBot also supports GIF/WebP. CG accepts no server-local path
+or arbitrary remote URL. A caption may contain up to 16000 characters.
+
+The tool returns a queued reply ID. Replies are sent automatically and appear in
+the existing conversation history with their delivery state. QQ uploads first,
+then sends a passive image reply tied to the authorized incoming message; QQ's
+reply window and quotas still apply. `sent` means the platform confirmed
+acceptance. `unknown` means a send might have taken effect: inspect the channel
+before invoking the tool again. CG does not automatically resend uncertain actions.
+
+## React to messages
+
+OneBot message reactions require a provider implementing the optional
+NapCat-compatible `set_msg_emoji_like` action. Standard OneBot v11 does not
+guarantee this extension. CG reports it as optional in conversation capabilities.
+QQ official C2C/group reactions and Weixin reactions are unavailable; QQ's official
+reaction API supports guild channels, implemented by CG with the explicit
+`message.react` route grant. Reactions return an action ID and are separate from
+ordinary message replies; see [QQ platform tools](qq-platform.md).
+
+```json
+{
+  "name": "set_message_reaction",
+  "arguments": {
+    "route_id": "route_EXAMPLE",
+    "source_message_id": "PLATFORM_MESSAGE_ID",
+    "emoji_id": "76",
+    "add": true
+  }
+}
+```
+
+Use a decimal platform emoji ID, not a Unicode emoji. Set `add: false` to remove
+the bot's reaction. The target must be a locally received message in the source
+conversation, with its sender currently allowed by the route. An account-wide
+read grant does not authorize reactions to other conversations or disallowed
+senders. Revoking source authority blocks queued reactions. Unsupported actions
+receive no fallback emoji message and are not automatically retried.
+
+Ordinary incoming OneBot `face` segments appear as `[face:ID]` in message text;
+these are distinct from reactions attached to another message.

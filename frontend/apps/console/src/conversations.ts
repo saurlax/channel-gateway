@@ -1,4 +1,4 @@
-import type { ChannelEvent, HistoryMessage, Route, Snapshot } from "./api.ts";
+import type { ChannelEvent, ConversationKind, HistoryMessage, Route, Snapshot } from "./api.ts";
 
 export function eventAddress(snapshot: Snapshot, event: ChannelEvent) {
   if (event.message.address) return event.message.address;
@@ -13,9 +13,26 @@ export function eventAddress(snapshot: Snapshot, event: ChannelEvent) {
 
 export type ConversationSource = {
   channel_id: string;
-  conversation_kind: "private" | "group";
+  conversation_kind: ConversationKind;
   conversation_id: string;
 };
+
+export function newRoutePath(source: ConversationSource) {
+  return `/routes/new?${new URLSearchParams(source)}`;
+}
+
+export function routeSourceFromSearch(search: URLSearchParams): ConversationSource | undefined {
+  const channel_id = search.get("channel_id");
+  const conversation_id = search.get("conversation_id");
+  const conversation_kind = search.get("conversation_kind");
+  if (
+    !channel_id ||
+    !conversation_id ||
+    !["private", "group", "guild", "guild_dm"].includes(conversation_kind ?? "")
+  )
+    return undefined;
+  return { channel_id, conversation_id, conversation_kind: conversation_kind as ConversationKind };
+}
 
 export type Conversation = {
   key: string;
@@ -32,7 +49,7 @@ export function conversationKey(source: ConversationSource) {
 
 export function sourceFromAddress(address: { account_id: string; conversation_id: string }) {
   const [kind, ...parts] = address.conversation_id.split(":");
-  if (kind !== "private" && kind !== "group") return undefined;
+  if (!["private", "group", "guild", "guild_dm"].includes(kind)) return undefined;
   return {
     channel_id: address.account_id,
     conversation_kind: kind,
@@ -94,6 +111,15 @@ export function conversations(snapshot: Snapshot): Conversation[] {
           run_id: null,
         },
         reply.route_name,
+      );
+  }
+  for (const entry of snapshot.actions ?? []) {
+    const source = entry.address && sourceFromAddress(entry.address);
+    if (source)
+      add(
+        source,
+        { ...entry, direction: "action", sender_id: null, thread_id: null, run_id: null },
+        entry.route_name,
       );
   }
   for (const route of snapshot.routes) {

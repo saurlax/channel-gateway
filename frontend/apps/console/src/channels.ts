@@ -35,7 +35,7 @@ export const channelTypes = [
     kind: "qq",
     transport: "websocket",
     label: "QQ",
-    help: "Use a QQ official Bot AppID and AppSecret. Supports private and group text messages.",
+    help: "Use a QQ official Bot AppID and AppSecret. Supports private, group, guild channel, and guild direct messages.",
   },
   {
     id: "weixin",

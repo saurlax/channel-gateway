@@ -1,25 +1,20 @@
 import { useState } from "react";
 import { useLocale } from "@/i18n";
-import { RouteForm, type RouteSource } from "@/components/routes";
 import {
   conversations,
   conversationKey,
   eventAddress,
   sourceFromAddress,
+  newRoutePath,
   type Conversation,
 } from "@/conversations";
 import type { Snapshot } from "@/api";
 import type { Action } from "@/components/form-controls";
 import { ConversationDialog } from "@/components/conversation-history";
+import { ConsoleLink } from "@/components/console-link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  ListToolbar,
-  TableFrame,
-  EmptyRow,
-  ManagementDialog,
-  matchesQuery,
-} from "@/components/management";
+import { ListToolbar, TableFrame, EmptyRow, matchesQuery } from "@/components/management";
 import {
   Table,
   TableBody,
@@ -49,7 +44,6 @@ export function Events({
   const { t, message, date } = useLocale();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Conversation | null>(null);
-  const [routeSource, setRouteSource] = useState<RouteSource | null>(null);
   const groups = conversations(snapshot);
   const newConversations = new Set(
     snapshot.events
@@ -139,12 +133,11 @@ export function Events({
                                 (c) => c.kind === "a13n" || c.kind === "mcp",
                               )
                             }
-                            onClick={() => {
-                              clearError();
-                              setRouteSource(group.source);
-                            }}
+                            asChild
                           >
-                            {t("Create route")}
+                            <ConsoleLink href={newRoutePath(group.source)}>
+                              {t("Create route")}
+                            </ConsoleLink>
                           </Button>
                         )}
                     </div>
@@ -155,25 +148,6 @@ export function Events({
           </TableBody>
         </Table>
       </TableFrame>
-      <ManagementDialog
-        open={!!routeSource}
-        onOpenChange={(open) => !open && setRouteSource(null)}
-        title={t("Add a route")}
-        description={t("Use the sender and conversation IDs from this received message.")}
-        busy={busy}
-        error={error}
-        wide
-      >
-        {routeSource && (
-          <RouteForm
-            initial={routeSource}
-            snapshot={snapshot}
-            action={action}
-            busy={busy}
-            onSaved={() => setRouteSource(null)}
-          />
-        )}
-      </ManagementDialog>
       {conversation && (
         <ConversationDialog
           key={conversation.key}

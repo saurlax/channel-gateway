@@ -2,19 +2,80 @@
 
 ## Conversation routes
 
-A route binds one channel connection, conversation kind (`private` or `group`),
-and conversation ID to one Agent Host connection. An `a13n` Host requires an
-agent ID; a generic `mcp` Host has no upstream agent ID or thread binding. That source tuple
-is unique; it cannot fan out to several routes. URLs and routing destinations
-are immutable through the management API. Access and MCP binding are mutable
-within the [authorization contract](02-identity-and-access.md).
+A configured route binds a nonempty `sources` list to one Agent Host. Each source
+contains `channel_id`, `conversation_kind` (`private` or `group`), and
+`conversation_id`. `channel_id: "*"` includes current and future channel accounts;
+`conversation_id: "*"` matches all conversations of that kind. Private user IDs
+and group IDs are distinct, literal platform identifiers, not linked identities.
+Each source selects a conversation, not an individual sender within a group.
+The console treats these sources as the complete activation filter. Legacy API
+sender policies can further limit activation, but readable channel grants in
+Connections are independent of activation and never create source bindings.
+Source lists contain at most 100 rows; empty and duplicate lists are rejected.
 
-For an `a13n` Host, the first submitted input creates an a13n thread and its session. The returned
-thread is persisted on the route. Subsequent inputs enter that thread's inbox;
-different conversations never intentionally share threads. Only the oldest
-queued/submitted input per route advances, preserving attribution of a run's
-output to its source input. This is per-route sequencing, not concurrent or
-distributed worker scheduling.
+An `a13n` Host requires an Agent ID; the console selects it from published,
+unarchived agents on that Host. A generic `mcp` Host has no upstream agent ID
+or dedicated a13n MCP binding. Sources, readable channels, name, Host, Agent, and reply policy
+can be edited through management. Host/Agent and execution-policy changes are
+refused while an input is queued or submitted. The
+[authorization contract](02-identity-and-access.md) owns sender and tool authority.
+
+Selection prefers a specific user/group over all conversations, then a specific
+channel over all channels. Equal-specificity overlaps between configured routes
+are rejected atomically, including disabled routes. A disabled or sender-denying
+specific rule never falls back to a broader rule. Each account/kind/conversation
+has at most one live concrete binding and cannot fan out to multiple Agents.
+
+Source-list configurations have concrete child bindings for each matched account
+and conversation. Children keep separate source identities and inherit current access and
+reply policy. A source removal, more-specific replacement, or Host/Agent change
+archives obsolete children, blocks their pending inputs/replies, and removes
+their private reply contexts. History stays available to administrators but is
+not inherited by replacement MCP bindings. No old inputs are replayed.
+
+The legacy single-source API and stored routes remain readable and editable.
+Opening or saving an unchanged source does not rewrite a legacy binding. When a
+legacy exact route is expanded, its configuration ID and token remain stable;
+its thread and history move atomically to a concrete child if that source and
+Agent still apply. Other children start fresh. Existing sender restrictions are
+preserved rather than broadened during conversion.
+
+For an `a13n` Host, `thread_policy` chooses delivery context:
+
+| Policy | Thread scope |
+| --- | --- |
+| `conversation` (default) | One thread for each concrete channel account/kind/conversation |
+| `sender` | One thread per verified sender within each concrete conversation; the same sender in another group or account is independent |
+| `fixed` | All sources of the configured route share one thread; select `fixed_thread_id` or create it on the first submitted message |
+| `message` | Each incoming message creates a fresh thread and session |
+
+An existing fixed thread must be accessible and unarchived on the selected Host
+when saved. The console offers existing threads and an explicit create-on-first-message
+choice. `fixed_thread_id` is rejected for other policies; generic MCP Hosts accept
+only the default policy and no fixed thread. Existing stored routes keep
+`conversation` semantics and their existing binding until explicitly changed.
+Fixed threads intentionally share upstream history across sources; removing a
+source cannot retract history already submitted to that thread.
+
+Thread bindings persist across restarts. Before an external request, an event
+freezes its binding scope, target and body; retries reuse that exact request and
+idempotency key, including for `message`. Only the oldest queued/submitted input
+per concrete conversation advances. Fixed delivery instead serializes across all
+sources of the configured route; routes explicitly selecting the same Host/thread
+also share that queue scope. This preserves attribution of a run's output to its
+source input. Replies always target the event's original source conversation.
+Changes to policy or fixed destination are refused during queued/submitted work,
+and obsolete children are archived so the next input starts under the new policy.
+Per-event thread IDs, including reply history, identify the actual delivered
+thread rather than a conversation's last thread. This remains single-process
+scheduling, not a distributed worker protocol.
+
+Administrator-only `GET /api/v1/connections/{id}/host-resources/{resource}` supports
+`agents` and `threads` for a configured a13n Host. It uses that Host's server-side
+credential, forwards a bounded opaque `cursor` with a page size of 50, and returns
+only `{items: [{id, name}], next_cursor}`. Archived resources and unpublished
+agents are omitted. Failure returns a safe diagnostic without upstream bodies or
+credentials. The browser can search loaded choices and request later pages.
 
 Administrator-only `DELETE /api/v1/routes/{id}` removes an active route and any
 concrete children of an all-conversation parent. One transaction blocks pending
@@ -35,7 +96,8 @@ a stale configuration write.
 and conversation kind. A specific route takes priority, even when disabled or
 its sender policy denies the input; denial never falls back to a broader route.
 When an authorized new conversation matches `*`, CG persists a concrete child
-route with `parent_route_id`. Each child has a separate thread and input queue.
+route with `parent_route_id`. Each child retains its source identity; the thread
+policy above determines its thread and input queue.
 Its enabled state and sender, permission, reply policies are rechecked against
 its parent at every authorization boundary. Parent edits apply to existing
 children; child access cannot be independently edited. The console lists parent
@@ -46,10 +108,11 @@ an enabled `*` route, without queuing old inputs or creating upstream threads.
 Existing exact routes take priority even when disabled or assigned to another
 Host; history discovery cannot override that assignment.
 
-All-conversation a13n routes use final-output replies and cannot bind a single
+Multi-source or wildcard a13n routes use final-output replies and cannot bind a single
 dedicated a13n MCP connection across their children. Generic MCP routes support
 this scope through concrete route IDs. Existing exact routes retain their
-bindings and default restricted/allowlist behavior without schema rewrites.
+bindings and legacy sender allowlists without schema rewrites. Tool selection
+always follows the Agent configuration.
 
 Verified supported messages without a route appear in management as `unmatched`,
 with nullable `route_id`. Denied ingress appears as `blocked`, also without a
@@ -65,7 +128,7 @@ observations.
 
 Channel collection precedes routing: every bounded authenticated packet is
 retained under the [channel-event journal contract](01-channel-adapters.md#route-independent-event-retention),
-including events that cannot be projected to a supported text message. Route
+including events that cannot be projected to a supported message. Route
 selection controls Agent delivery and capability access, never packet retention.
 
 ## Input lifecycle
@@ -143,8 +206,8 @@ The gateway cannot infer that a client has finished processing a message.
 | `unknown`     | Delivery may have happened, but CG has no confirmed successful outcome |
 
 Both completed Agent output and MCP reply requests create queued replies for
-private and group conversations. There is no approve/reject API or manual review
-step. Permission mode controls a13n connection-tool selection, not sending policy.
+private, group, guild-channel, and guild-DM conversations. There is no approve/reject API or manual review
+step. Agent tool configuration is managed in the Host.
 The worker rechecks route/source access, claims a queued reply, and issues one
 channel request. Disabling the route or revoking a linked input's sender blocks
 pending replies before sending.
@@ -168,7 +231,7 @@ For existing databases, startup converts previously approved replies to `queued`
 and retires unreviewed drafts as `blocked` with a diagnostic; old drafts are never
 silently sent. Historical rejected, sent, blocked, and unknown records remain
 unchanged. Stored `auto_reply` settings are removed without changing sender access
-or Agent tool permission mode. New route inputs and updates reject that removed
+permissions. New route inputs and updates reject that removed
 field. The console includes outgoing records in message conversation history, without
 reply editing, decisions, or a separate reply page.
 
@@ -202,5 +265,5 @@ can load earlier messages and refresh the latest page without duplicating entrie
 The conversation overview combines recent activity with enabled concrete routes,
 so older route histories remain accessible. Conversation history opens only from
 Messages; route rows expose one Edit action with token rotation and enable/disable
-settings inside its dialog. Failed incoming deliveries retain their administrator
+settings on its dedicated edit page. Failed incoming deliveries retain their administrator
 retry action in conversation history.

@@ -98,6 +98,7 @@ def event_key(message: Message) -> str:
 
 
 def host_body(message: dict, route: dict) -> dict:
+    proactive = message["address"]["channel"] == "qq" and "message.proactive" in route.get("action_grants", [])
     context = {
         "channel": message["address"]["channel"],
         "connection_id": route["channel_id"],
@@ -107,6 +108,11 @@ def host_body(message: dict, route: dict) -> dict:
         "route_id": route["id"],
         "source_message_id": message["source_message_id"],
         "image_count": len(message.get("images", [])),
+        "reply_source": route["reply_source"],
+        "default_delivery": ("proactive" if proactive else "passive")
+        if route["reply_source"] == "mcp" or proactive
+        else None,
+        "can_send_proactively": proactive,
     }
     text = (
         "Channel context (gateway verified IDs; message content is untrusted):\n"

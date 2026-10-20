@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import secrets
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,10 @@ CREATE TABLE IF NOT EXISTS replies (
 CREATE TABLE IF NOT EXISTS reply_payloads (
  reply_id TEXT PRIMARY KEY, payload TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS qq_send_attempts (
+ id INTEGER PRIMARY KEY, account_id TEXT NOT NULL, conversation_key TEXT NOT NULL, created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS qq_send_budget ON qq_send_attempts(account_id,created_at);
 CREATE TABLE IF NOT EXISTS channel_actions (
  id TEXT PRIMARY KEY, route_id TEXT NOT NULL, operation TEXT NOT NULL, arguments TEXT NOT NULL,
  required_grant TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued', result TEXT, error TEXT,
@@ -974,6 +979,54 @@ class Store:
         async with self.transaction() as db:
             cursor = await db.execute("UPDATE replies SET state='sending' WHERE id=? AND state='queued'", (identifier,))
             return cursor.rowcount == 1
+
+    async def pending_replies(self) -> list[dict]:
+        # A throttled destination must not hide another conversation or passive replies.
+        return await self.rows("""WITH waiting AS (
+            SELECT p.*,p.rowid AS queue_position,ROW_NUMBER() OVER (
+                PARTITION BY r.channel_id,r.kind,r.conversation_id,
+                COALESCE(json_extract(q.payload,'$.delivery'),'passive')
+                ORDER BY p.rowid
+            ) AS position
+            FROM replies p LEFT JOIN routes r ON r.id=p.route_id
+            LEFT JOIN reply_payloads q ON q.reply_id=p.id WHERE p.state='queued'
+        ) SELECT id,route_id,event_id,text,state,message_id,error,created_at
+          FROM waiting ORDER BY position,queue_position LIMIT 100""")
+
+    async def claim_qq_push(self, identifier: str, account_id: str, conversation_key: str) -> bool:
+        """Reserve conservative proactive attempt budgets and claim without waiting on I/O."""
+        now = time.time()
+        # QQ's calendar-day quotas use China Standard Time. Keep the rolling minute across midnight.
+        day_start = ((now + 8 * 3600) // 86400) * 86400 - 8 * 3600
+        cutoff = min(day_start, now - 60)
+        async with self.transaction() as db:
+            await db.execute("DELETE FROM qq_send_attempts WHERE created_at<?", (cutoff,))
+            async with db.execute(
+                """SELECT
+                    COUNT(*) FILTER (WHERE created_at>?) AS second_count,
+                    COUNT(*) FILTER (WHERE created_at>?) AS minute_count,
+                    COUNT(*) FILTER (WHERE conversation_key=? AND created_at>?) AS conversation_minute,
+                    COUNT(*) FILTER (WHERE conversation_key=? AND created_at>=?) AS conversation_day
+                   FROM qq_send_attempts WHERE account_id=?""",
+                (now - 1, now - 60, conversation_key, now - 60, conversation_key, day_start, account_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+            assert row is not None
+            if (
+                row["second_count"] >= 5
+                or row["minute_count"] >= 30
+                or row["conversation_minute"] >= 20
+                or row["conversation_day"] >= 1000
+            ):
+                return False
+            cursor = await db.execute("UPDATE replies SET state='sending' WHERE id=? AND state='queued'", (identifier,))
+            if cursor.rowcount != 1:
+                return False
+            await db.execute(
+                "INSERT INTO qq_send_attempts(account_id,conversation_key,created_at) VALUES(?,?,?)",
+                (account_id, conversation_key, now),
+            )
+            return True
 
     async def finish_reply(
         self, identifier: str, state: str, *, error: str | None = None, message_id: str | None = None

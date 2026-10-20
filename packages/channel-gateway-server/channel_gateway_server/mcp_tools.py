@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .bridge import Bridge
+from .channels.actions import MessageDelivery, message_delivery, proactive_authority, tool_message_allowed
 from .channels.manager import capabilities
 from .media import MAX_IMAGE_BASE64, MAX_MEDIA_BYTES, MediaReader, public_message
 from .models import ImageReplyInput
@@ -90,7 +91,10 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
                 if row["host_id"] == host["id"] and row["enabled"] and not row.get("parent_route_id")
             ]
         channel_ids = list({channel for row in configured for channel in row.get("read_channel_ids") or []})
-        channels = {row["id"] for row in await store.connections() if row["kind"] in {"onebots", "qq", "weixin"}}
+        connections = {
+            row["id"]: row for row in await store.connections() if row["kind"] in {"onebots", "qq", "weixin"}
+        }
+        channels = set(connections)
         views = {}
         for route in routes:
             channel_read = route["channel_id"] in channels and (
@@ -100,7 +104,9 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
             views[identity] = {
                 **route,
                 "can_read": channel_read or route.get("read_channel_ids") is None,
-                "can_reply": route["reply_source"] == "mcp",
+                "can_reply": tool_message_allowed(route, connections[route["channel_id"]])
+                if route["channel_id"] in connections
+                else False,
                 "channel_read": channel_read,
             }
         for conversation in await store.readable_conversations(channel_ids):
@@ -141,6 +147,14 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
                         )
                     },
                     "capabilities": capabilities(connection) if connection else {},
+                    "default_delivery": (
+                        "proactive" if connection and proactive_authority(route, connection) else "passive"
+                    )
+                    if route["can_reply"]
+                    else None,
+                    "can_send_proactively": bool(
+                        connection and route["can_reply"] and proactive_authority(route, connection)
+                    ),
                 }
             )
         return {"conversations": conversations}
@@ -194,14 +208,12 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
             raise ValueError("Image access changed during download")
         return Image(data=data, format=media_type.removeprefix("image/"))
 
-    async def reply_route(route_id: str | None) -> tuple[dict, dict]:
+    async def reply_route(route_id: str | None, delivery: MessageDelivery | None) -> tuple[dict, dict, MessageDelivery]:
         route = await authorized_route(route_id)
-        if route["reply_source"] != "mcp":
-            raise ValueError("This route forwards final run output; return reply text from the run instead")
         connection = await store.connection(route["channel_id"])
         if not connection:
             raise ValueError("Channel is unavailable")
-        return route, connection
+        return route, connection, message_delivery(route, connection, delivery)
 
     @server.tool()
     async def send_image(
@@ -209,16 +221,17 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
         media_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp"],
         caption: Annotated[str, Field(max_length=16000)] = "",
         route_id: str | None = None,
+        delivery: Literal["passive", "proactive", "wakeup"] | None = None,
     ) -> dict:
-        """Queue an image reply (strict base64, at most 4 MiB) with an optional caption. Inspect conversation capabilities for formats."""
-        route, connection = await reply_route(route_id)
+        """Queue an image (strict base64, at most 4 MiB). QQ defaults to proactive with message.proactive; explicit delivery='passive' uses reply context. Other channels keep passive MCP replies."""
+        route, connection, delivery = await reply_route(route_id, delivery)
         validated = ImageReplyInput.model_validate(
             {"image_base64": image_base64, "media_type": media_type, "caption": caption}
         )
         if validated.media_type not in capabilities(connection)["image_send_types"]:
             raise ValueError("Image format is not supported by this channel")
         reply = await store.queue_reply(
-            route, caption or "[Image]", payload={"kind": "image", **validated.model_dump()}
+            route, caption or "[Image]", payload={"kind": "image", **validated.model_dump(), "delivery": delivery}
         )
         bridge.wake.set()
         return {"reply_id": reply["id"], "state": reply["state"]}

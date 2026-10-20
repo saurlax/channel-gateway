@@ -244,7 +244,7 @@ class QQClient:
         ) as response:
             if response.status_code == 401:
                 self.expires = 0
-            if 400 <= response.status_code < 500 and response.status_code not in {408, 429}:
+            if 400 <= response.status_code < 500 and response.status_code != 408:
                 raise OperationRejected(f"QQ rejected the operation (HTTP {response.status_code})")
             if not response.is_success:
                 raise AdapterError(f"QQ returned HTTP {response.status_code}")

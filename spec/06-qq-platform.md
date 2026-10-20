@@ -83,13 +83,51 @@ default is empty; upgrades grant no new management authority. Supported grants:
 - `content.manage`: announcements, pins, schedules, forums, and guild audio.
 - `bot.manage`: account-wide menus/panels/sharing and approval-policy administration.
 
-Message sends continue to require a source destination and `reply_source: mcp`;
-independent actions may run on final-output routes when explicitly granted.
+Message tools require an authorized source destination. QQ routes with
+`message.proactive` permit message tools on both final-output and MCP routes.
+Without that grant, existing MCP routes retain passive tool replies, and
+final-output routes reject message tools. Independent actions may also run on
+final-output routes when explicitly granted.
 Legacy MCP OneBot reactions retain their existing authority. Read-channel grants
 never authorize mutations or native resource management. Parent grants propagate
 to current children and are rechecked at invocation and execution. Removing a
 grant, changing a source, disabling/deleting a route, or changing its channel
 blocks queued actions before further external effects.
+
+## Passive replies and proactive tools
+
+Final Agent text on `reply_source: output` remains a passive reply to that
+input's saved `msg_id` or `event_id`. A tool send does not suppress a later final
+output; the Agent must avoid repeating already sent content. No expired passive
+reply is automatically promoted to proactive delivery.
+
+`send_message`, `send_image`, and `send_media` accept optional `delivery`.
+Omitting it selects proactive delivery on QQ routes with `message.proactive`;
+otherwise legacy MCP routes keep passive delivery. Explicit `passive`,
+`proactive`, and C2C-only `wakeup` override that default under current authority.
+Delivery is saved in the queued payload, never re-derived after grant changes.
+Proactive bodies omit `msg_id`, `event_id`, and passive `msg_seq`. Final output
+and explicit passive tool sends continue to use authorized native context.
+OneBot and Weixin behavior does not change. Discovery returns `default_delivery`
+and `can_send_proactively` alongside `can_reply`.
+Verified a13n input context also includes `reply_source`, `default_delivery`,
+and `can_send_proactively`, so ordinary final-text replies do not need a tool
+discovery round merely to determine their delivery policy. These fields are
+context, not replacement authority; tools and workers still recheck the route.
+
+Proactive/wakeup attempts share persistent, conservative budgets by QQ AppID:
+5 per rolling second, 30 per rolling minute, 20 per destination per rolling
+minute, and 1000 per destination per China Standard Time calendar day. These
+are local ceilings, not promises of platform entitlement; QQ certification,
+guild/DM limits, permissions, opt-outs and other native quotas still apply.
+Reservation and reply claiming are atomic and contain no external I/O. Claimed
+attempts consume budget even after rejection or uncertain delivery. Throttled
+replies remain `queued` without uploading or sending. Other conversations and
+passive replies remain eligible; existing attempts survive restart. Queues are
+selected fairly across destinations and delivery modes, preserving order within
+each destination/mode. Grant revocation blocks queued sends, including throttled
+ones. QQ rejection is `failed`; uncertain delivery is `unknown`. Neither is
+automatically retried, and restart never repeats interrupted sends.
 
 ## Execution and receipts
 

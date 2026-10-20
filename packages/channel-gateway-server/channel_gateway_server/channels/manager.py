@@ -16,7 +16,7 @@ from ..adapters import AdapterError, HttpAdapters
 from ..media import IMAGE_TYPES, decode_image
 from ..models import route_allows_sender, weixin_url
 from ..storage import Store
-from .actions import execute_action
+from .actions import execute_action, tool_message_allowed
 from .common import MAX_EVENT_BYTES, SendBlocked, identifier
 from .ingress import ProjectionError, ingest_event
 from .onebot import OneBotSession, ReceiveMessage
@@ -293,7 +293,7 @@ class ChannelManager:
         payload = await self.store.reply_payload(reply["id"])
         if payload:
             await self.check_action_access(connection, route)
-        if payload and route["reply_source"] != "mcp":
+        if payload and not tool_message_allowed(route, connection):
             raise SendBlocked("This route no longer permits MCP actions")
         if payload and payload["kind"] == "reaction":
             if connection["kind"] != "onebots":

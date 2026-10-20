@@ -76,7 +76,11 @@ read policy, not embedded in every history response.
 
 `send_message` accepts up to 16000 characters (nonempty text or a supported guild
 card is required) and accepts invocation only for
-`reply_source: mcp`. It returns a reply ID and initial state; this is a request
+`reply_source: mcp`, or a QQ route with explicit `message.proactive` authority.
+The latter can retain final-output passive replies while tools proactively send
+messages/media. Tool delivery defaults and rate budgets follow the
+[QQ platform contract](06-qq-platform.md#passive-replies-and-proactive-tools).
+It returns a reply ID and initial state; this is a request
 receipt, not confirmed platform delivery. The [reply lifecycle](03-routing-and-delivery.md#reply-lifecycle)
 governs automatic sending. Calls are not deduplicated by an MCP request ID;
 repeating a tool invocation can create another reply.

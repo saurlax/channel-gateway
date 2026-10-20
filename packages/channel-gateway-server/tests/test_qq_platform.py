@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import math
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -25,12 +26,19 @@ class Platform:
         self.on_upload = None
         self.failure = None
         self.counter = 0
+        self.host_output = "Automatic reply"
 
     async def api(self, request):
         self.requests.append(request)
         path = request.url.path
         if path.endswith("getAppAccessToken"):
             return httpx.Response(200, json={"access_token": "platform-token", "expires_in": 7200})
+        if request.url.host == "host.test":
+            if request.method == "POST":
+                return httpx.Response(
+                    201, json={"thread": {"id": "thread1"}, "entry": {"id": "entry1"}, "run": {"id": "run1"}}
+                )
+            return httpx.Response(200, json={"status": "completed", "output": self.host_output})
         assert request.headers["authorization"] == "QQBot platform-token"
         if self.on_request:
             await self.on_request(request)
@@ -908,3 +916,251 @@ def test_non_button_interactions_do_not_emit_acknowledgements_or_agent_inputs(pl
     )
     assert not platform[2].requests
     assert not platform[0].get("/api/v1/events").json()
+
+
+def output_route(platform, grants=()):
+    client = platform[0]
+    host = client.post(
+        "/api/v1/connections",
+        json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "test-host-key"},
+    ).json()
+    return configure(platform, grants=grants, host_id=host["id"], agent_id="agent1", reply_source="output")
+
+
+def sent_messages(platform):
+    return [r for r in platform[2].requests if r.method == "POST" and r.url.path.endswith("/messages")]
+
+
+def test_final_output_and_proactive_tool_sends_coexist(platform):
+    route = output_route(platform, ["message.proactive"])
+    incoming(platform)
+    decoded(call(platform, route, "send_message", text="Notification"))
+    tick(platform)
+    tick(platform)
+    submission = next(r for r in platform[2].requests if r.url.host == "host.test" and r.method == "POST")
+    context_text = json.loads(submission.content)["payload"]["content"][0]["text"]
+    assert '"reply_source": "output"' in context_text and '"default_delivery": "proactive"' in context_text
+    bodies = [json.loads(r.content) for r in sent_messages(platform)]
+    assert len(bodies) == 2
+    assert (
+        bodies[0]["content"] == "Notification"
+        and "msg_id" not in bodies[0]
+        and "event_id" not in bodies[0]
+        and "msg_seq" not in bodies[0]
+    )
+    assert bodies[1]["content"] == "Automatic reply" and bodies[1]["msg_id"] == "source1"
+    view = decoded(call(platform, route, "list_conversations"))["conversations"][0]
+    assert view["reply_source"] == "output" and view["can_reply"] and view["can_send_proactively"]
+    assert view["default_delivery"] == "proactive"
+
+
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        ("send_message", {"text": "Notification"}),
+        ("send_image", {"image_base64": PNG_BASE64, "media_type": "image/png"}),
+        (
+            "send_media",
+            {"media_kind": "image", "media_type": "image/png", "filename": "test.png", "data_base64": PNG_BASE64},
+        ),
+    ],
+)
+def test_output_routes_send_proactive_media_without_incoming_context(platform, tool, arguments):
+    route = output_route(platform, ["message.proactive"])
+    decoded(call(platform, route, tool, **arguments))
+    tick(platform)
+    assert len(sent_messages(platform)) == 1
+    body = json.loads(sent_messages(platform)[0].content)
+    assert not {"msg_id", "event_id", "msg_seq", "is_wakeup"} & body.keys()
+    assert platform[0].get("/api/v1/replies").json()[0]["state"] == "sent"
+
+
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        ("send_message", {"text": "Explicit passive"}),
+        ("send_image", {"image_base64": PNG_BASE64, "media_type": "image/png"}),
+        (
+            "send_media",
+            {"media_kind": "image", "media_type": "image/png", "filename": "test.png", "data_base64": PNG_BASE64},
+        ),
+    ],
+)
+def test_explicit_passive_tools_keep_source_context_on_output_routes(platform, tool, arguments):
+    route = output_route(platform, ["message.proactive"])
+    incoming(platform)
+    decoded(call(platform, route, tool, delivery="passive", **arguments))
+    tick(platform)
+    assert json.loads(sent_messages(platform)[0].content)["msg_id"] == "source1"
+
+
+def test_output_route_without_proactive_grant_denies_all_message_tools(platform):
+    route = output_route(platform)
+    incoming(platform)
+    for tool, arguments in [
+        ("send_message", {"text": "No"}),
+        ("send_image", {"image_base64": PNG_BASE64, "media_type": "image/png"}),
+        (
+            "send_media",
+            {"media_kind": "image", "media_type": "image/png", "filename": "test.png", "data_base64": PNG_BASE64},
+        ),
+    ]:
+        assert call(platform, route, tool, **arguments).get("isError")
+    assert platform[0].get("/api/v1/replies").json() == []
+
+
+def test_queued_delivery_is_frozen_and_revocation_blocks_proactive_sends(platform):
+    route = configure(platform)
+    incoming(platform)
+    first = decoded(call(platform, route, "send_message", text="Passive before grant"))
+    platform[0].patch("/api/v1/routes/" + route["id"], json={"action_grants": ["message.proactive"]})
+    tick(platform)
+    assert json.loads(sent_messages(platform)[0].content)["msg_id"] == "source1"
+    assert platform[0].portal.call(platform[1].state.store.reply_payload, first["reply_id"])["delivery"] == "passive"
+    decoded(call(platform, route, "send_message", text="Proactive after grant"))
+    platform[0].patch("/api/v1/routes/" + route["id"], json={"action_grants": []})
+    tick(platform)
+    assert len(sent_messages(platform)) == 1
+    assert platform[0].get("/api/v1/replies").json()[0]["state"] == "blocked"
+
+
+def test_proactive_second_budget_survives_restart_and_does_not_retry_sent_messages(platform, monkeypatch):
+    now = [1792470000.0]
+    monkeypatch.setattr("channel_gateway_server.storage.time", SimpleNamespace(time=lambda: now[0]))
+    route = configure(platform, grants=["message.proactive"])
+    for i in range(6):
+        decoded(call(platform, route, "send_message", text=str(i)))
+    tick(platform)
+    assert len(sent_messages(platform)) == 5
+    store = platform[1].state.store
+    platform[0].portal.call(store.close)
+    platform[0].portal.call(store.open)
+    tick(platform)
+    assert len(sent_messages(platform)) == 5
+    assert sum(x["state"] == "queued" for x in platform[0].get("/api/v1/replies").json()) == 1
+    now[0] += 1.01
+    tick(platform)
+    tick(platform)
+    assert [json.loads(r.content)["content"] for r in sent_messages(platform)] == ["0", "1", "2", "3", "4", "5"]
+
+
+def test_conversation_budget_keeps_other_destinations_and_passive_replies_moving(platform, monkeypatch):
+    now = [1792470000.0]
+    monkeypatch.setattr("channel_gateway_server.storage.time", SimpleNamespace(time=lambda: now[0]))
+    route = configure(platform, grants=["message.proactive"])
+    for i in range(21):
+        decoded(call(platform, route, "send_message", text=str(i)))
+    for _ in range(4):
+        tick(platform)
+        now[0] += 2
+    assert len(sent_messages(platform)) == 20
+    other = configure(platform, kind="private", grants=["message.proactive"])
+    decoded(call(platform, other, "send_message", text="Other destination"))
+    incoming(platform)
+    decoded(call(platform, route, "send_message", text="Passive bypass", delivery="passive"))
+    tick(platform)
+    assert len(sent_messages(platform)) == 22
+    assert [json.loads(r.content)["content"] for r in sent_messages(platform)][-2:] == [
+        "Other destination",
+        "Passive bypass",
+    ]
+    now[0] += 60
+    tick(platform)
+    assert json.loads(sent_messages(platform)[-1].content)["content"] == "20"
+
+
+def test_proactive_account_minute_budget_is_shared_across_conversations(platform, monkeypatch):
+    now = [1792470000.0]
+    monkeypatch.setattr("channel_gateway_server.storage.time", SimpleNamespace(time=lambda: now[0]))
+    for conversation in ["123", "456"]:
+        route = configure(platform, grants=["message.proactive"], conversation=conversation)
+        for i in range(20):
+            decoded(call(platform, route, "send_message", text=str(i)))
+    for _ in range(7):
+        tick(platform)
+        now[0] += 2
+    assert len(sent_messages(platform)) == 30
+    assert sum(x["state"] == "queued" for x in platform[0].get("/api/v1/replies").json()) == 10
+
+
+def test_proactive_daily_budget_resets_at_china_midnight(platform, monkeypatch):
+    now = [1792470000.0]
+    monkeypatch.setattr("channel_gateway_server.storage.time", SimpleNamespace(time=lambda: now[0]))
+    day_start = ((now[0] + 8 * 3600) // 86400) * 86400 - 8 * 3600
+    route = configure(platform, grants=["message.proactive"])
+    store = platform[1].state.store
+
+    async def seed():
+        async with store.transaction() as db:
+            await db.executemany(
+                "INSERT INTO qq_send_attempts(account_id,conversation_key,created_at) VALUES(?,?,?)",
+                [("app1", "group:123", now[0] - 120)] * 1000,
+            )
+
+    platform[0].portal.call(seed)
+    decoded(call(platform, route, "send_message", text="Tomorrow"))
+    tick(platform)
+    assert not sent_messages(platform)
+    now[0] = day_start + 86400
+    tick(platform)
+    assert len(sent_messages(platform)) == 1
+
+
+@pytest.mark.parametrize("failure,state", [(403, "failed"), (429, "failed"), ("timeout", "unknown")])
+def test_proactive_rejections_and_uncertain_sends_are_not_retried(platform, failure, state):
+    route = configure(platform, grants=["message.proactive"])
+    decoded(call(platform, route, "send_message", text="Attempt once"))
+    platform[2].failure = failure
+    tick(platform)
+    tick(platform)
+    assert len(sent_messages(platform)) == 1
+    assert platform[0].get("/api/v1/replies").json()[0]["state"] == state
+
+
+def test_expired_passive_reply_does_not_become_proactive(platform):
+    output_route(platform, ["message.proactive"])
+    incoming(platform)
+    tick(platform)
+
+    async def reject_message(request):
+        if request.url.path.endswith("/messages"):
+            platform[2].failure = 400
+
+    platform[2].on_request = reject_message
+    tick(platform)
+    tick(platform)
+    assert len(sent_messages(platform)) == 1
+    assert json.loads(sent_messages(platform)[0].content)["msg_id"] == "source1"
+    assert platform[0].get("/api/v1/replies").json()[0]["state"] == "failed"
+
+
+def test_revoking_proactive_grant_blocks_throttled_queue_without_waiting(platform, monkeypatch):
+    now = [1792470000.0]
+    monkeypatch.setattr("channel_gateway_server.storage.time", SimpleNamespace(time=lambda: now[0]))
+    route = configure(platform, grants=["message.proactive"])
+    for i in range(6):
+        decoded(call(platform, route, "send_message", text=str(i)))
+    tick(platform)
+    assert len(sent_messages(platform)) == 5
+    platform[0].patch("/api/v1/routes/" + route["id"], json={"action_grants": []})
+    tick(platform)
+    assert len(sent_messages(platform)) == 5
+    assert platform[0].get("/api/v1/replies").json()[0]["state"] == "blocked"
+
+
+def test_proactive_image_rechecks_grant_after_upload(platform):
+    route = output_route(platform, ["message.proactive"])
+    decoded(call(platform, route, "send_image", image_base64=PNG_BASE64, media_type="image/png"))
+    store = platform[1].state.store
+
+    async def revoke(request):
+        if request.url.path.endswith("/files"):
+            current = await store.route(route["id"])
+            assert current is not None
+            await store.update_route(route["id"], {**current, "action_grants": []}, current)
+
+    platform[2].on_request = revoke
+    tick(platform)
+    assert any(r.url.path.endswith("/files") for r in platform[2].requests)
+    assert not sent_messages(platform)
+    assert platform[0].get("/api/v1/replies").json()[0]["state"] == "blocked"

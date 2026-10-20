@@ -138,8 +138,9 @@ interactions under the [platform contract](06-qq-platform.md). Account-scoped Op
 QQ numbers are not substitutes. Replies post text or uploaded image references to `/v2/users/{openid}/messages`
 or `/v2/groups/{openid}/messages` with the source `msg_id` and a durable increasing
 `msg_seq` per source message. Event-linked output uses that event's source ID;
-MCP replies use the latest authorized incoming conversation context. QQ's passive
-reply window and message quota still apply. A successful receipt requires a
+passive MCP replies use the latest authorized incoming conversation context;
+explicitly authorized QQ proactive tools do not need an incoming reply ID.
+QQ's passive reply window and message quota still apply. A successful receipt requires a
 platform message ID.
 
 Receiving ordinary group messages requires QQ's **receive all messages** feature

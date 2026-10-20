@@ -8,7 +8,7 @@ from urllib.parse import quote
 from mcp.types import AudioContent, BlobResourceContents, EmbeddedResource, ToolAnnotations
 from pydantic import AnyUrl, Field
 
-from .channels.actions import known_message, reaction_authority
+from .channels.actions import known_message, message_delivery, reaction_authority
 from .channels.qq_operations import OPERATIONS, applicable, check_json, execute_operation, require_grant, safe_result
 from .media import MAX_MEDIA_BYTES, decode_media, image_type, public_media_url
 from .models import route_allows_sender
@@ -36,6 +36,13 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         bridge.wake.set()
         return receipt
 
+    async def message_route(route_id, delivery):
+        route = await authorized_route(route_id)
+        connection = await store.connection(route["channel_id"])
+        if not connection:
+            raise ValueError("Channel is unavailable")
+        return route, connection, message_delivery(route, connection, delivery)
+
     @server.tool()
     async def send_message(
         text: Annotated[str, Field(max_length=16000)] = "",
@@ -43,12 +50,12 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         message_format: Literal["text", "markdown"] = "text",
         keyboard: dict | None = None,
         reply_to_source_message_id: str | None = None,
-        delivery: Literal["passive", "proactive", "wakeup"] = "passive",
+        delivery: Literal["passive", "proactive", "wakeup"] | None = None,
         embed: dict | None = None,
         ark: dict | None = None,
     ) -> dict:
-        """Queue message content. Markdown/keyboards/quotes require QQ. Proactive delivery requires message.proactive. Reactions and recall use separate tools."""
-        route, connection = await writable_route(route_id)
+        """Queue a message. QQ defaults to proactive with message.proactive, including final-output routes; otherwise existing MCP routes default to passive. Explicit delivery overrides the default. Reactions and recall use separate tools."""
+        route, connection, delivery = await message_route(route_id, delivery)
         if not text and not embed and not ark:
             raise ValueError("A message requires content")
         options = {
@@ -83,7 +90,7 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
             if ownership == "sent":
                 ref = (await store.channel_state(connection["id"], "reference:" + reply_to_source_message_id)).get("id")
             options["reference_id"] = ref or reply_to_source_message_id
-        payload = {"kind": "message", **options} if extended else None
+        payload = {"kind": "message", **options} if extended or connection["kind"] == "qq" else None
         reply = await store.queue_reply(route, text or "[Card]", payload=payload)
         bridge.wake.set()
         return {"reply_id": reply["id"], "state": reply["state"]}
@@ -97,10 +104,10 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         url: Annotated[str, Field(max_length=4096)] | None = None,
         caption: Annotated[str, Field(max_length=16000)] = "",
         route_id: str | None = None,
-        delivery: Literal["passive", "proactive", "wakeup"] = "passive",
+        delivery: Literal["passive", "proactive", "wakeup"] | None = None,
     ) -> dict:
-        """Queue QQ media. Provide either public HTTPS URL or strict base64 (16 MiB max). Larger inline files use multipart upload. Guild binary uploads support images."""
-        route, connection = await writable_route(route_id)
+        """Queue QQ media, defaulting to proactive with message.proactive. Explicit delivery='passive' uses reply context. Provide public HTTPS URL or strict base64 (16 MiB max). Guild uploads support images."""
+        route, connection, delivery = await message_route(route_id, delivery)
         if connection["kind"] != "qq":
             raise ValueError("Use send_image for other supported channels")
         if bool(data_base64) == bool(url):

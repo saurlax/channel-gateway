@@ -133,7 +133,9 @@ The bridge works without MCP. Its MCP Streamable HTTP endpoint is
 
 See [images and reactions](images-and-reactions.md) for formats, bounds, native
 a13n attachments, and capability differences. Final-run-output routes forward
-text; image sends and reactions require MCP replies and enabled Agent tools.
+text. QQ message/image tools can run alongside final text with `message.proactive`;
+guild reactions use `message.react`. OneBot image tools still require MCP replies.
+All tools must be enabled in the Agent Host.
 
 Create a route first and copy its one-time conversation access token. In a13n,
 create a **separate MCP connection for this route** with that endpoint and the
@@ -154,10 +156,22 @@ connection ID into the **Connections** tab. Multi-source or wildcard a13n routes
 use final run output instead of a shared dedicated connection.
 In **Connections**, choose **MCP send_message tool** if the agent should explicitly request replies;
 otherwise **Final run output** queues automatic replies from the completed run
-output and rejects tool-requested replies for that route. Configure the desired
+output. For QQ, enable `message.proactive` to permit proactive message/media tools
+alongside those automatic passive replies. Without that grant, final-output
+routes reject message tools. Configure the desired
 connection tools in the Agent interface, including `read_conversation` when needed.
 CG always uses the Agent's configured tool list; a route binding does not enable
 connection tools automatically.
+
+When one Agent uses several CG connections, configure a13n **Tool Search** in
+proxy mode with a separate group for each connection, for example `channel_history`,
+`qq_group`, and `qq_private`. This avoids same-name MCP tool collisions while
+keeping credentials and destinations separate. The Agent discovers schemas with
+`search_proxy_tools` and invokes the selected group's tool with `call_proxy_tool`.
+Use the verified incoming `route_id` and the matching group. For QQ routes using
+final output, ordinary replies belong in final text; use proactive tools for
+explicit sends, media, or a later notification. Do not repeat a tool-sent answer
+in final output. See [QQ delivery and limits](qq-platform.md#message-creation).
 
 Choose an Agent whose remaining permissions are appropriate for the conversation.
 CG does not override the Agent's connection tools, built-in toolsets, plugins,

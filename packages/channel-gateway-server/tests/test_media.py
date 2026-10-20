@@ -418,6 +418,19 @@ def test_only_channel_cdn_download_urls_are_accepted(url):
     assert image_url(url) is None
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gzc-download.ftn.qq.com.attacker.test/file",
+        "https://fake-ftn.qq.com/file",
+        "https://gzc-download.ftn.qq.com:8443/file",
+        "https://user:secret@gzc-download.ftn.qq.com/file",
+    ],
+)
+def test_qq_file_cdn_does_not_accept_lookalike_hosts_or_credentials(url):
+    assert image_url(url) is None
+
+
 @pytest.mark.parametrize("problem", ["redirect", "oversize", "not_image", "wrong_signature"])
 def test_image_download_failures_do_not_return_pixels(service, problem):
     _, _, provider = service

@@ -87,6 +87,7 @@ def image_url(value: object) -> str | None:
                 host == "qpic.cn"
                 or host.endswith(".qpic.cn")
                 or host in {"multimedia.nt.qq.com", "multimedia.nt.qq.com.cn"}
+                or host.endswith(".ftn.qq.com")
                 or (".cos." in host and host.endswith(".myqcloud.com"))
             )
             or parsed.username is not None

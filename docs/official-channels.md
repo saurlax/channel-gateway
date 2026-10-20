@@ -44,6 +44,12 @@ Agent. After creating the route, send a new message; discovery messages are not
 replayed. QQ source and receipt message IDs are retained as opaque values, including
 group message IDs longer than 128 characters.
 
+QQ group files can be sent directly or included by quoting a file message when
+QQ supplies its attachment download URL. CG forwards the file's name, type, and
+native URL attachment to a13n, including files on QQ's regional `ftn.qq.com` CDN.
+The Agent can parse the downloaded file in its sandbox. An old message without
+retained attachment metadata is not repaired automatically; send or quote it again.
+
 ## Weixin official iLink
 
 1. In **Channels → Add channel**, choose **Weixin**, enter a

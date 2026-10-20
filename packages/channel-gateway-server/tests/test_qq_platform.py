@@ -670,6 +670,44 @@ def test_recall_distinguishes_bot_ownership_and_member_moderation(platform):
     )
 
 
+@pytest.mark.parametrize("quoted", [False, True])
+def test_qq_group_file_cdn_reaches_history_attachment_reads_and_host(platform, quoted):
+    client, _, provider, _, _ = platform
+    host = client.post(
+        "/api/v1/connections",
+        json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "host-token"},
+    ).json()
+    route = configure(platform, host_id=host["id"], agent_id="agent1", reply_source="output")
+    url = "https://gzc-download.ftn.qq.com/ftn_handler/file?key=private-file-key"
+    attachment = {"content_type": "file", "filename": "notes.txt", "url": url, "size": 21}
+    provider.media_data = b"Quoted file contents."
+    provider.media_type = "application/octet-stream"
+    incoming(
+        platform,
+        content="Read this file.",
+        **(
+            {"msg_elements": [{"content": "", "attachments": [attachment]}]}
+            if quoted
+            else {"attachments": [attachment]}
+        ),
+    )
+    assert not provider.uploads
+    history = decoded(call(platform, route, "read_conversation"))["messages"][0]
+    assert history["attachments"] == [{"index": 0, "kind": "file", "media_type": "file", "filename": "notes.txt"}]
+    assert "private-file-key" not in str(history) + client.get("/api/v1/events").text
+    result = call(platform, route, "read_attachment", source_message_id="source1", attachment_index=0)
+    assert not result.get("isError"), result
+    resource = result["content"][0]["resource"]
+    assert resource["mimeType"] == "text/plain" and resource["text"] == "Quoted file contents."
+    assert len(provider.uploads) == 1 and str(provider.uploads[0].url) == url
+    tick(platform)
+    request = next(r for r in provider.requests if r.url.host == "host.test" and r.method == "POST")
+    body = json.loads(request.content)
+    assert body["payload"]["content"][1] == {"type": "url", "url": url}
+    context = json.loads(body["payload"]["content"][0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
+    assert context["attachments"] == history["attachments"]
+
+
 def test_audio_video_files_cards_and_nested_quotes_are_projected_without_private_context(platform):
     route = configure(platform)
     packet = incoming(

@@ -19,7 +19,8 @@ unavailable images produce a tool error without losing the original message.
 
 QQ projects image `attachments`; OneBot projects `image` segments from arrays or
 CQ strings. QQ CDN HTTP URLs are upgraded to HTTPS. Only HTTPS URLs on `qpic.cn`
-(including subdomains), `multimedia.nt.qq.com`, `multimedia.nt.qq.com.cn`, or regional
+(including subdomains), `multimedia.nt.qq.com`, `multimedia.nt.qq.com.cn`,
+QQ file CDN subdomains of `ftn.qq.com`, or regional
 `*.cos.*.myqcloud.com` hosts, with no embedded credentials,
 fragment, or nonstandard port, become images. Local paths, base64 input segments,
 and other hosts are not downloadable attachments. Unsupported attachments remain

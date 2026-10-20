@@ -199,6 +199,9 @@ def qq_message(event: dict, connection: dict) -> Message | None:
         structured=structured,
         guild_id=identifier(guild_id) if guild_id else None,
         native_reference_id=reference_id,
+        bot_mentioned=event_name in {"GROUP_AT_MESSAGE_CREATE", "AT_MESSAGE_CREATE"}
+        if kind in {"group", "guild"}
+        else None,
         occurred_at=datetime.fromisoformat(data["timestamp"]),
     )
 

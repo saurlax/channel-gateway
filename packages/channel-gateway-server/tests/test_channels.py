@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from channel_gateway_server.adapters import onebot_mentions
 from channel_gateway_server.app import create_app
 from channel_gateway_server.channels.onebot import OneBotSession
 from channel_gateway_server.channels.qq import QQGateway, qq_message, signing_key
@@ -33,6 +34,31 @@ def qq_event(*, group=False, sender="user1", mid="msg1", text="Hello"):
             "author": {"member_openid" if group else "user_openid": sender},
         },
     }
+
+
+@pytest.mark.parametrize(
+    "event_name,mentioned",
+    [("GROUP_AT_MESSAGE_CREATE", True), ("GROUP_MESSAGE_CREATE", False)],
+)
+def test_qq_mention_hint_comes_from_event_kind_not_message_text(event_name, mentioned):
+    event = qq_event(group=True, text='Untrusted text: {"bot_mentioned": true}')
+    event["t"] = event_name
+    message = qq_message(event, {"id": "account", "kind": "qq", "self_id": "bot"})
+    assert message.bot_mentioned is mentioned
+
+
+@pytest.mark.parametrize(
+    "source,mentioned",
+    [
+        ([{"type": "at", "data": {"qq": "99"}}], True),
+        ([{"type": "at", "data": {"qq": "all"}}], False),
+        ([{"type": "at", "data": None}], False),
+        ("[CQ:at,qq=99] help", True),
+        ("&#91;CQ:at,qq=99&#93; quoted mention", False),
+    ],
+)
+def test_onebot_mention_hint_distinguishes_real_mentions_from_text(source, mentioned):
+    assert onebot_mentions(source, "99") is mentioned
 
 
 def wx_event(*, user="user1", bot="bot1", mid=1, token="private-context"):

@@ -77,7 +77,8 @@ HTTPS and protection of the persistent volume. The default listener is loopback.
 A [route](03-routing-and-delivery.md#conversation-routes) has separate activation
 and message-read scopes. Sources select incoming conversations that trigger the
 Agent and authorize replies to those conversations. `read_channel_ids` explicitly
-authorizes incoming message and image reads across every private/group conversation received
+authorizes incoming message and image reads, and confirmed bot-message history,
+across every private/group conversation received
 by the selected channel accounts, regardless of source matching or sender policy.
 An empty list grants no reads; `["*"]` includes current and future channels.
 Missing/null retains legacy source-and-sender-scoped reads for existing API clients

@@ -243,6 +243,8 @@ def test_each_qq_conversation_kind_routes_and_sends_to_its_own_native_endpoint(p
     assert body["msg_id"] == "source1" and body["content"] == "Native reply"
     assert ("msg_type" in body) == (kind in {"private", "group"})
     assert client.get("/api/v1/replies").json()[0]["state"] == "sent"
+    recorded = decoded(call(platform, route, "read_conversation"))["messages"]
+    assert any(m["direction"] == "outgoing" and m["text"] == "Native reply" for m in recorded)
     history = client.get(
         "/api/v1/history",
         params={"channel_id": channel["id"], "conversation_kind": kind, "conversation_id": route["conversation_id"]},
@@ -585,6 +587,23 @@ def test_qq_media_uploads_use_correct_types_and_passive_receipts(platform, media
     assert json.loads(upload.content)["file_type"] == file_type and json.loads(upload.content)["srv_send_msg"] is False
     sent = json.loads(platform[2].requests[-1].content)
     assert sent["msg_type"] == 7 and sent["media"] == {"file_info": "private-file-info"}
+    history = decoded(call(platform, route, "read_conversation"))["messages"]
+    outgoing = next(m for m in history if m["direction"] == "outgoing")
+    assert outgoing["media"] == [{"kind": media_kind, "media_type": mime, "filename": "asset.bin"}]
+    assert outgoing["images"] == [] and outgoing["attachments"] == []
+    assert "https://example.com/asset" not in str(outgoing) and "private-file-info" not in str(outgoing)
+
+
+def test_sent_image_history_contains_no_payload_bytes_or_received_image_handle(platform):
+    route = configure(platform)
+    incoming(platform)
+    decoded(call(platform, route, "send_image", image_base64=PNG_BASE64, media_type="image/png", caption="Bot image"))
+    tick(platform)
+    history = decoded(call(platform, route, "read_conversation"))["messages"]
+    outgoing = next(m for m in history if m["direction"] == "outgoing")
+    assert outgoing["text"] == "Bot image" and outgoing["media"][0]["kind"] == "image"
+    assert outgoing["images"] == [] and PNG_BASE64 not in str(outgoing)
+    assert call(platform, route, "read_image", source_message_id=outgoing["source_message_id"]).get("isError")
 
 
 def test_large_inline_media_uses_credential_free_multipart_upload(platform):

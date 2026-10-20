@@ -50,6 +50,7 @@ class Message(BaseModel):
     structured: dict = Field(default_factory=dict)
     guild_id: str | None = Field(default=None, max_length=128)
     native_reference_id: str | None = Field(default=None, max_length=1024)
+    bot_mentioned: bool | None = None
     reply_event_id: str | None = Field(default=None, max_length=1024, exclude=True)
     occurred_at: AwareDatetime
 

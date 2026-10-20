@@ -180,13 +180,9 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
 
     @server.tool()
     async def read_conversation(limit: int = 20, route_id: str | None = None) -> dict:
-        """Read received messages and image indices from this credential's authorized conversation."""
+        """Read incoming messages and confirmed bot sends in chronological order. Outgoing media descriptions are not received-media read handles."""
         route = await readable_route(route_id)
-        messages = (
-            await store.received_channel_messages(route, limit=limit)
-            if route["channel_read"]
-            else await store.received_messages(route, limit=limit)
-        )
+        messages = await store.conversation_messages(route, limit=limit)
         return {
             "conversation_kind": route["conversation_kind"],
             "conversation_id": route["conversation_id"],

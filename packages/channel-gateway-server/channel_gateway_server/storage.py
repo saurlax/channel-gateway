@@ -749,7 +749,7 @@ class Store:
           ORDER BY w.sequence LIMIT 100""")
 
     async def received_messages(
-        self, route: dict, *, limit: int = 20, source_message_id: str | None = None
+        self, route: dict, *, limit: int = 20, source_message_id: str | None = None, history_metadata: bool = False
     ) -> list[dict]:
         """Read source history under current access, independently of past delivery."""
         params: tuple = (route["id"], route["channel_id"], f"{route['conversation_kind']}:{route['conversation_id']}")
@@ -769,7 +769,7 @@ class Store:
                 UNION ALL
                 SELECT id,message,created_at,json_extract(message,'$.address.account_id'),
                     json_extract(message,'$.address.conversation_id') FROM observations
-            ) SELECT message,channel_id,conversation_id FROM received WHERE channel_id=? AND conversation_id=?"""
+            ) SELECT id,created_at,message,channel_id,conversation_id FROM received WHERE channel_id=? AND conversation_id=?"""
             + sender_filter
             + " ORDER BY created_at DESC,id DESC LIMIT ?",
             (*params, max(1, min(limit, 100))),
@@ -778,6 +778,8 @@ class Store:
         for row in reversed(rows):
             message = json.loads(row["message"])
             message.setdefault("address", {"account_id": row["channel_id"], "conversation_id": row["conversation_id"]})
+            if history_metadata:
+                message.update(history_id=row["id"], created_at=row["created_at"], direction="incoming")
             messages.append(message)
         return messages
 
@@ -798,8 +800,15 @@ class Store:
     async def readable_conversations(self, channel_ids: list[str]) -> list[dict]:
         """List observed identities under explicit channel read grants without creating routes."""
         rows = await self.rows(
-            self.received_history_sql() + "SELECT DISTINCT channel_id,conversation_id FROM received "
-            "JOIN connections c ON c.id=received.channel_id "
+            self.received_history_sql() + """, observed AS (
+                SELECT channel_id,conversation_id FROM received
+                UNION
+                SELECT r.channel_id,r.kind||':'||r.conversation_id
+                FROM replies p JOIN destinations r ON r.id=p.route_id
+                LEFT JOIN reply_payloads q ON q.reply_id=p.id
+                WHERE p.state='sent' AND COALESCE(json_extract(q.payload,'$.kind'),'message')!='reaction'
+            ) SELECT DISTINCT channel_id,conversation_id FROM observed """
+            "JOIN connections c ON c.id=observed.channel_id "
             "WHERE json_extract(c.value,'$.kind') IN ('onebots','qq','weixin') "
             "AND (? OR channel_id IN (SELECT value FROM json_each(?))) ORDER BY channel_id,conversation_id",
             ("*" in channel_ids, json.dumps(channel_ids)),
@@ -812,11 +821,16 @@ class Store:
         ]
 
     async def received_channel_messages(
-        self, conversation: dict, *, limit: int = 20, source_message_id: str | None = None
+        self,
+        conversation: dict,
+        *,
+        limit: int = 20,
+        source_message_id: str | None = None,
+        history_metadata: bool = False,
     ) -> list[dict]:
         """Read projected incoming text for an explicitly authorized account identity."""
         rows = await self.rows(
-            self.received_history_sql() + "SELECT message,channel_id,conversation_id FROM received "
+            self.received_history_sql() + "SELECT id,created_at,message,channel_id,conversation_id FROM received "
             "WHERE channel_id=? AND conversation_id=? "
             "AND (? IS NULL OR json_extract(message,'$.source_message_id')=?) "
             "AND EXISTS(SELECT 1 FROM connections c WHERE c.id=received.channel_id "
@@ -834,8 +848,78 @@ class Store:
         for row in reversed(rows):
             message = json.loads(row["message"])
             message.setdefault("address", {"account_id": row["channel_id"], "conversation_id": row["conversation_id"]})
+            if history_metadata:
+                message.update(history_id=row["id"], created_at=row["created_at"], direction="incoming")
             messages.append(message)
         return messages
+
+    async def sent_messages(self, route: dict, *, limit: int = 20) -> list[dict]:
+        """Read confirmed bot messages under the selected conversation's current read scope."""
+        params: tuple = (route["channel_id"], route["conversation_kind"], route["conversation_id"])
+        where = "r.channel_id=? AND r.kind=? AND r.conversation_id=?"
+        if not route["channel_read"]:
+            where += " AND p.route_id=?"
+            params += (route["id"],)
+            if route.get("sender_policy", "allowlist") != "any":
+                where += " AND (p.event_id IS NULL OR json_extract(e.message,'$.sender_id') IN (SELECT value FROM json_each(?)))"
+                params += (json.dumps(route["allowed_user_ids"]),)
+        rows = await self.rows(
+            """WITH destinations AS (
+                SELECT id,channel_id,kind,conversation_id FROM routes
+                UNION ALL SELECT id,channel_id,kind,conversation_id FROM archived_routes
+            ) SELECT p.id,p.text,p.message_id,p.created_at,q.payload,json_extract(c.value,'$.kind') AS channel
+              FROM replies p JOIN destinations r ON r.id=p.route_id
+              JOIN connections c ON c.id=r.channel_id
+              LEFT JOIN events e ON e.id=p.event_id
+              LEFT JOIN reply_payloads q ON q.reply_id=p.id
+              WHERE p.state='sent' AND COALESCE(json_extract(q.payload,'$.kind'),'message')!='reaction' AND """
+            + where
+            + " ORDER BY p.created_at DESC,p.id DESC LIMIT ?",
+            (*params, max(1, min(limit, 100))),
+        )
+        messages = []
+        for row in reversed(rows):
+            payload = json.loads(row["payload"]) if row["payload"] else {}
+            media = []
+            if payload.get("kind") in {"image", "media"}:
+                media.append(
+                    {
+                        "kind": "image" if payload["kind"] == "image" else payload["media_kind"],
+                        "media_type": payload.get("media_type"),
+                        "filename": payload.get("filename"),
+                    }
+                )
+            messages.append(
+                {
+                    "history_id": row["id"],
+                    "created_at": row["created_at"],
+                    "direction": "outgoing",
+                    "state": "sent",
+                    "source_message_id": row["message_id"],
+                    "sender_id": None,
+                    "sender_kind": "bot",
+                    "address": {
+                        "channel": row["channel"],
+                        "account_id": route["channel_id"],
+                        "conversation_id": f"{route['conversation_kind']}:{route['conversation_id']}",
+                    },
+                    "text": row["text"],
+                    "images": [],
+                    "attachments": [],
+                    "media": media,
+                }
+            )
+        return messages
+
+    async def conversation_messages(self, route: dict, *, limit: int = 20) -> list[dict]:
+        limit = max(1, min(limit, 100))
+        incoming = (
+            await self.received_channel_messages(route, limit=limit, history_metadata=True)
+            if route["channel_read"]
+            else await self.received_messages(route, limit=limit, history_metadata=True)
+        )
+        outgoing = await self.sent_messages(route, limit=limit)
+        return sorted(incoming + outgoing, key=lambda message: (message["created_at"], message["history_id"]))[-limit:]
 
     async def conversation_history(
         self,

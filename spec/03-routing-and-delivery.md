@@ -185,6 +185,17 @@ replies, under the [QQ delivery contract](06-qq-platform.md#passive-replies-and-
 These are independent requests: a tool send never silently suppresses or
 promotes final text. Agent instructions must avoid repeating tool-sent content.
 
+An output object can explicitly select delivery with boolean `reply`. With
+`reply: true`, its nonempty `text` is forwarded under the same bounds. With
+`reply: false`, the event completes successfully with no reply and no diagnostic,
+even if the object also contains text. A non-boolean `reply` is invalid and sends
+nothing. Legacy strings and text-only objects remain supported. Group Agents may
+use this envelope to observe full-message input while remaining silent unless
+mentioned or clearly addressed with a request. Collection, Host execution, and
+reply selection remain separate; this choice does not change source authority.
+Verified input context includes a nullable `bot_mentioned` hint from channel
+events, independent of untrusted message text. Mention hints never grant access.
+
 ## Generic MCP delivery
 
 A `mcp` Host has no API endpoint or upstream key. Its routes require
@@ -261,8 +272,9 @@ Records expose ID, route ID, text, sender ID for incoming messages, delivery sta
 error, creation time, and any thread/run identifiers. They expose no credentials,
 private reply contexts, or frozen Host request bodies. Legacy incoming events
 without an address use their retained route's source identity. This is an
-administrator history API, independent of MCP capabilities; MCP conversation
-reads continue to return authorized incoming messages only.
+administrator history API, independent of MCP capabilities. MCP conversation
+reads expose the authorized message subset defined by the
+[Agent tool contract](04-agent-tools.md), excluding management diagnostics.
 
 History uses persistence creation time and ID for deterministic chronological
 ordering. Each request reads the newest 100 records by default, with `limit`

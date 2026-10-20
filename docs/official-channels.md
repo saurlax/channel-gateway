@@ -101,7 +101,9 @@ For QQ, receiving every ordinary group message additionally requires enabling
 group/C2C intent and handles `GROUP_MESSAGE_CREATE`; it cannot collect messages
 QQ does not push or recover packets discarded before this journal was added.
 The current route policy activates the Agent for every authorized incoming message, including media and verified button/menu input;
-there is no separate **record all, reply only when mentioned** switch yet.
+reply selection is independent. Configure
+[quiet group participation](onebots-a13n.md#quiet-group-participation) so ordinary
+discussion completes silently while mentions and clear requests can receive replies.
 
 See the [QQ full-message event](https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_message_create.html)
 and [channel retention contract](../spec/01-channel-adapters.md#route-independent-event-retention).

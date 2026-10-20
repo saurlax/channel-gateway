@@ -62,10 +62,13 @@ conversation’s `id` as `route_id`:
 Messages become **Available to client**. The client actively reads them; MCP does
 not start an idle Codex session, and a read does not prove execution completion.
 Reading is repeatable, not a consuming inbox. Use source message IDs to avoid
-processing the same input twice. The tool reads CG's received message history,
+processing the same input twice. The tool reads CG's incoming and confirmed sent message history,
 including messages observed before route creation or while delivery was disabled,
 under its current readable-channel grant. Reading does not replay those messages
-as Agent work. It excludes raw event packets and private context tokens. Legacy
+as Agent work. Records distinguish `incoming` and `outgoing`; queued, failed,
+blocked, and uncertain sends are not presented as sent chat content. Outgoing
+media descriptions contain no private upload data or received-media read handles.
+It excludes raw event packets and private context tokens. Legacy
 API routes without explicit readable channels retain source/sender scope and
 exclude messages bound to deleted routes. All-conversation scopes discover previously observed authorized
 conversations when listed. This is not native platform history. Reply requests

@@ -12,7 +12,7 @@ that operation.
 | Tool                                         | Behavior                                                                |
 | -------------------------------------------- | ----------------------------------------------------------------------- |
 | `list_conversations()`                       | List readable conversations and source reply destinations, without message content |
-| `read_conversation(limit=20, route_id=None)` | Read locally received text and image indices from an authorized conversation |
+| `read_conversation(limit=20, route_id=None)` | Read authorized incoming messages and confirmed bot sends |
 | `send_message(text, route_id=None)`          | Request a reply to that authorized conversation                         |
 | `read_image(source_message_id, image_index=0, route_id=None)` | Return an authorized received image as native MCP image content |
 | `send_image(image_base64, media_type, caption='', route_id=None)` | Queue an image reply |
@@ -54,8 +54,8 @@ current channel presence are checked on each invocation. QQ native resource and
 moderation operations require separate explicit grants under the
 [platform contract](06-qq-platform.md). Complete native history retrieval is not implemented.
 
-`read_conversation` clamps the requested limit to 1–100 and reads the source
-account/conversation's stored incoming messages: current-route deliveries plus
+`read_conversation` clamps the combined requested limit to 1–100 and reads the source
+account/conversation's stored messages: current-route deliveries plus
 unmatched/blocked observations, including messages received before route creation
 or while the route was disabled. Current sender authorization is applied before
 selecting the newest records, returned in chronological order by persistence time
@@ -69,8 +69,22 @@ Messages linked to an archived/deleted route remain excluded from replacement
 legacy source-scoped capabilities; explicit channel grants include that retained
 incoming history and administrator history retains them. The raw channel-event
 journal, image download URLs/bytes, and private protocol contexts are never MCP message
-history. Tools read only what CG received and projected, not complete native
-platform history, and do not include outgoing replies as incoming messages.
+history. Tools read only what CG received and sent, not complete native
+platform history. Each record has a stable `history_id`, persistence `created_at`,
+and `direction` (`incoming` or `outgoing`). The combined newest records are
+returned chronologically by creation time and ID. Only `sent` bot messages enter
+this history; queued, sending, failed, blocked, unknown, and non-message actions
+are excluded. Outgoing records include their platform `source_message_id`, text,
+and safe media descriptions, never base64, upload tickets, source URLs, or private
+reply payloads. Media descriptions on outgoing records are not received-image or
+attachment read handles. Existing sent records are included without replay.
+
+Legacy source-scoped reads include only the current route's sends, excluding
+event-linked replies whose original sender is no longer authorized. Explicit
+account read grants include sent history from active and archived routes in that
+exact account/conversation, under the same present-account and read-grant checks
+as incoming history. Read-only conversation discovery includes outgoing-only
+history and still grants no sending authority.
 Image bytes are available separately through `read_image` under the same current
 read policy, not embedded in every history response.
 

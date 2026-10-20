@@ -545,6 +545,143 @@ def test_structured_output_is_not_serialized_into_a_channel(gateway):
     assert client.get("/api/v1/events").json()[0]["state"] == "completed"
 
 
+@pytest.mark.parametrize("text", ["", "Internal observation that must remain private"])
+def test_explicit_silence_completes_without_reply_or_error(gateway, text):
+    client, _, upstream, *_ = gateway
+    upstream.output = {"reply": False, "text": text}
+    route(gateway)
+    webhook(gateway, text="We are chatting with each other")
+    tick(gateway)
+    tick(gateway)
+    tick(gateway)
+    event = client.get("/api/v1/events").json()[0]
+    assert event["state"] == "completed" and event["error"] is None
+    assert client.get("/api/v1/replies").json() == []
+    assert not any(r.url.path.endswith("send_msg") for r in upstream.requests)
+
+
+@pytest.mark.parametrize("reply", [None, 0, 1, "false", "true"])
+def test_malformed_reply_decision_never_sends_its_text(gateway, reply):
+    client, _, upstream, *_ = gateway
+    upstream.output = {"reply": reply, "text": "Must not be sent"}
+    route(gateway)
+    webhook(gateway)
+    tick(gateway)
+    tick(gateway)
+    assert client.get("/api/v1/replies").json() == []
+    assert client.get("/api/v1/events").json()[0]["error"]
+
+
+def test_explicit_reply_sends_only_selected_text_once(gateway):
+    client, _, upstream, *_ = gateway
+    upstream.output = {"reply": True, "text": "Selected public answer", "private_note": "not public"}
+    route(gateway)
+    webhook(gateway)
+    tick(gateway)
+    tick(gateway)
+    tick(gateway)
+    replies = client.get("/api/v1/replies").json()
+    assert len(replies) == 1 and replies[0]["text"] == "Selected public answer" and replies[0]["state"] == "sent"
+    assert len([r for r in upstream.requests if r.url.path.endswith("send_msg")]) == 1
+
+
+def test_agent_history_merges_confirmed_bot_sends_and_incoming_with_combined_limit(gateway):
+    client, app, upstream, *_ = gateway
+    configured = route(gateway)
+    webhook(gateway, text="Original request")
+    tick(gateway)
+    tick(gateway)
+    webhook(gateway, message_id=2, text="Follow-up")
+
+    async def order_history():
+        async with app.state.store.transaction() as db:
+            await db.execute(
+                "UPDATE events SET created_at=CASE WHEN json_extract(message,'$.source_message_id')='1' THEN '2026-10-20T00:00:01Z' ELSE '2026-10-20T00:00:03Z' END"
+            )
+            await db.execute("UPDATE replies SET created_at='2026-10-20T00:00:02Z'")
+
+    client.portal.call(order_history)
+    history = mcp_result(client, configured["agent_token"], "read_conversation")["messages"]
+    assert [m["direction"] for m in history] == ["incoming", "outgoing", "incoming"]
+    assert [m["text"] for m in history] == ["Original request", upstream.output, "Follow-up"]
+    assert history[1]["source_message_id"] == "500" and history[1]["sender_kind"] == "bot"
+    assert all(m["history_id"] and m["created_at"] for m in history)
+    limited = mcp_result(client, configured["agent_token"], "read_conversation", limit=2)["messages"]
+    assert limited == history[-2:]
+    client.portal.call(app.state.store.close)
+    client.portal.call(app.state.store.open)
+    assert mcp_result(client, configured["agent_token"], "read_conversation")["messages"] == history
+
+
+def test_sent_history_never_crosses_account_or_conversation(gateway):
+    client, app, upstream, _channel, host = gateway
+    own = route(gateway)
+    foreign_group = route(gateway, conversation="456")
+    other_channel = new_channel(client)
+    foreign_account = route((client, app, upstream, other_channel, host))
+    for configured, text in [
+        (own, "Own sent text"),
+        (foreign_group, "Other group secret"),
+        (foreign_account, "Other account secret"),
+    ]:
+        reply = client.portal.call(app.state.store.queue_reply, configured, text)
+        client.portal.call(app.state.store.finish_reply, reply["id"], "sent")
+    history = mcp_result(client, own["agent_token"], "read_conversation")["messages"]
+    assert len(history) == 1 and history[0]["text"] == "Own sent text"
+
+
+@pytest.mark.parametrize("state", ["queued", "sending", "failed", "blocked", "unknown"])
+def test_unconfirmed_bot_sends_are_not_chat_history(gateway, state):
+    client, app, *_ = gateway
+    configured = route(gateway)
+    queued = client.portal.call(app.state.store.queue_reply, configured, "Not confirmed")
+    client.portal.call(app.state.store.finish_reply, queued["id"], state)
+    assert mcp_result(client, configured["agent_token"], "read_conversation")["messages"] == []
+
+
+def test_bot_history_rechecks_sender_revocation_and_explicit_read_scope(gateway):
+    client, _, _, channel, _ = gateway
+    configured = route(gateway)
+    webhook(gateway, text="Sender seven request")
+    tick(gateway)
+    tick(gateway)
+    assert len(mcp_result(client, configured["agent_token"], "read_conversation")["messages"]) == 2
+    assert client.patch(f"/api/v1/routes/{configured['id']}", json={"allowed_user_ids": ["8"]}).status_code == 200
+    assert mcp_result(client, configured["agent_token"], "read_conversation")["messages"] == []
+    assert (
+        client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": [channel["id"]]}).status_code
+        == 200
+    )
+    assert len(mcp_result(client, configured["agent_token"], "read_conversation")["messages"]) == 2
+
+
+def test_archived_outgoing_only_history_uses_account_grant_without_reply_authority(gateway):
+    client, app, _, channel, _ = gateway
+    old = route(gateway)
+    sent = client.portal.call(app.state.store.queue_reply, old, "Previously sent before any incoming message")
+    client.portal.call(app.state.store.finish_reply, sent["id"], "sent")
+    assert client.delete(f"/api/v1/routes/{old['id']}").status_code == 200
+    configured = create_rule(
+        gateway,
+        [source(channel["id"], conversation="7")],
+        read_channel_ids=[channel["id"]],
+    )
+    listing = mcp_result(client, configured["agent_token"], "list_conversations")["conversations"]
+    group = next(r for r in listing if r["conversation_kind"] == "group")
+    assert group["can_read"] and not group["can_reply"]
+    history = mcp_result(client, configured["agent_token"], "read_conversation", route_id=group["id"])["messages"]
+    assert len(history) == 1 and history[0]["direction"] == "outgoing"
+    assert history[0]["text"] == "Previously sent before any incoming message"
+    assert client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": []}).status_code == 200
+    denied = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "read_conversation", "arguments": {"route_id": group["id"]}},
+    )
+    assert denied.json()["result"]["isError"]
+
+
 def test_sent_replies_and_thread_binding_survive_restart_without_resending(gateway, tmp_path):
     client, _, upstream, *_ = gateway
     route(gateway)

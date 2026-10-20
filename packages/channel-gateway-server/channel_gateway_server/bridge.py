@@ -149,7 +149,11 @@ class Bridge:
         if route["reply_source"] == "mcp":
             await self.store.update_event(event["id"], state="completed", error=None)
             return
-        text = output_text(run.get("output"))
+        output = run.get("output")
+        if isinstance(output, dict) and output.get("reply") is False:
+            await self.store.update_event(event["id"], state="completed", error=None)
+            return
+        text = output_text(output)
         if text and len(text) <= 16000:
             await self.store.queue_reply(route, text, event_id=event["id"])
         else:

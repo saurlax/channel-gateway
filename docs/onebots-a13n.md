@@ -122,7 +122,7 @@ The bridge works without MCP. Its MCP Streamable HTTP endpoint is
 `https://GATEWAY/mcp/` (including the trailing slash). It exposes:
 
 - `list_conversations()`: list currently authorized conversation handles and capabilities.
-- `read_conversation(route_id, limit=20)`: received text and image indices from the authorized conversation,
+- `read_conversation(route_id, limit=20)`: incoming messages and confirmed bot sends from the authorized conversation,
   up to 100 records. Readable-channel grants include all received conversations
   on those accounts; trigger sources only govern activation and reply destinations.
 - `send_message(text, route_id)`: create a reply for that same destination. It never
@@ -190,6 +190,36 @@ When rotating a Host key, replace the bearer credential in its shared connection
 For a dedicated route connection, rotate the route token instead. Wait for active
 input to finish before changing a route MCP binding. Never put either key in
 `mcp_headers`; use the bearer credential field shown above.
+
+## Quiet group participation
+
+Full-message collection does not require a reply to every message. Keep
+**Final run output** on the route and configure the Agent with a structured output
+schema containing required `reply` (boolean) and `text` (string) fields:
+
+```json
+{ "reply": false, "text": "" }
+```
+
+This completes the input successfully without a channel message. To answer, return:
+
+```json
+{ "reply": true, "text": "The answer to the request." }
+```
+
+Only `text` is sent. The envelope and internal observations stay out of chat.
+Configure the Agent to remain silent for ordinary group discussion, quoted requests
+addressed to others, and remarks about the bot. Respond when the bot is mentioned
+or clearly addressed with a request. Verified `bot_mentioned` context helps
+distinguish native mentions from message text; older records may have no hint.
+The Agent still processes authorized full-message inputs to make that decision.
+It must not send message tools for a silent input, or repeat a tool-sent answer
+in final output. Private chats can continue to receive normal answers.
+
+`read_conversation` combines incoming and confirmed outgoing messages, with
+`direction`, `history_id`, and `created_at`. Outgoing media has safe descriptions,
+not incoming-media read handles. Unconfirmed sends and non-message actions do not
+appear as sent conversation content. Existing read grants remain authoritative.
 
 ## Diagnose delivery
 

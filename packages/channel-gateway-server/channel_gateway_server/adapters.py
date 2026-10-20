@@ -51,6 +51,7 @@ def onebot_message(event: dict, connection: dict) -> Message | None:
         sender_id=str(sender),
         text=text if text.strip() else "[Image]",
         images=images,
+        bot_mentioned=onebot_mentions(source, connection["self_id"]) if kind == "group" else None,
         occurred_at=datetime.fromtimestamp(event["time"], UTC),
     )
 
@@ -59,6 +60,18 @@ def cq_unescape(value: str) -> str:
     for escaped, literal in [("&#91;", "["), ("&#93;", "]"), ("&#44;", ","), ("&amp;", "&")]:
         value = value.replace(escaped, literal)
     return value
+
+
+def onebot_mentions(source: list | str, bot_id: str) -> bool:
+    if isinstance(source, str):
+        return bool(re.search(r"\[CQ:at,qq=" + re.escape(bot_id) + r"(?:,|\])", source))
+    return any(
+        isinstance(part, dict)
+        and part.get("type") == "at"
+        and isinstance(part.get("data"), dict)
+        and str(part["data"].get("qq")) == bot_id
+        for part in source
+    )
 
 
 def onebot_content(source: list | str):
@@ -108,6 +121,7 @@ def host_body(message: dict, route: dict) -> dict:
         "route_id": route["id"],
         "source_message_id": message["source_message_id"],
         "image_count": len(message.get("images", [])),
+        "bot_mentioned": message.get("bot_mentioned"),
         "attachments": [
             {"index": index, **{key: item[key] for key in ("kind", "media_type", "filename")}}
             for index, item in enumerate(message.get("attachments", []))
@@ -219,5 +233,7 @@ def output_text(output: object) -> str | None:
     if isinstance(output, str):
         return output if output.strip() else None
     if isinstance(output, dict) and isinstance(output.get("text"), str):
+        if "reply" in output and output["reply"] is not True:
+            return None
         return output["text"] if output["text"].strip() else None
     return None

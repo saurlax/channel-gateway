@@ -121,14 +121,15 @@ of a13n API delivery.
 The bridge works without MCP. Its MCP Streamable HTTP endpoint is
 `https://GATEWAY/mcp/` (including the trailing slash). It exposes:
 
-- `read_conversation(limit=20)`: received text and image indices from the authorized conversation,
+- `list_conversations()`: list currently authorized conversation handles and capabilities.
+- `read_conversation(route_id, limit=20)`: received text and image indices from the authorized conversation,
   up to 100 records. Readable-channel grants include all received conversations
   on those accounts; trigger sources only govern activation and reply destinations.
-- `send_message(text)`: create a reply for that same destination. It never
+- `send_message(text, route_id)`: create a reply for that same destination. It never
   accepts an arbitrary account, conversation, or operation.
-- `read_image(source_message_id, image_index=0)`: return an authorized received image.
-- `send_image(image_base64, media_type, caption='')`: queue an image reply.
-- `set_message_reaction(source_message_id, emoji_id, add=True)`: queue a message
+- `read_image(source_message_id, route_id, image_index=0)`: return an authorized received image.
+- `send_image(image_base64, media_type, route_id, caption='')`: queue an image reply.
+- `set_message_reaction(source_message_id, emoji_id, route_id, add=True)`: queue a message
   reaction when the provider supports the optional NapCat-compatible extension.
 
 See [images and reactions](images-and-reactions.md) for formats, bounds, native
@@ -137,51 +138,58 @@ text. QQ message/image tools can run alongside final text with `message.proactiv
 guild reactions use `message.react`. OneBot image tools still require MCP replies.
 All tools must be enabled in the Agent Host.
 
-Create a route first and copy its one-time conversation access token. In a13n,
-create a **separate MCP connection for this route** with that endpoint and the
-route token as its **bearer credential**. The equivalent a13n create body is:
+For an Agent that shares one Host trust boundary, configure **one MCP connection**
+in a13n with the Host's MCP key. Copy it when creating the Host, or obtain a new
+one through **Agent hosts → Manage → Rotate MCP key**. Use the key as the
+**bearer credential**. The equivalent a13n create body is:
 
 ```json
 {
   "type": "mcp",
-  "name": "Channel Gateway team chat",
-  "config": { "url": "https://GATEWAY/mcp/" },
+  "name": "Channel Gateway",
+  "config": { "url": "https://GATEWAY/mcp/", "tools": null },
   "auth": "bearer",
-  "credential": { "token": "ROUTE_TOKEN" }
+  "credential": { "token": "HOST_MCP_KEY" }
 }
 ```
 
-For a route with one specific channel and user/group, copy the resulting a13n
-connection ID into the **Connections** tab. Multi-source or wildcard a13n routes
-use final run output instead of a shared dedicated connection.
-In **Connections**, choose **MCP send_message tool** if the agent should explicitly request replies;
-otherwise **Final run output** queues automatic replies from the completed run
-output. For QQ, enable `message.proactive` to permit proactive message/media tools
-alongside those automatic passive replies. Without that grant, final-output
-routes reject message tools. Configure the desired
-connection tools in the Agent interface, including `read_conversation` when needed.
-CG always uses the Agent's configured tool list; a route binding does not enable
-connection tools automatically.
+Select that connection and the desired tools in the Agent interface. The gateway
+exposes one fixed tool inventory, including the additional
+[QQ tools and operations](qq-platform.md). Call `list_conversations` to discover
+current authorized destinations, then pass the selected `id` as `route_id` to
+reads, sends, and actions. For an incoming channel message, use its gateway-verified
+`route_id`. Adding groups, private chats, or guild channels only changes route
+data; it does not require another connection, new tools, or per-conversation Tool
+Search groups. Native resource operations use the same fixed tools with an
+`operation` argument.
 
-When one Agent uses several CG connections, configure a13n **Tool Search** in
-proxy mode with a separate group for each connection, for example `channel_history`,
-`qq_group`, and `qq_private`. This avoids same-name MCP tool collisions while
-keeping credentials and destinations separate. The Agent discovers schemas with
-`search_proxy_tools` and invokes the selected group's tool with `call_proxy_tool`.
-Use the verified incoming `route_id` and the matching group. For QQ routes using
-final output, ordinary replies belong in final text; use proactive tools for
-explicit sends, media, or a later notification. Do not repeat a tool-sent answer
-in final output. See [QQ delivery and limits](qq-platform.md#message-creation).
+In the route's **Connections** tab, choose **Final run output** for automatic
+plain-text replies. Shared Host-key tools need no route MCP connection binding.
+For QQ, enable `message.proactive` to permit proactive message/media tools alongside
+those automatic passive replies. Ordinary answers belong in final text; tools
+handle explicit sends, media, or later notifications. Do not repeat tool-sent
+content in final output. See [QQ delivery and limits](qq-platform.md#message-creation).
+OneBot image tools still require MCP reply mode.
 
-Choose an Agent whose remaining permissions are appropriate for the conversation.
-CG does not override the Agent's connection tools, built-in toolsets, plugins,
-skills, or access to other Host resources. See the
+Dedicated route credentials are optional for clients that must have narrower
+access. For a single concrete source, create a connection using that route's token,
+select it in the Agent, and bind its ID in the route's **Connections** tab. Choose
+**MCP send_message tool** for tool-delivered replies. This legacy binding requires
+a dedicated connection per route; use it for deliberate isolation, not as the
+standard way to add groups. Multi-source and wildcard a13n routes use final output.
+An Agent configured with both shared and dedicated connections still has the
+shared connection's full Host authority.
+
+Choose an Agent whose remaining permissions are appropriate for all conversations
+assigned to the Host. CG does not override the Agent's connection tools, built-in
+toolsets, plugins, skills, or access to other Host resources. The Host key does not
+broaden route sources, sender policy, read grants, or action grants. See the
 [Agent tool contract](../spec/04-agent-tools.md) for exact tool selection and scope.
 
-Open a route's **Edit** page, rotate its token, copy the one-time value, and replace the
-bearer credential in its a13n connection. Wait for active input to finish before
-changing the MCP binding. Never put the token in `mcp_headers`; use the bearer
-credential field shown above.
+When rotating a Host key, replace the bearer credential in its shared connection.
+For a dedicated route connection, rotate the route token instead. Wait for active
+input to finish before changing a route MCP binding. Never put either key in
+`mcp_headers`; use the bearer credential field shown above.
 
 ## Diagnose delivery
 

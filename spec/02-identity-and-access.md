@@ -202,9 +202,12 @@ Read-only conversation handles never authorize sending.
 Host keys cannot configure routes or select arbitrary channel destinations.
 
 A Host represents one client trust boundary: issue separate Hosts and keys to
-clients that must not share conversations. An a13n Host key spans its assigned
-conversations; retain dedicated route credentials for conversation-isolated
-thread tools. Rotation does not cancel an operation already in flight.
+clients that must not share conversations. Within that boundary, one MCP
+connection uses the Host key and selects authorized conversations by `route_id`.
+Adding conversations does not require more MCP connections or tools. An a13n
+Host key spans its assigned conversations; dedicated route credentials remain
+an optional narrower capability when a client must be conversation-isolated.
+Rotation does not cancel an operation already in flight.
 
 ## Privacy boundary
 

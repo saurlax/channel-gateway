@@ -95,13 +95,21 @@ the QQ application has obtained every upstream permission.
 
 ## a13n binding
 
-A route with exactly one concrete source can bind
+An Agent sharing one Host trust boundary uses one MCP connection authenticated
+with that Host's key. The tool inventory is fixed across conversations; each
+invocation selects an authorized `route_id`. Adding a group, private chat, or
+guild channel changes route data, not tool names, connection count, or Tool Search
+groups. Per-conversation Tool Search groups are not required. Final-output routes
+need no dedicated MCP binding; QQ proactive tools additionally require the
+explicit route grant described in the [QQ contract](06-qq-platform.md#passive-replies-and-proactive-tools).
+
+For an intentionally narrower client capability, a route with exactly one concrete source can bind
 one dedicated a13n MCP connection. Multi-source and wildcard a13n rules use final
 run output, while generic MCP clients can use multi-source scopes directly.
 The same dedicated connection cannot
 be shared by two routes on a Host. Its URL points to CG `/mcp/`, and its bearer
-credential is that route's token. A Host key can also be configured in a client to access the Host’s assigned
-routes, but spans all enabled assigned route read grants and source destinations. A route
+credential is that route's token. The shared Host connection spans all enabled
+assigned route read grants and source destinations. A route
 token includes its configured readable channels, which can exceed its trigger sources. Without a binding, the a13n bridge operates through
 final run output without requiring MCP.
 

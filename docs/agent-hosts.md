@@ -13,10 +13,13 @@ permission to list published Agents and existing threads.
 
 CG submits inputs, uses the route's thread delivery policy, and tracks its runs.
 The default creates one thread per conversation; see [thread delivery](onebots-a13n.md#thread-delivery).
-MCP is optional for final-output replies. To give a thread access to only its
-conversation, follow the [dedicated route MCP setup](onebots-a13n.md#optional-mcp-tools-in-a13n).
-The Host key can instead grant a client access to every enabled route assigned
-to the Host; do not substitute it where a thread must remain conversation-scoped.
+MCP is optional for final-output replies. For tools, configure one shared MCP
+connection with the Host key and select destinations with `route_id`, following
+the [a13n MCP setup](onebots-a13n.md#optional-mcp-tools-in-a13n). Adding conversations
+does not add connections or tools. This key grants access to every enabled route
+assigned to the Host; use separate Hosts or deliberately narrower route credentials
+when clients must not share that access. Separate threads alone do not narrow
+the Agent's configured MCP authority.
 
 ## Generic MCP
 

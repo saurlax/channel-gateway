@@ -32,17 +32,17 @@ An a13n submission includes the verified channel context, source message ID,
 image count, and text, followed by native `type: url` content parts. The authorized
 Host receives the image URLs for its own bounded attachment ingestion, under its
 endpoint and model policies. URLs may expire before execution; frozen submissions
-are never rewritten on retry. Generic MCP Hosts use `read_image`. Image-only
+are never rewritten on retry. Generic MCP Hosts use `read(resource='image')`. Image-only
 messages use a compact `[Image]` activity summary and enter the same route workflow
 as text. Image bytes are not fetched or stored inside an ingestion transaction.
 
 ## Agent tools and authority
 
-`list_conversations` includes channel capability information, distinguishing
+`discover(resource='conversations')` includes channel capability information, distinguishing
 supported image formats and optional protocol extensions.
 
-- `read_image(source_message_id, image_index=0, route_id=None)` returns native MCP
-  image content. It applies exactly the current `read_conversation` policy,
+- `read(resource='image', arguments={source_message_id, image_index}, route_id=None)` returns native MCP
+  image content. It applies exactly the current `read(resource='messages')` policy,
   including explicit account grants and legacy sender/archived-route exclusions.
   Lookup is scoped to that conversation and is not limited to the latest 100
   messages. Access is checked again after the download before returning pixels.
@@ -50,14 +50,14 @@ supported image formats and optional protocol extensions.
   channel credentials, cookies, or environment proxies. The response's image
   signature and explicit image media type must agree. Missing or generic binary
   Content-Type is inferred from the supported image signature.
-- `send_image(image_base64, media_type, caption='', route_id=None)` queues one
+- `send_message` with an image content part queues one
   image with an optional caption of at most 16000 characters. Input is strict
-  base64, at most 4 MiB decoded, with a matching image signature. QQ accepts PNG
+  base64 with a matching image signature, at most 4 MiB decoded for OneBot and 16 MiB for QQ. QQ accepts PNG
   and JPEG; OneBot also accepts GIF and WebP. It requires the same current
   destination authority as `send_message`: MCP replies, or an explicitly granted
   QQ proactive tool send alongside final-output replies. Optional `delivery`
   follows the [QQ delivery contract](06-qq-platform.md#passive-replies-and-proactive-tools).
-- `set_message_reaction(source_message_id, emoji_id, add=True, route_id=None)`
+- `execute_action(action='reaction', arguments={source_message_id, emoji_id, add}, route_id=None)`
   queues a reaction to a locally received, currently source-authorized message
   in that exact conversation. Read-only account grants cannot authorize reactions.
   Emoji IDs are decimal strings of at most 20 digits. OneBot uses the optional
@@ -108,3 +108,11 @@ their stored receipt correlation is the target message ID, not a new message ID.
 - [QQ reactions (guild only)](https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/trans/emoji.html)
 - [OneBot v11 segments](https://github.com/botuniverse/onebot-11/blob/master/message/segment.md)
 - [NapCat reaction extension](https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-onebot/action/msg/SetMsgEmojiLike.ts)
+
+## Additional adapters
+
+The [Slack/Lark/Discord contract](01-channel-adapters.md#slack-lark-and-discord)
+owns their authenticated media retrieval and Host media handles. The QQ CDN
+allowlist and OneBot extension restrictions here remain specific to their owning
+adapters. Typed reaction representations and new-adapter bounds follow the
+[Agent tool contract](04-agent-tools.md#adapter-extensions).

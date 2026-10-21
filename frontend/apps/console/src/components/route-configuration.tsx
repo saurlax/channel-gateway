@@ -318,6 +318,7 @@ export function RouteConfiguration({
             </p>
             {(
               [
+                ["history.read", "Read native platform history"],
                 ["resource.read", "Read platform resources"],
                 ["message.react", "React to messages"],
                 ["message.recall", "Recall bot messages"],

@@ -15,8 +15,8 @@ Channel ingestion and Agent Host delivery have separate adapters. This allows a
 conversation to reach an agent in a13n or another Host, while the agent can consult
 other authorized channels before deciding where and how to respond.
 
-> **Project status:** A bridge from OneBot v11, QQ official Bot, and Weixin iLink
-> to a13n is implemented, with verified event ingestion, conversation routes, persistent delivery records,
+> **Project status:** A bridge from OneBot v11, QQ official Bot, Weixin iLink, Slack, Feishu/Lark,
+> and Discord to a13n is implemented, with verified event ingestion, conversation routes, persistent delivery records,
 > scoped MCP tools, generic MCP client Hosts with independent keys, and a management console built from official shadcn blocks.
 > Cross-channel identity linking, full RBAC, and live voice/radio
 > integrations remain planned. This is a single-process prototype.
@@ -28,8 +28,17 @@ to empty; application permissions and invitation restrictions still apply.
 QQ routes can combine passive final-text replies with proactive message/media
 tools under an explicit `message.proactive` grant and persistent send budgets.
 See the [QQ platform guide and operation inventory](docs/qq-platform.md).
+The [five Agent tools](docs/agent-tools.md) provide discovery, reads, message
+creation, non-message actions, and unified operation status. Platform options use
+validated parameters; adding conversations does not add tools.
 OneBot image tools and optional NapCat-compatible reactions remain supported.
 Weixin remains text-only. QQ official C2C/group reactions remain unavailable.
+The first [Slack, Feishu/Lark, and Discord adapters](docs/slack-lark-discord.md)
+implement text/media, explicit threads, separately granted native history,
+reactions and recall. HTTP callbacks receive Slack/Lark events; Discord uses its
+resumable Gateway. Their protocol tests use simulated endpoints; live installation
+acceptance is still required. Search, cards and streams for these adapters remain
+unimplemented.
 
 ## How it fits together
 

@@ -6,13 +6,20 @@ and actions through MCP. A channel identity, a routing destination, and permissi
 to act are separate concepts.
 
 This directory owns accepted technical contracts. The current implementation is
-a single-process OneBot v11, QQ official Bot, and Weixin iLink bridge to a13n with conversation-scoped
+a single-process OneBot v11, QQ official Bot, Weixin iLink, Slack, Lark and Discord bridge to a13n with conversation-scoped
 MCP tools, plus generic MCP Hosts with independent keys and authorized
 cross-channel route reads. The contracts below describe that supported baseline. They do not
 claim a complete RBAC system or access outside assigned routes.
 QQ includes guild/DM routing, media, structured messages, streaming, and scoped
 platform resource actions. OneBot supports images and optional message reactions.
 Weixin is text-only. Application permissions remain separate from gateway support.
+
+The [multi-platform integration design](07-channel-integration.md) specifies the
+target contract for additional adapters. Its implementation-progress section identifies the current adapter slice; all
+remaining transports and capabilities stay unimplemented until their release gates pass.
+The dated [platform API reference](../docs/platform-api-reference.md) separates
+documented APIs, first-party implementations, reference integrations and
+unverified capabilities.
 
 ## Reading path and ownership
 
@@ -25,6 +32,7 @@ Weixin is text-only. Application permissions remain separate from gateway suppor
 | [Agent tools](04-agent-tools.md)                   | MCP reads/actions and a13n tool binding                           |
 | [Images and reactions](05-images-and-reactions.md) | Image projection, authorized media reads/sends, and optional reactions |
 | [QQ platform](06-qq-platform.md) | Guild/DM identity, resource action grants, operation catalog, and action lifecycle |
+| [Multi-platform integration](07-channel-integration.md) | Target adapter expansion, channel/thread identity, capability evidence, five-tool mappings and release gates; not an implementation claim |
 
 Start with architecture; read the owning contract before changing its behavior.
 The generated [OpenAPI document](../README.md#run-from-source) describes management

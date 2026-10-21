@@ -2,8 +2,12 @@
 
 ## Account binding
 
+This document describes the implemented baseline. The remaining target
+contract and per-platform evidence for additional adapters are linked from
+[Multi-platform channel integration](07-channel-integration.md).
+
 A channel connection represents one bot account. Its `kind` is `onebots`, `qq`,
-or `weixin`; `a13n` connections are Agent Hosts. There is no instance discovery,
+`weixin`, `slack`, `lark`, or `discord`; `a13n` and `mcp` connections are Agent Hosts. There is no instance discovery,
 bot multi-selection, or implicit aggregation. Several connections can target the
 same OneBots instance, each with an independent account binding.
 
@@ -34,7 +38,8 @@ confirmation from the channel's management dialog.
 
 All implemented adapters project and send text. QQ and OneBot additionally support
 images under the [image and reaction contract](05-images-and-reactions.md).
-They retain authenticated
+Slack, Lark and Discord support the media and native-history slice described
+[below](#slack-lark-and-discord). All adapters retain authenticated
 incoming packets, including non-text messages and unsupported events, in the
 private channel-event journal before projection. QQ's additional media, guild/DM,
 interaction, and native resource operations follow the
@@ -52,6 +57,9 @@ is not an additional wire transport.
 | `qq`      | `websocket`    | Official QQ Gateway                     | Official QQ OpenAPI     |
 | `qq`      | `webhook`      | Official Ed25519 HTTP callback          | Official QQ OpenAPI     |
 | `weixin`  | `polling`      | Official iLink long polling             | Official iLink HTTP API |
+| `slack` | `webhook` | Signed Events API callback | Bot Web API |
+| `lark` | `webhook` | Signed encrypted callback | Tenant bot REST API |
+| `discord` | `websocket` | Bot Gateway v10 | Bot REST API v10 |
 
 A OneBot HTTP API alone is not an event subscription and cannot automatically
 wake an Agent. Native QQ and Weixin have separate authentication and event
@@ -264,3 +272,38 @@ route access are server authority, independently of any UI state.
 - [Tencent QQ Bot SDK](https://github.com/tencent-connect/qqbot-nodejs)
 - [QQ full-group-message event](https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_message_create.html)
 - [Tencent Weixin protocol](https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md)
+
+## Slack, Lark and Discord
+
+The first adapter slice uses bounded async HTTP and, for Discord, WebSocket I/O.
+Slack uses signed Events API callbacks, Lark requires signed encrypted callbacks
+and tenant credentials, and Discord authenticates a bot Gateway connection.
+Account/region IDs are immutable; credentials are replaceable. Credential and
+account changes invalidate in-flight ingress and native-history handles.
+No adapter accepts a user token as a bot fallback.
+
+`channel` and `thread` extend the existing conversation kinds without changing
+existing QQ `guild` / `guild_dm` identities. Threads require explicit sources;
+parent sources do not inherit them. Slack uses `channel:root_ts` and Lark uses
+`chat:root_message_id` as the conversation ID for `thread`; the latter resolves
+its native thread ID only after verifying root ownership. Discord uses the
+thread's native channel ID, with channel type and guild verified before routing.
+Native message IDs remain opaque strings. Backfill, own echoes, edits, deletes
+and reactions do not project as new Agent input. Authenticated arrivals remain
+in the packet journal independently of projection/routing.
+
+Media retrieval belongs to each adapter: Slack credentials go only to the exact
+private-file host, Lark tenant tokens only to its fixed regional resource API,
+and Discord CDN downloads are credential-free. Redirects and compressed or
+oversized responses are rejected. API and media clients remain separate.
+New-platform Host input carries media indices and MCP read instructions, never
+private download URLs or Lark resource-key URIs. Media is exposed as
+message/index handles and native MCP content; the Host owns
+format conversion and parsing. No CG filesystem path or visual model is added.
+
+The [setup guide](../docs/slack-lark-discord.md) defines implemented transports,
+fields, native address mapping, content combinations, grants and limits. Search,
+streams, cards, thread inheritance, Slack Socket Mode, Lark WebSocket workers
+and Discord interaction callbacks remain unimplemented. The integration design
+continues to own those targets. Simulated protocol/failure checks are not live
+installation or application-permission acceptance.

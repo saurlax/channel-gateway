@@ -44,6 +44,27 @@ export const channelTypes = [
     label: "Weixin",
     help: "Save the channel, then scan the login QR code with Weixin. Supports private text messages.",
   },
+  {
+    id: "slack",
+    kind: "slack",
+    transport: "webhook",
+    label: "Slack",
+    help: "Use a Slack bot token and signed Events API callbacks. Invite the bot to each channel.",
+  },
+  {
+    id: "lark",
+    kind: "lark",
+    transport: "webhook",
+    label: "Feishu / Lark",
+    help: "Use a tenant bot with signed encrypted event callbacks. Select the application’s API region.",
+  },
+  {
+    id: "discord",
+    kind: "discord",
+    transport: "websocket",
+    label: "Discord",
+    help: "Use a Discord bot token. Enable Message Content Intent in the Developer Portal.",
+  },
 ] as const satisfies ReadonlyArray<{
   id: string;
   kind: Connection["kind"];

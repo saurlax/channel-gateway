@@ -14,7 +14,10 @@ type Identifier = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^
 type SenderIds = Annotated[list[Identifier], Field(max_length=256)]
 type ReadChannels = Annotated[list[Identifier | Literal["*"]], Field(max_length=100)]
 type ThreadPolicy = Literal["conversation", "sender", "fixed", "message"]
+type ConversationKind = Literal["private", "group", "guild", "guild_dm", "channel", "thread"]
 type ActionGrant = Literal[
+    "history.read",
+    "history.search",
     "resource.read",
     "message.react",
     "message.recall",
@@ -25,7 +28,7 @@ type ActionGrant = Literal[
     "content.manage",
     "bot.manage",
 ]
-type ActionGrants = Annotated[list[ActionGrant], Field(max_length=9)]
+type ActionGrants = Annotated[list[ActionGrant], Field(max_length=11)]
 
 
 @dataclass(frozen=True)
@@ -56,7 +59,7 @@ class AdministratorLogin(Contract):
 
 class ConnectionInput(Contract):
     name: str = Field(min_length=1, max_length=80)
-    kind: Literal["onebots", "qq", "weixin", "a13n", "mcp"]
+    kind: Literal["onebots", "qq", "weixin", "slack", "lark", "discord", "a13n", "mcp"]
     transport: Literal["http", "http_reverse", "ws", "ws_reverse", "websocket", "webhook", "polling"] | None = None
     api_url: str | None = Field(default=None, max_length=2048)
     token: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
@@ -65,6 +68,9 @@ class ConnectionInput(Contract):
     qq_intents: int | None = Field(default=None, ge=1, le=2147483647)
     app_id: Identifier | None = None
     app_secret: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
+
+    encrypt_key: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
+    discord_intents: int | None = Field(default=None, ge=1, le=2147483647)
 
     @field_validator("api_url")
     @classmethod
@@ -85,7 +91,16 @@ class ConnectionInput(Contract):
 
     @model_validator(mode="after")
     def connection_contract(self) -> "ConnectionInput":
-        defaults = {"onebots": "http_reverse", "qq": "websocket", "weixin": "polling", "a13n": None, "mcp": None}
+        defaults = {
+            "onebots": "http_reverse",
+            "qq": "websocket",
+            "weixin": "polling",
+            "slack": "webhook",
+            "lark": "webhook",
+            "discord": "websocket",
+            "a13n": None,
+            "mcp": None,
+        }
         self.transport = self.transport or defaults[self.kind]
         if self.kind == "onebots":
             if self.transport not in {"http", "http_reverse", "ws", "ws_reverse"} or not self.token or not self.self_id:
@@ -109,6 +124,44 @@ class ConnectionInput(Contract):
             self.api_url = self.api_url or "https://api.sgroup.qq.com"
             if self.api_url != "https://api.sgroup.qq.com" or self.token or self.self_id or self.webhook_secret:
                 raise ValueError("QQ uses official endpoints and its application credentials")
+        elif self.kind == "slack":
+            if (
+                self.transport != "webhook"
+                or not self.token
+                or not self.self_id
+                or not self.app_id
+                or not self.webhook_secret
+            ):
+                raise ValueError("Slack requires a bot token, bot user ID, workspace ID, and signing secret")
+            if not self.token.get_secret_value().startswith("xoxb-") or self.api_url or self.app_secret:
+                raise ValueError("Slack uses bot credentials and official API endpoints")
+        elif self.kind == "lark":
+            if (
+                self.transport != "webhook"
+                or not self.app_id
+                or not self.app_secret
+                or not self.self_id
+                or not self.webhook_secret
+                or not self.encrypt_key
+                or self.token
+            ):
+                raise ValueError(
+                    "Lark requires application credentials, bot open ID, verification token, and encrypt key"
+                )
+            self.api_url = self.api_url or "https://open.feishu.cn"
+            if self.api_url not in {"https://open.feishu.cn", "https://open.larksuite.com"}:
+                raise ValueError("Choose the official Feishu or Lark API region")
+        elif self.kind == "discord":
+            if (
+                self.transport != "websocket"
+                or not self.token
+                or not self.self_id
+                or self.api_url
+                or self.webhook_secret
+                or self.app_id
+                or self.app_secret
+            ):
+                raise ValueError("Discord requires a bot token and bot user ID with Gateway transport")
         elif self.kind == "weixin":
             if self.transport != "polling" or bool(self.token) != bool(self.self_id) or self.webhook_secret:
                 raise ValueError("Weixin uses polling; imported credentials require a bot ID and token")
@@ -120,13 +173,19 @@ class ConnectionInput(Contract):
             raise ValueError("a13n requires an HTTP API URL and workspace API key")
         elif urlsplit(self.api_url).scheme not in {"http", "https"}:
             raise ValueError("a13n requires an HTTP API URL")
-        if self.kind != "qq" and (self.app_id or self.app_secret or self.qq_intents is not None):
-            raise ValueError("Only QQ uses application credentials")
+        if self.kind not in {"qq", "slack", "lark"} and (self.app_id or self.app_secret):
+            raise ValueError("Application credentials do not match this channel")
+        if self.kind != "qq" and self.qq_intents is not None:
+            raise ValueError("Only QQ uses QQ intents")
+        if self.kind != "discord" and self.discord_intents is not None:
+            raise ValueError("Only Discord uses Discord intents")
+        if self.kind != "lark" and self.encrypt_key:
+            raise ValueError("Only Lark uses an encrypt key")
         return self
 
     def stored(self) -> dict:
         value = self.model_dump(mode="json")
-        for name in ("token", "webhook_secret", "app_secret"):
+        for name in ("token", "webhook_secret", "app_secret", "encrypt_key"):
             secret = getattr(self, name)
             value[name] = secret.get_secret_value() if secret else None
         return value
@@ -134,7 +193,7 @@ class ConnectionInput(Contract):
 
 class RouteSource(Contract):
     channel_id: Identifier | Literal["*"]
-    conversation_kind: Literal["private", "group", "guild", "guild_dm"]
+    conversation_kind: ConversationKind
     conversation_id: Identifier | Literal["*"]
 
 
@@ -142,7 +201,7 @@ class RouteInput(Contract):
     name: str = Field(min_length=1, max_length=80)
     channel_id: Identifier | Literal["*"] | None = None
     host_id: Identifier
-    conversation_kind: Literal["private", "group", "guild", "guild_dm"] | None = None
+    conversation_kind: ConversationKind | None = None
     conversation_id: Identifier | Literal["*"] | None = None
     sources: Annotated[list[RouteSource], Field(min_length=1, max_length=100)] | None = None
     read_channel_ids: ReadChannels | None = None
@@ -188,13 +247,6 @@ class RouteInput(Contract):
             raise ValueError("Any-sender routes do not use an allowlist")
         if not self.sources and self.conversation_id == "*" and self.mcp_connection_id:
             raise ValueError("All-conversation routes cannot use a dedicated a13n MCP connection")
-        if (
-            self.conversation_kind == "private"
-            and self.conversation_id != "*"
-            and self.sender_policy == "allowlist"
-            and self.allowed_user_ids != [self.conversation_id]
-        ):
-            raise ValueError("A private route authorizes only its conversation user")
         return self
 
 
@@ -221,6 +273,8 @@ class RouteUpdate(Contract):
 
 
 class ConnectionSecrets(Contract):
+    encrypt_key: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
+    discord_intents: int | None = Field(default=None, ge=1, le=2147483647)
     qq_intents: int | None = Field(default=None, ge=1, le=2147483647)
     token: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
     webhook_secret: SecretStr | None = Field(default=None, min_length=16, max_length=4096)
@@ -271,4 +325,6 @@ class ReactionInput(Contract):
 
 
 def public_connection(row: dict) -> dict:
-    return {key: value for key, value in row.items() if key not in {"token", "webhook_secret", "app_secret"}}
+    return {
+        key: value for key, value in row.items() if key not in {"token", "webhook_secret", "app_secret", "encrypt_key"}
+    }

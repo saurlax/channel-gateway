@@ -5,16 +5,18 @@ import json
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from mcp.types import AudioContent, BlobResourceContents, EmbeddedResource, TextResourceContents, ToolAnnotations
+from mcp.types import AudioContent, BlobResourceContents, EmbeddedResource, TextResourceContents
 from pydantic import AnyUrl, Field
 
 from .channels.actions import known_message, message_delivery, reaction_authority
+from .channels.emoji import Emoji, validate_platform_emoji
+from .channels.platforms.common import PLATFORMS
 from .channels.qq_operations import OPERATIONS, applicable, check_json, execute_operation, require_grant, safe_result
 from .media import MAX_MEDIA_BYTES, attachment_media_type, decode_media, image_type, public_media_url
 from .models import route_allows_sender
 
 
-def install_platform_tools(server, store, bridge, media, authorized_route, readable_route):
+def install_platform_operations(operations, store, bridge, media, authorized_route, readable_route):
     async def qq_route(route_id):
         route = await authorized_route(route_id)
         connection = await store.connection(route["channel_id"])
@@ -43,7 +45,7 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
             raise ValueError("Channel is unavailable")
         return route, connection, message_delivery(route, connection, delivery)
 
-    @server.tool()
+    @operations.register
     async def send_message(
         text: Annotated[str, Field(max_length=16000)] = "",
         route_id: str | None = None,
@@ -95,7 +97,7 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         bridge.wake.set()
         return {"reply_id": reply["id"], "state": reply["state"]}
 
-    @server.tool()
+    @operations.register
     async def send_media(
         media_kind: Literal["image", "audio", "video", "file"],
         media_type: Annotated[str, Field(min_length=1, max_length=128)],
@@ -109,7 +111,7 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         """Queue QQ media, defaulting to proactive with message.proactive. Explicit delivery='passive' uses reply context. Provide public HTTPS URL or strict base64 (16 MiB max). Guild uploads support images."""
         route, connection, delivery = await message_route(route_id, delivery)
         if connection["kind"] != "qq":
-            raise ValueError("Use send_image for other supported channels")
+            raise ValueError("This media operation requires official QQ")
         if bool(data_base64) == bool(url):
             raise ValueError("Choose exactly one media URL or base64 data")
         if any(c in filename for c in ("/", "\\", "\r", "\n", "\0")):
@@ -146,52 +148,75 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         bridge.wake.set()
         return {"reply_id": reply["id"], "state": reply["state"]}
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False))
+    @operations.register
     async def set_message_reaction(
         source_message_id: Annotated[str, Field(min_length=1, max_length=1024)],
-        emoji_id: Annotated[str, Field(min_length=1, max_length=20, pattern=r"^[0-9]+$")],
+        emoji_id: Annotated[str, Field(min_length=1, max_length=20, pattern=r"^[0-9]+$")] | None = None,
         add: bool = True,
         route_id: str | None = None,
-        emoji_type: Literal[1, 2] = 1,
+        emoji_type: Literal[1, 2] | None = None,
+        emoji: Emoji | None = None,
     ) -> dict:
         """Add/remove a reaction on an existing message. Independent of sending message content. QQ guild or optional OneBot extension only."""
         route = await authorized_route(route_id)
         connection = await store.connection(route["channel_id"])
         if not connection or not (
-            connection["kind"] == "onebots" or (connection["kind"] == "qq" and route["conversation_kind"] == "guild")
+            connection["kind"] in PLATFORMS
+            or connection["kind"] == "onebots"
+            or (connection["kind"] == "qq" and route["conversation_kind"] == "guild")
         ):
             raise ValueError("Message reactions are not supported by this channel")
+        if emoji is not None and emoji_type is not None:
+            raise ValueError("Typed emoji cannot include legacy emoji_type")
+        if (emoji is None) == (emoji_id is None):
+            raise ValueError("Choose exactly one typed emoji or legacy emoji_id")
+        value = validate_platform_emoji(
+            connection["kind"], emoji or {"kind": "platform", "value": emoji_id, "type": emoji_type or 1}
+        )
+        if connection["kind"] in PLATFORMS and emoji is None:
+            raise ValueError("This platform requires a typed emoji")
         grant = reaction_authority(route, connection["kind"])
         await known_message(store, route, source_message_id)
         return await queue_action(
             route,
             "reaction",
-            {"source_message_id": source_message_id, "emoji_id": emoji_id, "add": add, "emoji_type": emoji_type},
+            {
+                "source_message_id": source_message_id,
+                "emoji": value,
+                "emoji_id": value.get("value", ""),
+                "add": add,
+                "emoji_type": value.get("type", 1),
+            },
             grant,
         )
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+    @operations.register
     async def recall_message(
         message_id: Annotated[str, Field(min_length=1, max_length=1024)],
         route_id: str | None = None,
         hide_tip: bool = False,
     ) -> dict:
         """Recall a known QQ message. Requires message.recall for the bot's own messages or message.recall_members for received messages."""
-        route, _ = await qq_route(route_id)
+        route = await authorized_route(route_id)
+        connection = await store.connection(route["channel_id"])
+        if not connection or connection["kind"] not in {"qq", *PLATFORMS}:
+            raise ValueError("Recall is not supported by this channel")
         ownership, _ = await known_message(store, route, message_id)
+        if connection["kind"] in {"slack", "lark"} and ownership != "sent":
+            raise ValueError("This adapter can recall only the bot's confirmed sends")
         grant = "message.recall" if ownership == "sent" else "message.recall_members"
         require_grant(route, grant)
         return await queue_action(route, "recall", {"message_id": message_id, "hide_tip": hide_tip}, grant)
 
-    @server.tool()
+    @operations.register
     async def set_typing(seconds: Annotated[int, Field(ge=1, le=60)] = 30, route_id: str | None = None) -> dict:
         """Show QQ C2C typing state. This is a status action, not a text reply."""
         route, connection = await writable_route(route_id)
-        if connection["kind"] != "qq" or route["conversation_kind"] != "private":
-            raise ValueError("Typing state is supported in QQ C2C")
+        if connection["kind"] != "discord" and (connection["kind"] != "qq" or route["conversation_kind"] != "private"):
+            raise ValueError("Typing state is supported in QQ C2C and Discord")
         return await queue_action(route, "typing", {"seconds": seconds}, "message.send")
 
-    @server.tool()
+    @operations.register
     async def send_stream_message(
         text: Annotated[str, Field(min_length=1, max_length=16000)],
         index: Annotated[int, Field(ge=0, le=10000)] = 0,
@@ -201,7 +226,7 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         input_mode: Literal["append", "replace"] = "append",
         route_id: str | None = None,
     ) -> dict:
-        """Queue an ordered QQ C2C stream fragment. Start at index zero; reuse the returned private handle and increment index. Poll get_channel_action before continuing after uncertainty."""
+        """Queue an ordered QQ C2C stream fragment. Start at index zero; reuse the returned private handle and increment index. Poll get_operation before continuing after uncertainty."""
         route, connection = await writable_route(route_id)
         if connection["kind"] != "qq" or route["conversation_kind"] != "private":
             raise ValueError("Streaming is supported in QQ C2C only")
@@ -223,21 +248,15 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         bridge.wake.set()
         return receipt
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
-    async def list_channel_operations(route_id: str | None = None) -> dict:
-        """Discover QQ resource operations and their exact argument schemas, scope, required route grants, and platform restrictions. Discovery itself grants no authority."""
-        route, _ = await qq_route(route_id)
-        return {"operations": [item.describe(route) for item in OPERATIONS.values() if applicable(item, route)]}
-
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @operations.register
     async def query_channel_resource(
         operation: str, arguments: dict | None = None, route_id: str | None = None
     ) -> dict:
-        """Read a native QQ resource using an operation from list_channel_operations. No arbitrary API paths or destinations are accepted."""
+        """Read a native QQ resource using an operation from discover(resource='operations'). No arbitrary API paths or destinations are accepted."""
         route, connection = await qq_route(route_id)
         definition = OPERATIONS.get(operation)
         if definition is None or not definition.readonly:
-            raise ValueError("Choose a read-only operation from list_channel_operations")
+            raise ValueError("Choose a read-only operation from discover(resource='operations')")
         value = await execute_operation(store, bridge.channels.qq(connection), route, definition, arguments or {})
         current = await authorized_route(route["id"])
         require_grant(current, definition.grant)
@@ -245,20 +264,20 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
             raise ValueError("Route authority changed during resource read")
         return {"result": safe_result(value)}
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+    @operations.register
     async def perform_channel_action(
         operation: str, arguments: dict | None = None, route_id: str | None = None
     ) -> dict:
-        """Queue a scoped QQ resource mutation. Discover operation schemas and required grants first. Sending message content, reacting, and recall use separate tools."""
+        """Queue a scoped QQ resource mutation. Discover operation schemas and required grants first. Message creation and message actions use their dedicated operation types."""
         route, _ = await qq_route(route_id)
         definition = OPERATIONS.get(operation)
         if definition is None or definition.readonly or not applicable(definition, route):
-            raise ValueError("Choose an applicable mutation from list_channel_operations")
+            raise ValueError("Choose an applicable mutation from discover(resource='operations')")
         require_grant(route, definition.grant)
         definition.validate(arguments or {})
         return await queue_action(route, "resource:" + operation, arguments or {}, definition.grant)
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @operations.register
     async def get_channel_action(action_id: str, route_id: str | None = None) -> dict:
         """Read this route's durable action status. Unknown means verify upstream before repeating. Results are hidden after their grant is revoked."""
         route = await authorized_route(route_id)
@@ -276,7 +295,7 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
             "result": json.loads(row["result"]) if allowed and row["result"] else None,
         }
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @operations.register
     async def read_channel_events(limit: Annotated[int, Field(ge=1, le=100)] = 20, route_id: str | None = None) -> dict:
         """Read sanitized QQ notifications for this conversation or verified parent guild. Does not expose raw packets or activate agents."""
         route, connection = await qq_route(route_id)
@@ -297,7 +316,7 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
         )
         return {"events": [{**row, "data": json.loads(row["data"])} for row in reversed(rows)]}
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @operations.register
     async def read_attachment(
         source_message_id: str, attachment_index: Annotated[int, Field(ge=0, le=15)] = 0, route_id: str | None = None
     ) -> list[AudioContent | EmbeddedResource]:
@@ -316,28 +335,39 @@ def install_platform_tools(server, store, bridge, media, authorized_route, reada
             return items[attachment_index]
 
         item = await attachment(route)
-        data, mime = await media.read_blob(item["url"])
+        connection = await store.connection(route["channel_id"])
+        if connection and connection["kind"] in PLATFORMS and bridge.channels:
+            await bridge.channels.platform(connection).ensure_identity()
+            data, mime = await bridge.channels.platform(connection).read_asset(item, image=False)
+        else:
+            data, mime = await media.read_blob(item["url"])
+        if connection != await store.connection(route["channel_id"]):
+            raise ValueError("Channel credentials changed during download")
         current = await readable_route(route["id"])
         if await attachment(current) != item:
             raise ValueError("Attachment access changed during download")
-        mime = attachment_media_type(data, mime, item["media_type"], item["filename"])
-        uri = AnyUrl("channel-attachment:" + quote(source_message_id, safe="") + "/" + str(attachment_index))
-        if mime.startswith("text/") or mime in {"application/json", "application/xml", "application/yaml"}:
-            try:
-                text = data.decode("utf-8-sig")
-            except UnicodeDecodeError:
-                raise ValueError("Text attachment is not UTF-8; parse the Host-delivered file in its sandbox") from None
-            return [EmbeddedResource(type="resource", resource=TextResourceContents(uri=uri, mimeType=mime, text=text))]
-        encoded = base64.b64encode(data).decode()
-        if mime.startswith("audio/"):
-            return [AudioContent(type="audio", data=encoded, mimeType=mime)]
-        return [
-            EmbeddedResource(
-                type="resource",
-                resource=BlobResourceContents(
-                    uri=uri,
-                    mimeType=mime,
-                    blob=encoded,
-                ),
-            )
-        ]
+        return attachment_content(data, mime, item, source_message_id, attachment_index)
+
+
+def attachment_content(data, mime, item, source_message_id, attachment_index) -> list[AudioContent | EmbeddedResource]:
+    mime = attachment_media_type(data, mime, item["media_type"], item["filename"])
+    uri = AnyUrl("channel-attachment:" + quote(source_message_id, safe="") + "/" + str(attachment_index))
+    if mime.startswith("text/") or mime in {"application/json", "application/xml", "application/yaml"}:
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise ValueError("Text attachment is not UTF-8; parse the Host-delivered file in its sandbox") from None
+        return [EmbeddedResource(type="resource", resource=TextResourceContents(uri=uri, mimeType=mime, text=text))]
+    encoded = base64.b64encode(data).decode()
+    if mime.startswith("audio/"):
+        return [AudioContent(type="audio", data=encoded, mimeType=mime)]
+    return [
+        EmbeddedResource(
+            type="resource",
+            resource=BlobResourceContents(
+                uri=uri,
+                mimeType=mime,
+                blob=encoded,
+            ),
+        )
+    ]

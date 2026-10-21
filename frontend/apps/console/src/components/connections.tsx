@@ -234,8 +234,10 @@ function ConnectionForm({
   const [typeId, setTypeId] = useState<string>("http_reverse");
   const [hostType, setHostType] = useState("a13n");
   const [qqMode, setQQMode] = useState("websocket");
+  const [larkRegion, setLarkRegion] = useState("https://open.feishu.cn");
   const type = channelTypes.find((item) => item.id === typeId)!;
   const onebot = isChannel && type.kind === "onebots";
+  const platform = isChannel && ["slack", "lark", "discord"].includes(type.kind);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -259,6 +261,22 @@ function ConnectionForm({
                 ...(typeId !== "ws_reverse" ? { api_url: field(data, "api_url") } : {}),
                 ...(typeId === "http_reverse"
                   ? { webhook_secret: field(data, "webhook_secret") }
+                  : {}),
+              }
+            : {}),
+          ...(platform
+            ? {
+                self_id: field(data, "self_id"),
+                ...(type.kind !== "lark" ? { token: field(data, "token") } : {}),
+                ...(type.kind !== "discord"
+                  ? { app_id: field(data, "app_id"), webhook_secret: field(data, "webhook_secret") }
+                  : {}),
+                ...(type.kind === "lark"
+                  ? {
+                      app_secret: field(data, "app_secret"),
+                      encrypt_key: field(data, "encrypt_key"),
+                      api_url: larkRegion,
+                    }
                   : {}),
               }
             : {}),
@@ -347,6 +365,82 @@ function ConnectionForm({
           >
             <Input id="api-token" name="token" type="password" required autoComplete="off" />
           </FormField>
+        )}
+        {platform && (
+          <>
+            <FormField id="platform-self-id" label={t("Bot self ID")}>
+              <Input id="platform-self-id" name="self_id" required maxLength={128} />
+            </FormField>
+            {type.kind !== "lark" && (
+              <FormField id="platform-token" label={t("Bot token")}>
+                <Input
+                  id="platform-token"
+                  name="token"
+                  type="password"
+                  required
+                  autoComplete="off"
+                />
+              </FormField>
+            )}
+            {type.kind !== "discord" && (
+              <>
+                <FormField
+                  id="platform-app-id"
+                  label={type.kind === "slack" ? t("Workspace ID") : "AppID"}
+                >
+                  <Input id="platform-app-id" name="app_id" required maxLength={128} />
+                </FormField>
+                <FormField
+                  id="platform-signing-secret"
+                  label={
+                    type.kind === "lark" ? t("Verification token") : t("Webhook signing secret")
+                  }
+                >
+                  <Input
+                    id="platform-signing-secret"
+                    name="webhook_secret"
+                    type="password"
+                    required
+                    minLength={16}
+                    autoComplete="off"
+                  />
+                </FormField>
+              </>
+            )}
+            {type.kind === "lark" && (
+              <>
+                <FormField id="lark-region" label={t("API region")}>
+                  <Choice
+                    id="lark-region"
+                    value={larkRegion}
+                    onChange={setLarkRegion}
+                    items={[
+                      ["https://open.feishu.cn", t("Feishu")],
+                      ["https://open.larksuite.com", "Lark"],
+                    ]}
+                  />
+                </FormField>
+                <FormField id="lark-secret" label="AppSecret">
+                  <Input
+                    id="lark-secret"
+                    name="app_secret"
+                    type="password"
+                    required
+                    autoComplete="off"
+                  />
+                </FormField>
+                <FormField id="lark-encrypt-key" label={t("Encrypt key")}>
+                  <Input
+                    id="lark-encrypt-key"
+                    name="encrypt_key"
+                    type="password"
+                    required
+                    autoComplete="off"
+                  />
+                </FormField>
+              </>
+            )}
+          </>
         )}
         {onebot && (
           <FormField id="self-id" label={t("Bot self ID")}>
@@ -441,6 +535,8 @@ function ConnectionDetails({
     connection.kind === "onebots" &&
     (!connection.transport || connection.transport === "http_reverse");
   const qq = connection.kind === "qq";
+  const appSecret = qq || connection.kind === "lark";
+  const signedCallback = reverseHTTP || ["slack", "lark"].includes(connection.kind);
   const type = channelType(connection);
   return (
     <div className="grid gap-4">
@@ -459,7 +555,7 @@ function ConnectionDetails({
           <Input id="connection-url" readOnly value={channelEndpoint(connection)} />
         </FormField>
       )}
-      {(reverseHTTP || (qq && connection.transport === "webhook")) && (
+      {(signedCallback || (qq && connection.transport === "webhook")) && (
         <FormField id="connection-hook" label={t("Reverse HTTP webhook")}>
           <Input
             id="connection-hook"
@@ -495,8 +591,11 @@ function ConnectionDetails({
               await action(
                 `connections/${connection.id}`,
                 {
-                  ...(value ? { [qq ? "app_secret" : "token"]: value } : {}),
+                  ...(value ? { [appSecret ? "app_secret" : "token"]: value } : {}),
                   ...(secret ? { webhook_secret: secret } : {}),
+                  ...(field(data, "encrypt_key")
+                    ? { encrypt_key: field(data, "encrypt_key") }
+                    : {}),
                   ...(qq && field(data, "qq_intents")
                     ? { qq_intents: Number(field(data, "qq_intents")) }
                     : {}),
@@ -509,7 +608,7 @@ function ConnectionDetails({
         >
           <FormField
             id="new-token"
-            label={qq ? t("New AppSecret (optional)") : t("New API token (optional)")}
+            label={appSecret ? t("New AppSecret (optional)") : t("New API token (optional)")}
           >
             <Input id="new-token" name="token" type="password" autoComplete="off" />
           </FormField>
@@ -526,8 +625,20 @@ function ConnectionDetails({
               />
             </FormField>
           )}
-          {reverseHTTP && (
-            <FormField id="new-secret" label={t("New signing secret (optional)")}>
+          {connection.kind === "lark" && (
+            <FormField id="new-encrypt-key" label={t("New encrypt key (optional)")}>
+              <Input id="new-encrypt-key" name="encrypt_key" type="password" autoComplete="off" />
+            </FormField>
+          )}
+          {signedCallback && (
+            <FormField
+              id="new-secret"
+              label={
+                connection.kind === "lark"
+                  ? t("New verification token (optional)")
+                  : t("New signing secret (optional)")
+              }
+            >
               <Input
                 id="new-secret"
                 name="secret"

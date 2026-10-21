@@ -20,6 +20,11 @@ from .bridge import Bridge
 from .channels.common import event_object
 from .channels.ingress import ProjectionError, begin_event, event_type, ingest_event
 from .channels.manager import ChannelManager, capabilities, transport
+from .channels.platforms.common import CHANNEL_KINDS
+from .channels.platforms.lark import lark_message
+from .channels.platforms.lark import verified_packet as lark_packet
+from .channels.platforms.slack import slack_message
+from .channels.platforms.slack import verify as verify_slack
 from .channels.qq import qq_message, validation_response, verify_callback
 from .channels.qq_notifications import record_notification
 from .mcp_tools import RouteAuthorization, create_mcp
@@ -28,6 +33,7 @@ from .models import (
     AdministratorLogin,
     ConnectionInput,
     ConnectionSecrets,
+    ConversationKind,
     Identifier,
     LoginPoll,
     RouteInput,
@@ -181,6 +187,14 @@ def create_app(
                     "state": "available",
                     "description": "QR pairing, long polling, and private text replies.",
                 },
+                *[
+                    {"key": key, "name": name, "state": "available", "description": description}
+                    for key, name, description in (
+                        ("slack", "Slack", "Signed Events API callbacks and bot Web API."),
+                        ("lark", "Feishu / Lark", "Signed encrypted callbacks and tenant bot API."),
+                        ("discord", "Discord", "Resumable bot Gateway and REST API."),
+                    )
+                ],
                 {
                     "key": "a13n",
                     "name": "a13n",
@@ -241,7 +255,7 @@ def create_app(
         expected = row.copy()
         values = body.model_dump(exclude_none=True)
         for key, value in values.items():
-            row[key] = value.get_secret_value() if key != "qq_intents" else value
+            row[key] = value if key in {"qq_intents", "discord_intents"} else value.get_secret_value()
         try:
             ConnectionInput.model_validate({key: value for key, value in row.items() if key != "id"})
         except ValueError:
@@ -309,14 +323,23 @@ def create_app(
             if channel_id == "*":
                 continue
             channel = await store.connection(channel_id)
-            if not channel or channel["kind"] not in {"onebots", "qq", "weixin"}:
+            if not channel or channel["kind"] not in CHANNEL_KINDS:
                 raise HTTPException(422, "Choose existing channels for message reads")
         for source in route_sources(body.model_dump()):
             if source["channel_id"] == "*":
                 continue
             channel = await store.connection(source["channel_id"])
-            if not channel or channel["kind"] not in {"onebots", "qq", "weixin"}:
+            if not channel or channel["kind"] not in CHANNEL_KINDS:
                 raise HTTPException(422, "Choose a channel and an agent host")
+            if (
+                not body.sources
+                and channel["kind"] in {"qq", "onebots", "weixin"}
+                and body.conversation_kind == "private"
+                and body.conversation_id != "*"
+                and body.sender_policy == "allowlist"
+                and body.allowed_user_ids != [body.conversation_id]
+            ):
+                raise HTTPException(422, "A private route authorizes only its conversation user")
             if source["conversation_kind"] not in capabilities(channel)["conversations"]:
                 raise HTTPException(422, "This channel does not support that conversation type")
 
@@ -433,7 +456,7 @@ def create_app(
     @app.get("/api/v1/history")
     async def conversation_history(
         channel_id: Identifier,
-        conversation_kind: Literal["private", "group", "guild", "guild_dm"],
+        conversation_kind: ConversationKind,
         conversation_id: Identifier,
         limit: int = Query(default=100, ge=1, le=100),
         before_created_at: str | None = Query(default=None, max_length=64),
@@ -478,6 +501,58 @@ def create_app(
             )
         except ProjectionError:
             raise HTTPException(422, "Invalid OneBot text event") from None
+
+    @app.post("/api/v1/hooks/slack/{connection_id}")
+    async def receive_slack(connection_id: str, request: Request) -> dict:
+        connection = await channel_connection(connection_id, "slack")
+        raw = await event_bytes(request)
+        if not verify_slack(
+            connection,
+            raw,
+            request.headers.get("X-Slack-Request-Timestamp", ""),
+            request.headers.get("X-Slack-Signature", ""),
+        ):
+            raise HTTPException(401, "Invalid Slack callback signature")
+        try:
+            packet = event_object(raw)
+            if packet.get("type") == "url_verification":
+                challenge = packet.get("challenge")
+                if not isinstance(challenge, str) or len(challenge) > 4096:
+                    raise ValueError("Invalid challenge")
+                return {"challenge": challenge}
+            await ingest_event(
+                store, connection, raw, bridge.ingest, lambda value: (slack_message(value, connection), None)
+            )
+        except (ProjectionError, ValueError, KeyError, TypeError):
+            raise HTTPException(422, "Invalid Slack event") from None
+        return {"ok": True}
+
+    @app.post("/api/v1/hooks/lark/{connection_id}")
+    async def receive_lark(connection_id: str, request: Request) -> dict:
+        connection = await channel_connection(connection_id, "lark")
+        raw = await event_bytes(request)
+        try:
+            packet = lark_packet(
+                connection,
+                raw,
+                request.headers.get("X-Lark-Request-Timestamp", ""),
+                request.headers.get("X-Lark-Request-Nonce", ""),
+                request.headers.get("X-Lark-Signature", ""),
+            )
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(401, "Invalid Lark callback signature or encryption") from None
+        if packet.get("type") == "url_verification":
+            challenge = packet.get("challenge")
+            if not isinstance(challenge, str) or len(challenge) > 4096:
+                raise HTTPException(422, "Invalid Lark challenge")
+            return {"challenge": challenge}
+        try:
+            await ingest_event(
+                store, connection, packet, bridge.ingest, lambda value: (lark_message(value, connection), None)
+            )
+        except (ProjectionError, ValueError, KeyError, TypeError):
+            raise HTTPException(422, "Invalid Lark event") from None
+        return {"code": 0}
 
     @app.post("/api/v1/hooks/qq/{connection_id}")
     async def receive_qq(connection_id: str, request: Request) -> dict:

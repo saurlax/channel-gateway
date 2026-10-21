@@ -2,6 +2,10 @@
 
 ## MCP surface
 
+The implemented five-tool surface is defined here. The first Slack/Lark/Discord
+slice adds typed reactions, explicit threads and native history. Remaining
+expansion requirements live in [Multi-platform channel integration](07-channel-integration.md).
+
 CG exposes official MCP Streamable HTTP at `/mcp/`, including the trailing slash.
 It uses stateless HTTP requests with JSON responses. Access requires the
 [host or route capability](02-identity-and-access.md#host-capabilities), independent of
@@ -9,21 +13,85 @@ administrator and upstream credentials. The tool transport does not create or
 wake an Agent run; the [Host delivery workflow](03-routing-and-delivery.md) owns
 that operation.
 
-| Tool                                         | Behavior                                                                |
-| -------------------------------------------- | ----------------------------------------------------------------------- |
-| `list_conversations()`                       | List readable conversations and source reply destinations, without message content |
-| `read_conversation(limit=20, route_id=None)` | Read authorized incoming messages and confirmed bot sends |
-| `send_message(text, route_id=None)`          | Request a reply to that authorized conversation                         |
-| `read_image(source_message_id, image_index=0, route_id=None)` | Return an authorized received image as native MCP image content |
-| `send_image(image_base64, media_type, caption='', route_id=None)` | Queue an image reply |
-| `set_message_reaction(source_message_id, emoji_id, add=True, route_id=None)` | Queue an optional OneBot message reaction |
+The public inventory contains exactly five tools for every credential and channel.
+No legacy tool aliases are registered. Adding conversations or adapters changes
+resource data and operation catalogs, never creates per-conversation tools.
+
+| Tool | Behavior |
+| --- | --- |
+| `discover(resource='conversations', route_id=None)` | List authorized handles, or inspect a selected handle's capabilities and operation schemas |
+| `read(resource, arguments=None, route_id=None, source=None)` | Read `messages`, `image`, `attachment`, `events`, or a registered `native` resource |
+| `send_message(content, route_id=None, delivery=None, reply_to=None, stream=None, native=None)` | Queue text, media, cards, or a stream fragment |
+| `execute_action(action, arguments=None, route_id=None)` | Queue `reaction`, `recall`, `typing`, or a registered `native` mutation |
+| `get_operation(operation_id, route_id=None)` | Query this route's durable message, stream, or action status |
+
+`discover(resource='capabilities')` distinguishes adapter support, configured route
+authority, and upstream permissions that CG has not verified. It describes the
+conversation kind, content types, bounds, default delivery, stream constraints,
+and native message-option schema. `discover(resource='operations')` returns
+common read/action argument schemas and applicable namespaced native operations,
+including grants and platform restrictions. Discovery never grants authority.
+A read-only account-history handle can discover its own capabilities but does
+not gain native resource or mutation authority.
+
+`read.arguments` uses the schema for its selected resource. `messages` accepts
+`limit` and an optional `cursor`; received media uses `source_message_id` and
+`image_index` or `attachment_index`. Unknown arguments, including nested
+`route_id`, are rejected. Message reads default to `source='gateway'` and return
+`source`, `coverage` with `complete: false`, and `next_cursor`. Slack/Lark/Discord native history requires `source='platform'` and the exact
+source route's `history.read` grant. Other adapters reject native-history reads
+without falling back to gateway data. Native cursors and media provenance are
+account/authority bound and expire after 15 minutes. Native resource reads use `source='platform'` and a catalog
+operation. Other supported reads refer to gateway-collected handles/events.
+Cursors select records strictly before the oldest returned persistence time and
+ID; each page reapplies current access and remains chronological. A full page
+may return a cursor whose following page is empty. Invalid cursors fail.
+
+`send_message.content` is a typed array containing at most one text part and one
+media part. Text has `type: 'text'`, `text`, and optional `format` (`text` or
+`markdown`). Media has `type` (`image`, `audio`, `video`, `file`), `media_type`,
+`filename`, and exactly one of `data_base64` or `url`. QQ supports text plus one
+media item, with guild media restricted to images; OneBot supports inline images;
+Weixin supports text only. Slack/Lark/Discord accept inline image/audio/video/file
+parts under their [declared restrictions](../docs/slack-lark-discord.md).
+Unsupported combinations fail before queuing anything.
+QQ/OneBot media cannot currently combine with Markdown, a quoted reply, native options, or
+a stream. This does not claim future adapters support these same combinations.
+QQ native options are `native: {'qq': {'keyboard': ..., 'embed': ..., 'ark': ...}}`;
+unknown namespaces/options fail. Cards can use empty `content`. `reply_to` selects
+a locally known message under source authority. `stream` contains `index`,
+`stream_handle`, `finished`, and `input_mode`; it supports QQ C2C passive streams
+on MCP-output routes only, with text content and no other send options.
+
+Native reads/mutations accept `arguments: {'operation': 'qq.<catalog-name>',
+'parameters': {...}}`. The catalog validates every argument and route-bound
+scope; raw HTTP methods, paths, credentials, and arbitrary destinations are not
+accepted. Platform-specific schemas remain behind parameters rather than adding
+MCP tools. Reactions, recalls, and typing remain non-message actions with their
+own admission and execution checks. Reads have read-only annotations; the generic
+action tool conservatively has destructive annotations because some actions are
+destructive. Annotations never replace per-operation grants.
+
+All sends/actions return `operation_id` and `state`; existing `reply_id` or
+`action_id` fields identify the underlying unchanged ledger, and stream receipts
+also carry their handle. `get_operation` resolves either ledger by its persisted
+ID and checks exact route ownership. Message results expose only a confirmed
+platform message ID; action results retain their existing grant checks. Revoking
+send authority hides message results. Queued is not confirmed delivery, and
+`sent`/`succeeded` is platform acceptance, not a recipient read receipt. Unknown
+outcomes are never automatically repeated. Polling does not create Agent work.
+
+This is a breaking MCP interface change. Clients must refresh their tool inventory,
+enable the five entry points, and update prompts/calls. Existing route/Host keys,
+grants, conversation bindings, queues, and stored receipts require no rewrite.
+CG does not modify a13n connection tools or Agent instructions automatically.
 
 [Images and reactions](05-images-and-reactions.md) owns image bounds, private URL
 handling, platform format differences, and reaction target checks. These actions
 inherit existing read/reply scopes and durable reply states. Listing includes
 channel capabilities; optional OneBot extensions are not universal capabilities.
 
-A host key requires explicit `route_id` obtained from `list_conversations`.
+A host key requires explicit `route_id` obtained from `discover(resource='conversations')`.
 A specific route token may omit it for backward compatibility, or provide its own
 route ID. An all-conversation route token lists its enabled concrete children and
 requires an explicit child `route_id`; template routes are never send destinations.
@@ -54,7 +122,7 @@ current channel presence are checked on each invocation. QQ native resource and
 moderation operations require separate explicit grants under the
 [platform contract](06-qq-platform.md). Complete native history retrieval is not implemented.
 
-`read_conversation` clamps the combined requested limit to 1–100 and reads the source
+`read(resource='messages')` clamps the combined requested limit to 1–100 and reads the source
 account/conversation's stored messages: current-route deliveries plus
 unmatched/blocked observations, including messages received before route creation
 or while the route was disabled. Current sender authorization is applied before
@@ -69,7 +137,7 @@ Messages linked to an archived/deleted route remain excluded from replacement
 legacy source-scoped capabilities; explicit channel grants include that retained
 incoming history and administrator history retains them. The raw channel-event
 journal, image download URLs/bytes, and private protocol contexts are never MCP message
-history. Tools read only what CG received and sent, not complete native
+history. Gateway-source tools read only what CG received and sent, not complete native
 platform history. Each record has a stable `history_id`, persistence `created_at`,
 and `direction` (`incoming` or `outgoing`). The combined newest records are
 returned chronologically by creation time and ID. Only `sent` bot messages enter
@@ -85,7 +153,7 @@ account read grants include sent history from active and archived routes in that
 exact account/conversation, under the same present-account and read-grant checks
 as incoming history. Read-only conversation discovery includes outgoing-only
 history and still grants no sending authority.
-Image bytes are available separately through `read_image` under the same current
+Image bytes are available separately through `read(resource='image')` under the same current
 read policy, not embedded in every history response.
 
 `send_message` accepts up to 16000 characters (nonempty text or a supported guild
@@ -149,3 +217,22 @@ Rotating a token does not rewrite a frozen Host submission body. After rotation,
 the administrator must replace the bearer credential in the corresponding a13n
 connection. Route credentials must not be placed in `mcp_headers`, which are
 ordinary thread context rather than a secret credential mechanism.
+
+## Adapter extensions
+
+New adapters retain exactly five public tools. `discover` includes platform-read
+schemas, actual text/upload bounds, support versus unknown upstream availability,
+and unsupported features. `read(source='platform')` reads history or a cached
+history asset; received gateway assets continue to use the gateway source.
+`execute_action(action='reaction')` accepts a discriminated `emoji`: Unicode
+value, custom name/ID, or platform value/type. Legacy QQ/OneBot numeric arguments
+remain accepted; mixing typed and legacy fields is refused. Representations are
+validated by the selected adapter both at admission and execution.
+
+Slack/Lark upload operations record confirmed intermediate `effects` associated
+with the parent reply ledger. Lark upload keys are represented by hashed asset
+references. An upload is not a sent message. A final missing/uncertain message
+receipt remains unknown, with known partial effects retained for inspection;
+there are no automatic write retries. Existing queued work and old identifiers
+are preserved. Unsupported native options, search and streams for the new
+adapters fail before any publication is queued.

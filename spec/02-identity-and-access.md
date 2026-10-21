@@ -11,6 +11,9 @@ cross-channel identity linking, or general information-flow enforcement.
 | CG administrator session cookie | Manage connections, routes, message delivery, and reply records           |
 | OneBot access token             | Authenticate account API calls or a universal WebSocket session             |
 | QQ AppID / AppSecret            | Obtain API tokens and verify official callbacks                             |
+| Slack bot token / signing secret | Bot Web API and installed workspace event verification |
+| Lark app secret / verification token / encrypt key | Tenant bot API and signed encrypted callbacks |
+| Discord bot token | Bot REST and Gateway identity |
 | Weixin bot token                | Poll and send for one paired iLink bot account                              |
 | OneBot callback signing secret  | Verify incoming account event bytes                                         |
 | a13n workspace API key          | Submit input and read execution within the upstream principal's permissions |
@@ -94,7 +97,9 @@ as a destination; sender restrictions are checked separately.
 `sender_policy` is `allowlist` by default at the API boundary,
 requiring a nonempty `allowed_user_ids`, or explicitly `any`, requiring an empty
 list and accepting any verified platform sender within the source scope. A
-specific private allowlist route authorizes exactly its conversation user.
+specific legacy QQ/OneBot/Weixin private allowlist route authorizes exactly its
+conversation user. Slack/Lark/Discord private conversation IDs identify containers,
+so their sender allowlists use separate verified user IDs.
 An all-conversation or multi-source route can allow selected sender IDs or any
 sender. The console uses Sources as the complete trigger condition and submits `any`
 with an empty sender list when creating or saving a route. It exposes no separate
@@ -217,3 +222,21 @@ other private resources will never disclose those resources. CG does not change 
 Host resource permissions. Administrators must select an Agent whose remaining access
 is appropriate for the conversation. Prompts and upstream event filters do not
 replace these authorization boundaries.
+
+## Native history authority
+
+`history.read` separately authorizes native history on a concrete source route
+for Slack, Lark and Discord. `read_channel_ids` continues to grant only collected
+gateway records, including read-only conversation handles. Native history is
+never silently substituted for gateway history, or vice versa. Native search
+remains unsupported; `history.search` is reserved and grants no callable search.
+
+Native cursors and asset provenance bind the complete route authority and account
+credential snapshot, expire after 15 minutes, and are rechecked before results
+return. Caches are private, pruned by expiry and bounded per account. Native
+history does not enter the received-message archive, activate an Agent, or become
+visible through another route's account-read grant. Native results and sender
+filters stay within the exact route; arbitrary native destinations are refused.
+A cached native message can become an action target only while its history grant
+and provenance remain valid. Output grants are also rechecked when reading
+operation results and intermediate upload effects.

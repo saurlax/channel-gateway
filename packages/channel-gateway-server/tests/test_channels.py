@@ -911,3 +911,27 @@ def test_weixin_any_sender_full_access_replies_with_authorized_context(native):
     client.portal.call(app.state.bridge.send, reply)
     assert client.get("/api/v1/replies").json()[0]["state"] == "blocked"
     assert len([request for request in provider.requests if request.url.path.endswith("sendmessage")]) == 1
+
+
+def test_qq_runtime_discovered_self_id_does_not_change_configured_principal(native):
+    client, app, _, _ = native
+    channel = add(client, kind="qq", app_id="app1", app_secret=APP_SECRET)
+    add_route(native, channel)
+    stored = client.portal.call(app.state.store.connection, channel["id"])
+
+    async def scenario():
+        runtime = {**stored, "self_id": "discovered-bot-id"}
+        from channel_gateway_server.channels.ingress import ingest_event
+
+        value = await ingest_event(
+            app.state.store,
+            runtime,
+            qq_event(),
+            app.state.bridge.ingest,
+            lambda event: (qq_message(event, runtime), None),
+        )
+        assert value["state"] == "accepted"
+        assert len(await app.state.store.events()) == 1
+        assert await app.state.store.archive_channel_event({**runtime, "app_secret": "revoked"}, b"{}") is None
+
+    client.portal.call(scenario)

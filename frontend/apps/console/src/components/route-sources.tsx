@@ -121,17 +121,22 @@ function SourceTarget({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const channel = snapshot.connections.find((c) => c.id === source.channel_id);
-  const allowedKinds: ConversationKind[] =
-    channel?.kind === "weixin"
-      ? ["private"]
-      : channel && channel.kind !== "qq"
-        ? ["private", "group"]
-        : ["private", "group", "guild", "guild_dm"];
+  const allowedKinds: ConversationKind[] = (channel?.capabilities?.conversations as
+    ConversationKind[] | undefined) ?? [
+    "private",
+    "group",
+    "guild",
+    "guild_dm",
+    "channel",
+    "thread",
+  ];
   const labels = {
     private: ["All users", "User {id}"],
     group: ["All groups", "Group {id}"],
     guild: ["All guild channels", "Guild channel {id}"],
     guild_dm: ["All guild direct messages", "Guild direct message {id}"],
+    channel: ["All channel conversations", "Channel {id}"],
+    thread: ["All message threads", "Message thread {id}"],
   } as const;
   const label = (kind: ConversationKind, id: string) =>
     id === "*" ? t(labels[kind][0]) : t(labels[kind][1], { id });

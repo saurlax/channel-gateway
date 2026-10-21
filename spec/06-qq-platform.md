@@ -49,20 +49,13 @@ Duplicate interaction events do not deliberately issue another acknowledgement.
 
 ## MCP design
 
-Message creation, message actions, and platform resources are separate surfaces:
-
-| Tool | Purpose |
-| --- | --- |
-| `send_message` | Plain text or Markdown, optional keyboard and quoted-message context |
-| `send_image`, `send_media` | Image compatibility helper; audio/video/file/image replies |
-| `send_stream_message` | Ordered C2C streaming fragments with a private stream handle |
-| `set_message_reaction` | Add/remove a native guild reaction or optional OneBot reaction |
-| `recall_message` | Recall a known received or successfully sent message |
-| `list_channel_operations` | Discover resource operations, parameter schemas, required grants, and platform restrictions |
-| `query_channel_resource` | Execute an allowlisted read-only native operation |
-| `perform_channel_action` | Queue an allowlisted resource mutation |
-| `get_channel_action` | Read an authorized action receipt/result |
-| `read_attachment`, `read_channel_events` | Read authorized attachment bytes and sanitized notifications |
+QQ uses the fixed five-tool inventory in [Agent tools](04-agent-tools.md).
+`send_message` handles text, Markdown, media, cards, and ordered C2C stream
+fragments. `execute_action` handles reactions, recall, typing, and registered
+resource mutations. `read` handles received images/attachments, sanitized events,
+and registered resource queries. `discover` returns schemas and capabilities;
+`get_operation` queries either durable ledger. QQ message options use the `qq`
+native namespace, and resource operations use `qq.<catalog-name>`.
 
 No tool accepts an arbitrary HTTP method, API path, credential, or destination.
 Resource operations use a fixed catalog and validated argument allowlists. A
@@ -111,7 +104,7 @@ input's saved `msg_id` or `event_id`. A tool send does not suppress a later fina
 output; the Agent must avoid repeating already sent content. No expired passive
 reply is automatically promoted to proactive delivery.
 
-`send_message`, `send_image`, and `send_media` accept optional `delivery`.
+`send_message` accepts optional `delivery` for text and media.
 Omitting it selects proactive delivery on QQ routes with `message.proactive`;
 otherwise legacy MCP routes keep passive delivery. Explicit `passive`,
 `proactive`, and C2C-only `wakeup` override that default under current authority.

@@ -135,9 +135,8 @@ filesystem paths.
 Explicit `reply_to` must name a known authorized message. Slack replies stay in
 the explicitly bound thread; posting to another thread requires another route.
 Lark verifies thread-root ownership before sending. Discord disables mention
-parsing; Slack escapes mention syntax. Existing output replies remain automatic;
-`{"reply": false}` still suppresses a final response. A route with MCP replies
-can call send tools; an output route needs `message.proactive` to call them.
+parsing; Slack escapes mention syntax. All replies use `send_message`; final
+Agent output is never sent. Proactive sends require `message.proactive`.
 `wakeup` remains QQ C2C-specific.
 
 Reactions use `execute_action(action: "reaction")`, independently of message

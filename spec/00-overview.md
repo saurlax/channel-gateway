@@ -26,7 +26,7 @@ flowchart LR
     Host --> Agent[Agent run]
     Agent -->|Scoped reads and reply requests| MCP[MCP tools]
     MCP --> Workflow
-    Host -->|Completed output| Workflow
+    Host -->|Run status| Workflow
     Workflow -->|Authorized reply| Ingress
     Ingress --> Channel
 ```

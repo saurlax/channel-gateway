@@ -43,7 +43,7 @@ unimplemented.
 ## How it fits together
 
 The implemented bridge separates channel ingestion, host execution, and
-agent-facing communication tools. Authorized private and group replies are sent automatically.
+agent-facing communication tools. Only explicit Agent message-tool requests create channel messages. Agent final output is never sent.
 
 ```mermaid
 flowchart LR
@@ -108,7 +108,7 @@ channel/conversation rows, including all current and future channels, all conver
 all private chats, or all groups. All conversations includes every supported
 conversation type; all private chats excludes groups. Existing routes retain their
 source scope until edited. Sources govern Agent activation and reply destinations. Connections
-contains reply source and the supported a13n MCP connection binding, and selects
+contains the optional dedicated a13n MCP connection binding, and selects
 readable bot accounts independently, granting reads across their received
 conversations. Agent tools are configured in the Agent Host interface and
 CG always preserves that configuration. Select Agents from the Host list. Thread

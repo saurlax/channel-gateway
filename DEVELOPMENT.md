@@ -108,7 +108,7 @@ shows the new token once in its own dialog. Use a single-column form directly on
 the page without a Card wrapper, and provide a Back to routes link and Cancel action.
 Route configuration uses Basic information, Routing, and Connections tabs. Basic
 information contains name and enabled state. Routing shows Sources and Destination
-together; Connections contains reply source, the supported a13n MCP connection
+together; Connections contains the optional dedicated a13n MCP connection
 binding, and readable channels. Sources use repeatable rows with two input columns
 (channel, user/group) and a trailing delete button,
 including at narrow widths. A compact plus button adds a row. Channel choices
@@ -130,7 +130,7 @@ It is independent of conversation continuity and hidden for generic MCP clients.
 Fixed delivery offers existing unarchived Host threads and create-on-first-message.
 Use searchable shadcn comboboxes with paginated resource loading, loading/error
 states and retry. Host changes clear the selected Agent and fixed thread.
-Connections configures reply source and the supported a13n MCP connection binding,
+Connections configures the optional dedicated a13n MCP connection binding,
 and selects readable
 channel accounts using checkboxes. Agent tool permissions are configured in the
 Agent Host interface; CG never overrides its connection-tool list. Enabled state
@@ -165,8 +165,7 @@ or separate lines. Channel types use plain QQ and localized Weixin names, or
 OneBot followed by its transport, without parentheses. Dialogs need an accessible title and description, keyboard dismissal,
 focus restoration, inline errors, and a scrollable form on small screens. Preserve
 entered values on failure; close and clear form credentials after a successful
-save or cancellation. Replies are read-only delivery records. Authorized private and group replies
-are sent automatically; do not add per-reply administrator review or decisions. Token displays remain in memory and appear only once in their own dialog.
+save or cancellation. Replies are read-only delivery records. Explicit message-tool requests are sent automatically; do not add per-reply administrator review or decisions. Token displays remain in memory and appear only once in their own dialog.
 
 ## Console localization
 

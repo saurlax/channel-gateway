@@ -121,7 +121,6 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
                 **conversation,
                 "id": identifier,
                 "name": f"{conversation['conversation_kind']}:{conversation['conversation_id']}",
-                "reply_source": None,
                 "can_read": True,
                 "can_reply": False,
                 "channel_read": True,
@@ -144,7 +143,6 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
                             "channel_id",
                             "conversation_kind",
                             "conversation_id",
-                            "reply_source",
                             "can_read",
                             "can_reply",
                         )

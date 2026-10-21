@@ -296,18 +296,10 @@ def create_app(
         if host["kind"] == "mcp":
             if body.busy_policy != "steer":
                 raise HTTPException(422, "Execution input policies require an a13n Host")
-            if (
-                body.agent_id
-                or body.mcp_connection_id
-                or body.reply_source != "mcp"
-                or body.thread_policy != "conversation"
-                or body.fixed_thread_id
-            ):
+            if body.agent_id or body.mcp_connection_id or body.thread_policy != "conversation" or body.fixed_thread_id:
                 raise HTTPException(422, "MCP hosts require MCP replies without a13n bindings")
         elif not body.agent_id:
             raise HTTPException(422, "a13n routes require an agent ID")
-        elif body.reply_source == "mcp" and not body.mcp_connection_id:
-            raise HTTPException(422, "MCP replies require an a13n MCP connection ID")
 
     async def validate_route_resources(body: RouteInput, *, check_thread: bool = True) -> None:
         host = await store.connection(body.host_id)
@@ -401,7 +393,7 @@ def create_app(
             updates.pop("sources")
         if any(
             key in updates and updates[key] != row.get(key)
-            for key in ("reply_source", "mcp_connection_id", "host_id", "agent_id", "thread_policy", "fixed_thread_id")
+            for key in ("mcp_connection_id", "host_id", "agent_id", "thread_policy", "fixed_thread_id")
         ):
             active = await store.rows(
                 "SELECT e.id FROM events e JOIN routes r ON r.id=e.route_id WHERE (r.id=? OR json_extract(r.value,'$.parent_route_id')=?) AND e.state IN ('queued','submitted')",

@@ -128,10 +128,7 @@ def host_body(message: dict, route: dict) -> dict:
             {"index": index, **{key: item[key] for key in ("kind", "media_type", "filename")}}
             for index, item in enumerate(message.get("attachments", []))
         ],
-        "reply_source": route["reply_source"],
-        "default_delivery": ("proactive" if proactive else "passive")
-        if route["reply_source"] == "mcp" or proactive
-        else None,
+        "default_delivery": "proactive" if proactive else "passive",
         "can_send_proactively": proactive,
     }
     if not direct_media and (context["image_count"] or context["attachments"]):
@@ -236,14 +233,3 @@ class HttpAdapters:
 
 def resource_path(kind: str, identifier: str) -> str:
     return f"/{kind}/{quote(identifier, safe='')}"
-
-
-def output_text(output: object) -> str | None:
-    """Forward only an explicit text output, never arbitrary structured data."""
-    if isinstance(output, str):
-        return output if output.strip() else None
-    if isinstance(output, dict) and isinstance(output.get("text"), str):
-        if "reply" in output and output["reply"] is not True:
-            return None
-        return output["text"] if output["text"].strip() else None
-    return None

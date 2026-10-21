@@ -72,7 +72,7 @@ in a destination scope advances. Accepted inputs are polled independently;
 the busy-input policy below controls whether they delay new submissions.
 Independent sender or per-message threads do not block each other. Fixed delivery
 shares its scope across all sources, including other routes explicitly targeting
-the same Host/thread. Replies use the source owning the final-output decision.
+the same Host/thread. Tool calls explicitly select their authorized source route.
 Changes to thread policy or fixed destination are refused during queued/submitted
 work, and obsolete children are archived so the next input starts under the new
 thread policy. Per-event thread IDs identify the actual delivered thread rather
@@ -102,21 +102,12 @@ a lost acceptance receipt still blocks later submissions in that scope until
 resolved. Each cycle reserves capacity for polling accepted work as well as
 admitting new requests.
 
-Several steers may be assigned to one native run. Before handling its terminal
-output, CG resolves outstanding inbox assignments for that Host/thread, keeping
-entries assigned to a successor run separate. The latest CG input assigned to
-the completed run owns its one final-output decision and source reply context.
-Other inputs assigned to the same run complete without duplicate output replies.
-Shared fixed threads can span sources; their final reply targets that latest
-input's source, never every contributing conversation. If the owning source was
-revoked/deleted, CG suppresses the output instead of redirecting it to an older
-source. A refused/unincorporated entry does not acquire another run's output.
-
-The `(host_id, thread_id, run_id)` output decision is durable and is recorded
-atomically with completion of its inputs and any event-linked queued reply.
-Restart, repeated polling, silent output, and MCP-output routes cannot create a
-second automatic reply for the same run. Channel delivery retains the existing
-uncertain-outcome policy; this is not exactly-once delivery by the channel.
+Several steers may be assigned to one native run. Each input tracks its exact inbox
+entry and assigned run independently. A completed run completes its accepted inputs;
+CG never reads, validates, serializes, forwards or retries the run's final output.
+An Agent sends channel messages only through the authorized MCP message tools,
+using an explicit concrete `route_id`. No tool call means no channel message.
+A final text, empty value, object or legacy reply envelope has no delivery effect.
 
 Administrator-only `GET /api/v1/connections/{id}/host-resources/{resource}` supports
 `agents` and `threads` for a configured a13n Host. It uses that Host's server-side
@@ -156,11 +147,11 @@ an enabled `*` route, without queuing old inputs or creating upstream threads.
 Existing exact routes take priority even when disabled or assigned to another
 Host; history discovery cannot override that assignment.
 
-Multi-source or wildcard a13n routes use final-output replies and cannot bind a single
-dedicated a13n MCP connection across their children. Generic MCP routes support
-this scope through concrete route IDs. Existing exact routes retain their
-bindings and legacy sender allowlists without schema rewrites. Tool selection
-always follows the Agent configuration.
+Multi-source and wildcard a13n routes use the shared Host MCP connection and
+explicit concrete route IDs. A dedicated route MCP binding remains optional and
+is supported only for one concrete source. Existing exact routes retain their
+bindings and legacy sender allowlists. Tool selection always follows the Agent
+configuration; a dedicated binding is never required for Host-key tool sends.
 
 Verified supported messages without a route appear in management as `unmatched`,
 with nullable `route_id`. Denied ingress appears as `blocked`, also without a
@@ -223,32 +214,28 @@ receipt; it preserves a frozen submission request. Replacement a13n keys must
 retain the same upstream principal/workspace for the upstream idempotency scope
 to remain valid.
 
-For `reply_source: output`, a completed run creates at most one event-linked
-reply under the shared-run attribution rules above. Only a nonempty string or an object with a nonempty `text` string is
-supported, with at most 16000 characters. Unsupported/oversized output completes
-the event with a diagnostic and no reply. Arbitrary structured data is not
-serialized into a channel message. For `reply_source: mcp`, run completion does
-not create an additional output reply; [MCP tools](04-agent-tools.md) own requests.
-QQ `message.proactive` permits message tools alongside final-output passive
-replies, under the [QQ delivery contract](06-qq-platform.md#passive-replies-and-proactive-tools).
-These are independent requests: a tool send never silently suppresses or
-promotes final text. Agent instructions must avoid repeating tool-sent content.
+## Tool-only channel output
 
-An output object can explicitly select delivery with boolean `reply`. With
-`reply: true`, its nonempty `text` is forwarded under the same bounds. With
-`reply: false`, the event completes successfully with no reply and no diagnostic,
-even if the object also contains text. A non-boolean `reply` is invalid and sends
-nothing. Legacy strings and text-only objects remain supported. Group Agents may
-use this envelope to observe full-message input while remaining silent unless
-mentioned or clearly addressed with a request. Collection, Host execution, and
-reply selection remain separate; this choice does not change source authority.
-Verified input context includes a nullable `bot_mentioned` hint from channel
-events, independent of untrusted message text. Mention hints never grant access.
+Only `send_message` creates outgoing channel messages. Run completion never
+creates a reply, parses `reply`/`text`, checks final-text size or retries output
+validation. Agents may keep ordinary text final results for private execution
+records; these never enter channel history. Quiet participation means completing
+without a message-tool invocation, not producing a special envelope or an empty
+model response. A model/execution failure is still a failed input; CG never treats
+partial text as a successful message.
+
+The removed `reply_source` setting is rejected on create/update and removed from
+stored route configuration at startup. Already queued event-linked automatic
+replies are blocked with `Automatic output delivery retired`; tool-created queued
+messages keep their delivery state. Historical sent/failed/unknown records remain
+readable. Existing OneBot MCP reaction authority is converted into its explicit
+`message.react.onebot` grant, which applies only to OneBot; other routes gain no
+reaction authority.
 
 ## Generic MCP delivery
 
 A `mcp` Host has no API endpoint or upstream key. Its routes require
-`reply_source: mcp` and reject a13n agent/MCP-connection bindings. The worker
+no a13n agent/MCP-connection bindings. The worker
 reauthorizes each queued event and marks it `available` without external I/O,
 thread creation, or run tracking. Subsequent queued events can advance once the
 oldest event is available. Reads do not acknowledge, consume, or complete events;
@@ -270,7 +257,7 @@ The gateway cannot infer that a client has finished processing a message.
 | `failed`      | QQ explicitly rejected the operation, including an HTTP rate rejection |
 | `unknown`     | Delivery may have happened, but CG has no confirmed successful outcome |
 
-Both completed Agent output and MCP reply requests create queued replies for
+Explicit MCP message requests create queued replies for
 private, group, guild-channel, and guild-DM conversations. There is no approve/reject API or manual review
 step. Agent tool configuration is managed in the Host.
 The worker rechecks route/source access, claims a queued reply, and issues one

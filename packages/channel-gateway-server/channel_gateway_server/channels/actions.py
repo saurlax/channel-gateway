@@ -23,13 +23,13 @@ def proactive_authority(route: dict, connection: dict) -> bool:
 
 
 def tool_message_allowed(route: dict, connection: dict) -> bool:
-    return route["reply_source"] == "mcp" or proactive_authority(route, connection)
+    return bool(route["enabled"] and not route["id"].startswith("read_") and route["channel_id"] == connection["id"])
 
 
 def message_delivery(route: dict, connection: dict, delivery: MessageDelivery | None = None) -> MessageDelivery:
     """Freeze tool delivery at admission; existing ungranted MCP routes stay passive."""
     if not tool_message_allowed(route, connection):
-        raise SendBlocked("This route forwards final output; QQ message tools require message.proactive")
+        raise SendBlocked("This route does not authorize message sending")
     selected = delivery or ("proactive" if proactive_authority(route, connection) else "passive")
     if selected != "passive":
         if connection["kind"] not in {"qq", *PLATFORMS}:
@@ -75,8 +75,8 @@ async def known_message(store, route: dict, message_id: str) -> tuple[str, dict 
 def reaction_authority(route: dict, connection_kind: str) -> str:
     if "message.react" in route.get("action_grants", []):
         return "message.react"
-    if route["reply_source"] == "mcp" and connection_kind == "onebots":
-        return "legacy.react"
+    if connection_kind == "onebots" and "message.react.onebot" in route.get("action_grants", []):
+        return "message.react.onebot"
     raise SendBlocked("This route does not authorize message.react")
 
 
@@ -223,8 +223,8 @@ async def execute_action(manager, action: dict) -> None:
     args = json.loads(action["arguments"])
     try:
         grant = action["required_grant"]
-        if grant in {"message.send", "legacy.react"}:
-            if route["reply_source"] != "mcp":
+        if grant == "message.send":
+            if not tool_message_allowed(route, connection):
                 raise SendBlocked("This route no longer authorizes this action")
         else:
             require_grant(route, grant)

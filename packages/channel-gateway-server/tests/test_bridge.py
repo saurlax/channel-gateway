@@ -128,7 +128,6 @@ def route(gateway, *, kind="group", source="output", conversation="123"):
             "conversation_id": conversation,
             "allowed_user_ids": [conversation] if kind == "private" else ["7"],
             "agent_id": "agt_example",
-            "reply_source": source,
             "mcp_connection_id": "conn_scope_" + kind + conversation if source == "mcp" else None,
         },
     )
@@ -183,10 +182,11 @@ def test_verified_events_enforce_actor_and_account_and_deduplicate(gateway):
     assert '"sender_id": "7"' in body["payload"]["content"][0]["text"]
 
 
-def test_group_reply_is_automatic_and_does_not_repeat(gateway):
+def test_group_tool_reply_is_sent_once(gateway):
     client, _, upstream, _, _ = gateway
     configured = route(gateway)
     webhook(gateway)
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     replies = client.get("/api/v1/replies").json()
@@ -239,11 +239,12 @@ def test_lost_submission_receipt_retries_frozen_path_body_and_key(gateway):
     assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"]
 
 
-def test_private_auto_reply_and_unknown_send_are_not_retried(gateway):
+def test_private_tool_reply_and_unknown_send_are_not_retried(gateway):
     client, _, upstream, *_ = gateway
     route(gateway, kind="private", conversation="7")
     upstream.fail_send = True
     webhook(gateway, kind="private")
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     tick(gateway)
@@ -370,6 +371,7 @@ def test_conversation_history_merges_received_and_sent_messages_with_pagination(
     webhook(gateway, kind=kind, text="Before route creation")
     route(gateway, kind=kind, conversation=conversation)
     webhook(gateway, kind=kind, message_id=2, text="Routed input")
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     webhook(gateway, kind=kind, message_id=3, text="Next input")
@@ -427,6 +429,23 @@ def rpc(client, token, method, params):
         },
         json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
     )
+
+
+def send_tool(gateway, text="Hello from the agent"):
+    """A simulated Agent explicitly calls the public MCP send tool."""
+    client = gateway[0]
+    event = next(row for row in client.get("/api/v1/events").json() if row.get("route_id"))
+    result = rpc(
+        client,
+        gateway[-1]["mcp_key"],
+        "tools/call",
+        {
+            "name": "send_message",
+            "arguments": {"route_id": event["route_id"], "content": [{"type": "text", "text": text}]},
+        },
+    ).json()["result"]
+    assert not result.get("isError"), result
+    return json.loads(result["content"][0]["text"])
 
 
 def test_mcp_credentials_scope_history_and_actions_and_rotate(gateway):
@@ -578,26 +597,28 @@ def test_malformed_reply_decision_never_sends_its_text(gateway, reply):
     tick(gateway)
     tick(gateway)
     assert client.get("/api/v1/replies").json() == []
-    assert client.get("/api/v1/events").json()[0]["error"]
+    assert client.get("/api/v1/events").json()[0]["error"] is None
 
 
-def test_explicit_reply_sends_only_selected_text_once(gateway):
+def test_final_reply_envelope_cannot_send_a_message(gateway):
     client, _, upstream, *_ = gateway
-    upstream.output = {"reply": True, "text": "Selected public answer", "private_note": "not public"}
+    upstream.output = {"reply": True, "text": "Never publish final output"}
     route(gateway)
     webhook(gateway)
     tick(gateway)
     tick(gateway)
     tick(gateway)
-    replies = client.get("/api/v1/replies").json()
-    assert len(replies) == 1 and replies[0]["text"] == "Selected public answer" and replies[0]["state"] == "sent"
-    assert len([r for r in upstream.requests if r.url.path.endswith("send_msg")]) == 1
+    assert client.get("/api/v1/replies").json() == []
+    event = client.get("/api/v1/events").json()[0]
+    assert event["state"] == "completed" and event["error"] is None
+    assert not any(r.url.path.endswith("send_msg") for r in upstream.requests)
 
 
 def test_agent_history_merges_confirmed_bot_sends_and_incoming_with_combined_limit(gateway):
     client, app, upstream, *_ = gateway
     configured = route(gateway)
     webhook(gateway, text="Original request")
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     webhook(gateway, message_id=2, text="Follow-up")
@@ -656,13 +677,17 @@ def test_bot_history_rechecks_sender_revocation_and_explicit_read_scope(gateway)
     client, _, _, channel, _ = gateway
     configured = route(gateway)
     webhook(gateway, text="Sender seven request")
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     assert (
         len(mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})["messages"]) == 2
     )
     assert client.patch(f"/api/v1/routes/{configured['id']}", json={"allowed_user_ids": ["8"]}).status_code == 200
-    assert mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})["messages"] == []
+    assert [
+        m["text"]
+        for m in mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})["messages"]
+    ] == ["Hello from the agent"]
     assert (
         client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": [channel["id"]]}).status_code
         == 200
@@ -705,6 +730,7 @@ def test_sent_replies_and_thread_binding_survive_restart_without_resending(gatew
     client, _, upstream, *_ = gateway
     route(gateway)
     webhook(gateway)
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     rows = client.get("/api/v1/replies").json()
@@ -728,7 +754,6 @@ def test_access_changes_reauthorize_pending_events_and_mcp_history(gateway):
         f"/api/v1/routes/{configured['id']}",
         json={
             "allowed_user_ids": ["8"],
-            "reply_source": configured["reply_source"],
             "mcp_connection_id": configured["mcp_connection_id"],
         },
     )
@@ -797,6 +822,7 @@ def test_channel_deletion_preserves_history_and_blocks_pending_work(gateway):
     client, app, upstream, channel, host = gateway
     configured = route(gateway)
     webhook(gateway)
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     historical = client.get("/api/v1/replies").json()[0]
@@ -884,6 +910,7 @@ def test_route_deletion_releases_binding_and_retains_conversation_history(gatewa
     client, app, upstream, channel, _ = gateway
     configured = catchall(gateway, kind="group") if all_conversations else route(gateway)
     first = webhook(gateway).json()["event_id"]
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     webhook(gateway, message_id=2)
@@ -953,7 +980,6 @@ def mcp_host_route(gateway, *, conversation="456"):
             "conversation_kind": "group",
             "conversation_id": conversation,
             "allowed_user_ids": ["7"],
-            "reply_source": "mcp",
         },
     )
     assert response.status_code == 201, response.text
@@ -1082,7 +1108,6 @@ def test_mcp_hosts_reject_upstream_credentials_and_a13n_bindings(gateway):
         "conversation_kind": "private",
         "conversation_id": "7",
         "allowed_user_ids": ["7"],
-        "reply_source": "mcp",
     }
     for field in ({"agent_id": "ap_wrong"}, {"mcp_connection_id": "conn_wrong"}, {"reply_source": "output"}):
         assert client.post("/api/v1/routes", json={**payload, **field}).status_code == 422
@@ -1106,7 +1131,6 @@ def catchall(gateway, *, kind="private", host=None):
             "conversation_id": "*",
             "sender_policy": "any",
             "agent_id": None if host else "agt_example",
-            "reply_source": "mcp" if host else "output",
         },
     )
     assert response.status_code == 201, response.text
@@ -1210,10 +1234,11 @@ def test_parent_policy_revokes_child_ingress_pending_work_and_mcp_history(gatewa
     assert webhook(gateway, kind="private", user=7, message_id=3).json()["state"] == "blocked"
 
 
-def test_group_route_retains_agent_tools_and_automatically_replies(gateway):
+def test_group_route_retains_agent_tools_and_sends_explicit_tool_reply(gateway):
     client, _, upstream, *_ = gateway
     catchall(gateway, kind="group")
     webhook(gateway, user=8)
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     assert client.get("/api/v1/replies").json()[0]["state"] == "sent"
@@ -1232,6 +1257,7 @@ def test_legacy_restricted_setting_does_not_override_agent_tools(gateway):
     assert "access_mode" not in client.get("/api/v1/routes").json()[0]
     assert client.patch(f"/api/v1/routes/{parent['id']}", json={"name": "Updated"}).status_code == 200
     webhook(gateway, user=8)
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     assert "options" not in json.loads(upstream.requests[0].content)
@@ -1429,6 +1455,7 @@ def test_legacy_exact_route_expands_without_losing_its_thread_or_sender_policy(g
     client, _, _, channel, _ = gateway
     configured = route(gateway)
     webhook(gateway)
+    send_tool(gateway)
     tick(gateway)
     tick(gateway)
     response = client.patch(
@@ -1454,9 +1481,7 @@ def test_destination_change_starts_new_threads_and_revokes_old_host(gateway):
     tick(gateway)
     old = children(client, configured)[0]
     other = client.post("/api/v1/connections", json={"name": "New host", "kind": "mcp"}).json()
-    changed = client.patch(
-        f"/api/v1/routes/{configured['id']}", json={"host_id": other["id"], "agent_id": None, "reply_source": "mcp"}
-    )
+    changed = client.patch(f"/api/v1/routes/{configured['id']}", json={"host_id": other["id"], "agent_id": None})
     assert changed.status_code == 200, changed.text
     assert not children(client, configured)
     listed = rpc(
@@ -1479,7 +1504,6 @@ def test_mcp_rule_materializes_observed_sources_and_enforces_scope(gateway):
         [source(channel["id"], conversation="7"), source(channel["id"], "group", "123")],
         host_id=host["id"],
         agent_id=None,
-        reply_source="mcp",
     )
     listed = rpc(
         client,
@@ -1592,9 +1616,7 @@ def test_legacy_catchall_mcp_listing_respects_new_source_specificity(gateway):
 
 def test_single_source_dedicated_mcp_binding_is_inherited_and_unique(gateway):
     client, _, _, channel, _ = gateway
-    configured = create_rule(
-        gateway, [source(channel["id"], "group", "123")], reply_source="mcp", mcp_connection_id="conn_scope"
-    )
+    configured = create_rule(gateway, [source(channel["id"], "group", "123")], mcp_connection_id="conn_scope")
     webhook(gateway)
     tick(gateway)
     child = children(client, configured)[0]
@@ -1614,7 +1636,6 @@ def test_single_source_dedicated_mcp_binding_is_inherited_and_unique(gateway):
             "host_id": configured["host_id"],
             "agent_id": "agt_example",
             "sender_policy": "any",
-            "reply_source": "mcp",
             "mcp_connection_id": "conn_scope",
         },
     )
@@ -1651,7 +1672,6 @@ def test_channel_reads_do_not_expand_agent_triggers_or_reply_authority(gateway):
         gateway,
         [source(channel["id"], conversation="7")],
         read_channel_ids=[channel["id"]],
-        reply_source="mcp",
         mcp_connection_id="conn_scope",
     )
     assert webhook(gateway, kind="private", text="Trigger input").json()["state"] == "accepted"

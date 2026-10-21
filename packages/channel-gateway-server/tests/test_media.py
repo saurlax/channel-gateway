@@ -117,10 +117,10 @@ def configure(service, kind="onebots", *, read_channel_ids=None, conversation="1
             "conversation_kind": "group",
             "conversation_id": conversation,
             "host_id": host["id"],
-            "reply_source": "mcp",
-            **({"agent_id": "agt_test", "reply_source": "output"} if host["kind"] == "a13n" else {}),
+            **({"agent_id": "agt_test"} if host["kind"] == "a13n" else {}),
             "allowed_user_ids": ["7"],
             "read_channel_ids": read_channel_ids,
+            "action_grants": ["message.react"] if kind == "onebots" else [],
         },
     )
     assert response.status_code == 201, response.text
@@ -646,12 +646,12 @@ def test_onebot_socket_images_and_reactions_use_echo_receipts(service, action):
         "/api/v1/routes",
         json={
             "name": "Socket route",
+            "action_grants": ["message.react"],
             "channel_id": channel["id"],
             "host_id": host["id"],
             "conversation_kind": "group",
             "conversation_id": "123",
             "allowed_user_ids": ["7"],
-            "reply_source": "mcp",
         },
     ).json()
     sent = []

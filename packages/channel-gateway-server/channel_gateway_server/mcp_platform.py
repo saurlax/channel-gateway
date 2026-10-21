@@ -8,7 +8,7 @@ from urllib.parse import quote
 from mcp.types import AudioContent, BlobResourceContents, EmbeddedResource, TextResourceContents
 from pydantic import AnyUrl, Field
 
-from .channels.actions import known_message, message_delivery, reaction_authority
+from .channels.actions import known_message, message_delivery, reaction_authority, tool_message_allowed
 from .channels.emoji import Emoji, validate_platform_emoji
 from .channels.platforms.common import PLATFORMS
 from .channels.qq_operations import OPERATIONS, applicable, check_json, execute_operation, require_grant, safe_result
@@ -26,8 +26,6 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
 
     async def writable_route(route_id):
         route = await authorized_route(route_id)
-        if route["reply_source"] != "mcp":
-            raise ValueError("This route forwards final run output; return reply text from the run instead")
         connection = await store.connection(route["channel_id"])
         if not connection:
             raise ValueError("Channel is unavailable")
@@ -285,7 +283,8 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
         if not row or row["route_id"] != route["id"]:
             raise ValueError("Choose an action belonging to this authorized route")
         allowed = row["required_grant"] in route.get("action_grants", []) or (
-            row["required_grant"] in {"legacy.react", "message.send"} and route["reply_source"] == "mcp"
+            row["required_grant"] == "message.send"
+            and tool_message_allowed(route, await store.connection(route["channel_id"]))
         )
         return {
             "action_id": row["id"],

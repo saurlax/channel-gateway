@@ -103,7 +103,7 @@ def emit(busy, index, **kwargs):
     return result.json()["event_id"]
 
 
-def test_default_steer_submits_while_running_and_emits_one_final_reply(busy):
+def test_default_steer_submits_while_running_and_completes_without_replies(busy):
     gateway, host, configured = busy
     assert configured["busy_policy"] == "steer"
     first = emit(busy, 1)
@@ -118,15 +118,14 @@ def test_default_steer_submits_while_running_and_emits_one_final_reply(busy):
     host.complete("busy_run_1")
     tick(gateway)
     replies = gateway[0].get("/api/v1/replies").json()
-    assert len(replies) == 1 and replies[0]["event_id"] == second
-    assert replies[0]["state"] == "sent"
+    assert replies == []
     assert {row["state"] for row in gateway[0].get("/api/v1/events").json() if row["id"] in {first, second}} == {
         "completed"
     }
     gateway[0].portal.call(gateway[1].state.store.close)
     gateway[0].portal.call(gateway[1].state.store.open)
     tick(gateway)
-    assert len(gateway[0].get("/api/v1/replies").json()) == 1
+    assert gateway[0].get("/api/v1/replies").json() == []
 
 
 def test_queue_waits_for_completion_then_delivers_in_order(busy):
@@ -153,7 +152,11 @@ def test_queue_waits_for_completion_then_delivers_in_order(busy):
     assert len(host.posts) == 3 and host.posts[-1].headers["Idempotency-Key"] == third
     host.complete("busy_run_3")
     tick(gateway)
-    assert {reply["event_id"] for reply in gateway[0].get("/api/v1/replies").json()} == {first, second, third}
+    assert {e["id"] for e in gateway[0].get("/api/v1/events").json() if e["state"] == "completed"} == {
+        first,
+        second,
+        third,
+    }
 
 
 def test_unincorporated_steer_is_not_misattributed_to_earlier_run(busy):
@@ -164,13 +167,11 @@ def test_unincorporated_steer_is_not_misattributed_to_earlier_run(busy):
     tick(gateway)
     host.complete("busy_run_1", "First answer")  # Pending entry starts a distinct run.
     tick(gateway)
-    assert gateway[0].get("/api/v1/replies").json()[0]["event_id"] == first
+    states = {e["id"]: e["state"] for e in gateway[0].get("/api/v1/events").json()}
+    assert states[first] == "completed" and states[second] == "submitted"
     host.complete("busy_run_2", "Second answer")
     tick(gateway)
-    assert [(row["event_id"], row["text"]) for row in gateway[0].get("/api/v1/replies").json()] == [
-        (second, "Second answer"),
-        (first, "First answer"),
-    ]
+    assert {e["state"] for e in gateway[0].get("/api/v1/events").json()} == {"completed"}
 
 
 def test_lost_receipt_blocks_later_submissions_and_retries_exact_frozen_policy(busy):
@@ -205,7 +206,7 @@ def test_busy_policy_changes_apply_to_unfrozen_input_without_resetting_thread(bu
     assert json.loads(host.posts[-1].content)["delivery"] == "steer"
 
 
-def test_assignment_read_failure_defers_final_output_without_duplicates(busy):
+def test_assignment_read_failure_does_not_publish_final_output(busy):
     gateway, host, _ = busy
     emit(busy, 1)
     tick(gateway)
@@ -218,7 +219,7 @@ def test_assignment_read_failure_defers_final_output_without_duplicates(busy):
     assert gateway[0].get("/api/v1/replies").json() == []
     host.fail_entry_read = False
     tick(gateway)
-    assert len(gateway[0].get("/api/v1/replies").json()) == 1
+    assert gateway[0].get("/api/v1/replies").json() == []
 
 
 @pytest.mark.parametrize("invalid", ["interrupt", "next_run", "unknown", None])
@@ -267,11 +268,9 @@ def test_shared_thread_obeys_policy_across_source_conversations(busy, policy):
         host.complete("busy_run_2")
         tick(gateway)
     replies = gateway[0].get("/api/v1/replies").json()
-    assert len(replies) == (1 if policy == "steer" else 2)
-    assert replies[0]["event_id"] == second
-    assert replies[0]["address"]["conversation_id"] == "group:124"
-    if policy == "queue":
-        assert replies[1]["event_id"] == first
+    assert replies == []
+    events = {e["id"]: e for e in gateway[0].get("/api/v1/events").json()}
+    assert events[first]["state"] == events[second]["state"] == "completed"
 
 
 @pytest.mark.parametrize("latest_state", ["blocked", "failed"])
@@ -372,14 +371,12 @@ def test_shared_run_silent_or_unsupported_output_is_decided_once(busy, output):
     tick(gateway)
     assert gateway[0].get("/api/v1/replies").json() == []
     assert {event["state"] for event in gateway[0].get("/api/v1/events").json()} == {"completed"}
-    rows = gateway[0].portal.call(gateway[1].state.store.rows, "SELECT * FROM host_run_outputs")
-    assert len(rows) == 1
 
 
 def test_generic_mcp_host_does_not_claim_execution_control(busy):
     gateway, _, configured = busy
     generic = gateway[0].post("/api/v1/connections", json={"name": "MCP", "kind": "mcp"}).json()
-    body = {"host_id": generic["id"], "agent_id": None, "reply_source": "mcp", "busy_policy": "queue"}
+    body = {"host_id": generic["id"], "agent_id": None, "busy_policy": "queue"}
     response = gateway[0].patch(f"/api/v1/routes/{configured['id']}", json=body)
     assert response.status_code == 422
 
@@ -394,8 +391,9 @@ def test_rejected_steer_does_not_take_the_original_inputs_reply(busy):
     host.complete("busy_run_1")
     tick(gateway)
     replies = gateway[0].get("/api/v1/replies").json()
-    assert len(replies) == 1 and replies[0]["event_id"] == first
+    assert replies == []
     events = {row["id"]: row for row in gateway[0].get("/api/v1/events").json()}
+    assert events[first]["state"] == "completed"
     assert events[second]["state"] == "failed"
 
 
@@ -411,4 +409,4 @@ def test_many_steers_are_submitted_fifo_without_waiting_for_run_end(busy):
     host.complete("busy_run_1")
     tick(gateway)
     replies = gateway[0].get("/api/v1/replies").json()
-    assert len(replies) == 1 and replies[0]["event_id"] == ids[-1]
+    assert replies == []

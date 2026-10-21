@@ -59,8 +59,8 @@ contracts in [Identity and access](02-identity-and-access.md) and
 
 There are three independent decisions: what the platform delivered, whether a
 route starts Agent work, and whether the Agent publishes a response. Receiving
-all messages never implies replying to all messages. The existing final-output
-`reply: false` envelope remains valid. An adapter must not invent an @mention
+all messages never implies replying to all messages. An Agent stays silent by
+completing without a message-tool call; final output is never published. An adapter must not invent an @mention
 from text matching, or turn a reaction event into an addressed user request.
 
 ## Adapter responsibilities

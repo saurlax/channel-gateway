@@ -17,6 +17,8 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from websockets.asyncio.server import serve
 
+from .test_bridge import send_tool
+
 ADMIN = "test-native-administrator-password-012345"
 APP_SECRET = "test-qq-app-secret"
 
@@ -286,6 +288,7 @@ def test_qq_signed_ingress_durable_host_delivery_and_reply(native, group):
     assert len(events) == 2
     assert len([event for event in events if event["route_id"] == configured["id"]]) == 1
     assert events[0]["message"]["address"]["channel"] == "qq"
+    send_tool(native, "Agent reply")
     client.portal.call(app.state.bridge.tick)
     host_request = next(r for r in provider.requests if r.url.path.endswith("/threads"))
     assert '"channel": "qq"' in json.loads(host_request.content)["payload"]["content"][0]["text"]
@@ -312,6 +315,7 @@ def test_qq_callback_challenge_and_unknown_send(native):
     add_route(native, channel)
     qq_hook(native, channel, qq_event())
     provider.fail_send = True
+    send_tool(native, "Agent reply")
     client.portal.call(app.state.bridge.tick)
     client.portal.call(app.state.bridge.tick)
     assert client.get("/api/v1/replies").json()[0]["state"] == "unknown"
@@ -331,6 +335,7 @@ def test_qq_long_message_ids_are_preserved_through_ingress_and_passive_replies(n
         assert qq_hook(native, channel, event).status_code == 200
     stored = client.get("/api/v1/events").json()
     assert len(stored) == 1 and stored[0]["message"]["source_message_id"] == incoming_id
+    send_tool(native, "Agent reply")
     client.portal.call(app.state.bridge.tick)
     client.portal.call(app.state.bridge.tick)
     outgoing = [r for r in provider.requests if r.url.path.endswith("/messages")]
@@ -401,6 +406,7 @@ def test_weixin_context_is_private_and_account_scoped(native, receipt):
         == "accepted"
     )
     assert "private-context" not in client.get("/api/v1/events").text
+    send_tool(native, "Agent reply")
     client.portal.call(app.state.bridge.tick)
     client.portal.call(app.state.bridge.tick)
     outgoing = next(r for r in provider.requests if r.url.path.endswith("sendmessage"))
@@ -774,6 +780,7 @@ def test_weixin_unconfirmed_send_does_not_repeat(native, failure):
         provider.fail_send = True
     else:
         provider.weixin_send_receipt = failure
+    send_tool(native, "Agent reply")
     client.portal.call(app.state.bridge.tick)
     client.portal.call(app.state.bridge.tick)
     assert client.get("/api/v1/replies").json()[0]["state"] == "unknown"
@@ -897,6 +904,7 @@ def test_weixin_any_sender_full_access_replies_with_authorized_context(native):
         client.portal.call(app.state.bridge.ingest, stored, message, {"context_token": "private-context"})["state"]
         == "accepted"
     )
+    send_tool(native, "Agent reply")
     client.portal.call(app.state.bridge.tick)
     client.portal.call(app.state.bridge.tick)
     outgoing = next(request for request in provider.requests if request.url.path.endswith("sendmessage"))

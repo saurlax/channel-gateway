@@ -54,8 +54,8 @@ supported image formats and optional protocol extensions.
   image with an optional caption of at most 16000 characters. Input is strict
   base64 with a matching image signature, at most 4 MiB decoded for OneBot and 16 MiB for QQ. QQ accepts PNG
   and JPEG; OneBot also accepts GIF and WebP. It requires the same current
-  destination authority as `send_message`: MCP replies, or an explicitly granted
-  QQ proactive tool send alongside final-output replies. Optional `delivery`
+  destination authority as `send_message`. Passive sends use authorized native
+  context; proactive sends additionally require `message.proactive`. Optional `delivery`
   follows the [QQ delivery contract](06-qq-platform.md#passive-replies-and-proactive-tools).
 - `execute_action(action='reaction', arguments={source_message_id, emoji_id, add}, route_id=None)`
   queues a reaction to a locally received, currently source-authorized message

@@ -55,8 +55,7 @@ def test_thread_scope_reuse_and_isolation(gateway, policy):
     if policy == "sender":
         assert threads[0] != threads[2] != threads[3]
     assert [r.url.path for r in submissions(gateway)].count("/api/v1/threads") == len(set(threads))
-    reply = gateway[0].get("/api/v1/replies").json()[0]
-    assert reply["address"]["conversation_id"] == "group:124"
+    assert gateway[0].get("/api/v1/replies").json() == []
 
 
 def test_fixed_existing_thread_is_checked_and_receives_every_input(gateway):
@@ -126,7 +125,7 @@ def test_thread_policy_changes_wait_for_active_work_then_start_fresh(gateway):
     assert deliver(gateway, 2)["thread_id"] != first_thread
 
 
-def test_message_history_keeps_each_replys_actual_thread(gateway):
+def test_message_history_keeps_each_inputs_actual_thread(gateway):
     configure(gateway, "message")
     a = deliver(gateway, 1)
     b = deliver(gateway, 2)
@@ -139,7 +138,7 @@ def test_message_history_keeps_each_replys_actual_thread(gateway):
         )
         .json()["messages"]
     )
-    replies = [item for item in history if item["direction"] == "outgoing"]
+    replies = [item for item in history if item["direction"] == "incoming"]
     assert [item["thread_id"] for item in replies] == [a["thread_id"], b["thread_id"]]
 
 
@@ -201,7 +200,6 @@ def test_fixed_thread_cannot_be_used_with_another_policy_or_generic_host(gateway
                 **body,
                 "host_id": generic["id"],
                 "agent_id": None,
-                "reply_source": "mcp",
                 "thread_policy": "message",
             },
         ).status_code

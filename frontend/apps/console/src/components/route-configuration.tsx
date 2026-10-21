@@ -75,7 +75,6 @@ export function RouteConfiguration({
     return selected.includes("*") ? ["*"] : selected;
   });
   const [actionGrants, setActionGrants] = useState<string[]>(route?.action_grants ?? []);
-  const [replySource, setReplySource] = useState(route?.reply_source ?? "output");
   const [binding, setBinding] = useState(route?.mcp_connection_id ?? "");
   const [enabled, setEnabled] = useState(route?.enabled ?? true);
   const [validation, setValidation] = useState("");
@@ -122,11 +121,6 @@ export function RouteConfiguration({
       setValidation("Complete the agent destination.");
       return;
     }
-    if (!mcpOnly && dedicated && replySource === "mcp" && !binding.trim()) {
-      setTab("connections");
-      setValidation("Enter the a13n MCP connection ID.");
-      return;
-    }
     const body = {
       name: name.trim(),
       sources: sources.map(({ channel_id, conversation_kind, conversation_id }) => ({
@@ -144,7 +138,6 @@ export function RouteConfiguration({
       enabled,
       sender_policy: "any",
       allowed_user_ids: [],
-      reply_source: mcpOnly ? "mcp" : dedicated ? replySource : "output",
       mcp_connection_id: mcpOnly || !dedicated ? null : binding.trim() || null,
     };
     if (await action(route ? `routes/${route.id}` : "routes", body, route ? "PATCH" : "POST"))
@@ -309,18 +302,6 @@ export function RouteConfiguration({
         <TabsContent value="connections" className="mt-4 gap-4 data-[state=active]:grid">
           {!mcpOnly && dedicated && (
             <>
-              <FormField id="reply-source" label={t("Reply source")}>
-                <Choice
-                  disabled={busy}
-                  id="reply-source"
-                  value={replySource}
-                  onChange={(value) => setReplySource(value as "output" | "mcp")}
-                  items={[
-                    ["output", t("Final run output")],
-                    ["mcp", t("MCP send_message tool")],
-                  ]}
-                />
-              </FormField>
               <FormField id="mcp-connection" label={t("a13n MCP connection ID (optional)")}>
                 <Input
                   id="mcp-connection"
@@ -350,6 +331,9 @@ export function RouteConfiguration({
                 ["history.read", "Read native platform history"],
                 ["resource.read", "Read platform resources"],
                 ["message.react", "React to messages"],
+                ...(actionGrants.includes("message.react.onebot")
+                  ? ([["message.react.onebot", "React to OneBot messages"]] as const)
+                  : []),
                 ["message.recall", "Recall bot messages"],
                 ["message.recall_members", "Recall member messages"],
                 ["message.proactive", "Send proactive messages"],

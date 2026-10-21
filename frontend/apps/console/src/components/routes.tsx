@@ -67,14 +67,13 @@ export function Routes({ snapshot, busy }: { snapshot: Snapshot; busy: boolean }
               <TableHead>{t("Sources")}</TableHead>
               <TableHead>{t("Agent / thread")}</TableHead>
               <TableHead>{t("Allowed users")}</TableHead>
-              <TableHead>{t("Reply source")}</TableHead>
               <TableHead>{t("Access")}</TableHead>
               <TableHead>{t("Action")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.length === 0 ? (
-              <EmptyRow columns={7} filtered={!!query.trim()}>
+              <EmptyRow columns={6} filtered={!!query.trim()}>
                 {t("No routes yet.")}
               </EmptyRow>
             ) : (
@@ -114,11 +113,6 @@ export function Routes({ snapshot, busy }: { snapshot: Snapshot; busy: boolean }
                     {record.sender_policy === "any"
                       ? t("Any sender")
                       : record.allowed_user_ids.join(", ")}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">
-                      {record.reply_source === "output" ? t("Final run output") : t("MCP tools")}
-                    </Badge>
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">{record.enabled ? t("Enabled") : t("Disabled")}</Badge>

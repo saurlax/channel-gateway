@@ -1,7 +1,7 @@
 # Connect QQ official Bot and Weixin iLink
 
 Native channels connect directly to the platform, without a OneBots process.
-Both use the existing a13n routing, sender allowlists, MCP scope, and automatic replies.
+Both use the existing a13n routing, sender allowlists, MCP scope, and explicit tool-delivered replies.
 QQ supports private/group/guild/DM messages and scoped platform operations; Weixin
 supports private text. Live calls and Weixin groups are not supported. See
 [QQ platform tools](qq-platform.md) for media, streaming, reactions, resource

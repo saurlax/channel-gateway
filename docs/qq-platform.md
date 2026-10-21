@@ -40,9 +40,8 @@ in the Agent Host; CG never rewrites the Agent's enabled tool list. Readable-cha
 grants do not confer these permissions. Parent route grants propagate to their
 current source bindings and are checked again before execution.
 
-Guild reactions can run on a final-output route with `message.react`. QQ message
-tools can also run there with `message.proactive`. Legacy MCP OneBot reactions retain
-their existing scope and require the provider's optional compatible extension.
+Guild reactions require `message.react`. Existing OneBot reaction grants retain
+their scope and require the provider's optional compatible extension.
 
 ## Message creation
 
@@ -53,20 +52,15 @@ Embed, and ARK use `native: {"qq": {"keyboard": ..., "embed": ..., "ark": ...}}`
 Cards may use empty `content`. Native options are bounded to 64 KiB. Application
 permissions and client support still govern Markdown and buttons.
 
-For automatic text replies plus proactive tool sends, choose **Final run output**,
-enable **Proactive messaging** (`message.proactive`), and configure the desired
-MCP tools on the Agent. Final text replies to the triggering message; calls to
-`send_message` defaults to proactive delivery.
-An existing MCP route without the proactive grant keeps its passive default.
-`discover(resource="conversations")` reports `default_delivery` and `can_send_proactively`.
-
-Pass `delivery: "passive"` explicitly when a tool should reply using the latest
-authorized incoming context. `delivery: "proactive"` and C2C-only `"wakeup"`
-require `message.proactive`. Proactive sends omit the original message/event ID
-and passive sequence. They need no fresh incoming message. Final output retains
-its own original context and never automatically becomes proactive after expiry.
-Delivery is fixed when queued, and authority is rechecked before sending and
-between upload steps. Avoid repeating tool-sent content in final output.
+All channel replies use `send_message`; Agent final output is never sent.
+With **Proactive messaging** (`message.proactive`), the tool defaults to proactive
+delivery; otherwise it defaults to passive delivery using authorized incoming
+context. Discovery reports `default_delivery` and `can_send_proactively`.
+Pass `delivery: "passive"` to use the latest authorized incoming context.
+`delivery: "proactive"` and C2C-only `"wakeup"` require `message.proactive`.
+Proactive sends omit the original message/event ID and passive sequence. Passive
+sends never become proactive after expiry. Delivery is fixed when queued and
+rechecked before sending and between uploads.
 
 QQ must allow proactive messages for the user/group; check `get_group_bot_state`
 and its `allow_proactive_msg` field for groups. A gateway grant does not change

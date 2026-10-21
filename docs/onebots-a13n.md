@@ -46,8 +46,8 @@ direct official platform connections. See the
    Each readable channel grants access to all received private/group conversations
    for that bot account; it does not trigger the Agent or authorize replies there.
    Select **All channels** to include future accounts, or select none to deny reads.
-   Start with final
-   run output and no dedicated MCP binding. Each conversation gets its own thread
+   Configure the shared Host MCP connection for message sends, without a dedicated
+   route binding. Each conversation gets its own thread
    unless you select another [thread delivery policy](#thread-delivery).
 6. Send a text message as an authorized user. **Messages** lists conversations, including
    those without a route. Select **View conversation** to see incoming text and
@@ -114,12 +114,9 @@ to `steer`, including older routes. You can change it while a run is active.
 The new choice affects only input not already frozen for submission; retrying a
 lost receipt preserves its original body and idempotency key.
 
-Multiple messages can join one run. CG sends its final output once, using the
-latest input assigned to that run and its source reply context. With a shared
-thread, this means one reply to the latest contributing source. Other inputs are
-marked completed. Revoking that source suppresses the reply; it does not redirect
-combined output to a previous source. `reply: false` and MCP-only output stay silent.
-
+Multiple messages can join one run. Each input tracks the run assigned to its
+inbox entry. Completion never sends final text. An Agent uses `send_message` with
+the gateway-verified route ID when a channel response is warranted.
 
 ## Other OneBot transports
 
@@ -147,7 +144,7 @@ automatic reply delivery remain the same for every transport.
 Generic clients such as Codex use the [Agent Host guide](agent-hosts.md) instead
 of a13n API delivery.
 
-## Optional MCP tools in a13n
+## MCP tools in a13n
 
 The bridge works without MCP. Its MCP Streamable HTTP endpoint is
 `https://GATEWAY/mcp/` (including the trailing slash). It exposes:
@@ -163,10 +160,10 @@ Refresh the MCP inventory, enable these five tools, and update Agent instruction
 that reference removed tool names. Existing credentials and route grants persist.
 
 See [images and reactions](images-and-reactions.md) for formats, bounds, native
-a13n attachments, and capability differences. Final-run-output routes forward
-text. QQ message/image tools can run alongside final text with `message.proactive`;
-guild reactions use `message.react`. OneBot image tools still require MCP replies.
-All tools must be enabled in the Agent Host.
+a13n attachments, and capability differences. All channel replies, including
+ordinary text, use `send_message`. Final Agent output is never forwarded.
+QQ proactive sends require `message.proactive`; reactions use `message.react`.
+All required tools must be enabled in the Agent Host.
 
 For an Agent that shares one Host trust boundary, configure **one MCP connection**
 in a13n with the Host's MCP key. Copy it when creating the Host, or obtain a new
@@ -193,20 +190,14 @@ data; it does not require another connection, new tools, or per-conversation Too
 Search groups. Native resource operations use the same fixed tools with an
 `operation` argument.
 
-In the route's **Connections** tab, choose **Final run output** for automatic
-plain-text replies. Shared Host-key tools need no route MCP connection binding.
-For QQ, enable `message.proactive` to permit proactive message/media tools alongside
-those automatic passive replies. Ordinary answers belong in final text; tools
-handle explicit sends, media, or later notifications. Do not repeat tool-sent
-content in final output. See [QQ delivery and limits](qq-platform.md#message-creation).
-OneBot image tools still require MCP reply mode.
+Use the shared Host-key connection for all message sends and pass the verified
+concrete `route_id` explicitly. Exact, multi-source and wildcard sources all use
+the same tools. QQ proactive delivery requires `message.proactive`; passive
+sending remains available without that grant.
 
-Dedicated route credentials are optional for clients that must have narrower
-access. For a single concrete source, create a connection using that route's token,
-select it in the Agent, and bind its ID in the route's **Connections** tab. Choose
-**MCP send_message tool** for tool-delivered replies. This legacy binding requires
-a dedicated connection per route; use it for deliberate isolation, not as the
-standard way to add groups. Multi-source and wildcard a13n routes use final output.
+Dedicated route credentials are optional for narrower access. One concrete source
+can bind a dedicated MCP connection using that route's token. This is optional
+isolation, not a requirement for sending or adding groups.
 An Agent configured with both shared and dedicated connections still has the
 shared connection's full Host authority.
 
@@ -223,28 +214,19 @@ input to finish before changing a route MCP binding. Never put either key in
 
 ## Quiet group participation
 
-Full-message collection does not require a reply to every message. Keep
-**Final run output** on the route and configure the Agent with a structured output
-schema containing required `reply` (boolean) and `text` (string) fields:
+Full-message collection does not require a reply to every message. Configure the
+Agent with ordinary text output, without a `reply`/`text` structured-output schema
+or output-format retry prompts. Use `send_message` only when a channel response is
+warranted. For quiet observation, complete without any message/action tool call.
+A private final completion note may end the run normally; CG never publishes it.
+Do not require a truly empty model response, because ordinary a13n text output
+expects a final result.
 
-```json
-{ "reply": false, "text": "" }
-```
-
-This completes the input successfully without a channel message. To answer, return:
-
-```json
-{ "reply": true, "text": "The answer to the request." }
-```
-
-Only `text` is sent. The envelope and internal observations stay out of chat.
-Configure the Agent to remain silent for ordinary group discussion, quoted requests
-addressed to others, and remarks about the bot. Respond when the bot is mentioned
-or clearly addressed with a request. Verified `bot_mentioned` context helps
-distinguish native mentions from message text; older records may have no hint.
-The Agent still processes authorized full-message inputs to make that decision.
-It must not send message tools for a silent input, or repeat a tool-sent answer
-in final output. Private chats can continue to receive normal answers.
+Stay silent for ordinary group discussion, quoted requests addressed to others,
+and remarks about the bot. Respond through tools when mentioned or clearly
+addressed with a request. Verified `bot_mentioned` is a relevance hint, not new
+authority. Private chats normally warrant tool-delivered answers. Never treat
+partial text from a failed run as a channel reply.
 
 `read(resource="messages")` combines incoming and confirmed outgoing messages, with
 `direction`, `history_id`, and `created_at`. Outgoing media has safe descriptions,

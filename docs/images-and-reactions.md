@@ -42,11 +42,10 @@ remain in the private raw journal. a13n applies its own attachment limits.
 
 ## Send images
 
-Enable CG's `send_message` tool in the Agent Host. For QQ, choose **Final run output**
-and grant `message.proactive` to combine automatic text replies with proactive
-image tools. Existing **MCP send_message tool** routes without that grant keep
-passive image replies. OneBot images still require MCP replies. Configure a
-dedicated a13n MCP connection for the route when needed.
+Enable CG's `send_message` tool through the shared Host MCP connection.
+Every route supports passive tool replies; QQ proactive images additionally
+require `message.proactive`. A dedicated connection is optional for one concrete
+source. Agent final output is never sent.
 Check `discover(resource="conversations")` capability fields for the channel's supported formats.
 
 ```json

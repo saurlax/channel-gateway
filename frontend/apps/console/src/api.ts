@@ -38,7 +38,6 @@ export type Route = {
   busy_policy?: BusyPolicy;
   fixed_thread_id?: string | null;
   enabled: boolean;
-  reply_source: "output" | "mcp";
   mcp_connection_id: string | null;
   thread_id: string | null;
 };

@@ -1,4 +1,18 @@
 export const chinese = {
+  "Reset conversation": "重置会话",
+  "Reset conversation?": "重置会话？",
+  "Confirm reset": "确认重置",
+  "Resetting…": "正在重置…",
+  "Conversation reset. The next message starts a new Agent thread.":
+    "会话已重置，下一条消息将创建新的 Agent 会话。",
+  "The next message starts a new Agent thread. Gateway history is retained. All sender threads in this conversation are reset. Pending messages must finish first.":
+    "下一条消息将创建新的 Agent 会话，网关历史记录保留。此会话下所有发送者的会话都会重置。请先等待待处理消息结束。",
+  "Only a13n conversations have thread bindings": "仅 a13n 会话支持重置",
+  "Select a concrete conversation to reset its thread": "请选择具体会话进行重置",
+  "Choose a new fixed thread in route settings": "请在路由设置中选择新的固定会话",
+  "This route already creates a new thread for each message": "此路由已为每条消息创建新会话",
+  "Wait for pending messages to finish before resetting the conversation":
+    "请等待待处理消息结束后再重置会话",
   "Messages during execution": "执行中新消息",
   "Join current execution": "立即加入当前执行",
   "Queue for the next run": "排队等待",

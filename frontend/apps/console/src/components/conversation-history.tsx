@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, MessageSquare } from "lucide-react";
+import { Bot, MessageSquare, RotateCcw } from "lucide-react";
 import { useLocale } from "@/i18n";
 import { api, type HistoryMessage, type HistoryPage, type Snapshot } from "@/api";
 import { conversationKey, mergeHistory, type ConversationSource } from "@/conversations";
@@ -7,6 +7,17 @@ import type { Action } from "@/components/form-controls";
 import { ManagementDialog } from "@/components/management";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   Item,
   ItemActions,
@@ -55,6 +66,7 @@ export function ConversationDialog({
         csrfToken={csrfToken}
         action={action}
         busy={busy}
+        actionError={error}
       />
     </ManagementDialog>
   );
@@ -66,12 +78,14 @@ function ConversationMessages({
   csrfToken,
   action,
   busy,
+  actionError,
 }: {
   source: ConversationSource;
   snapshot: Snapshot;
   csrfToken: string;
   action: Action;
   busy: boolean;
+  actionError: string;
 }) {
   const { t, message, date } = useLocale();
   const [messages, setMessages] = useState<HistoryMessage[]>([]);
@@ -82,6 +96,18 @@ function ConversationMessages({
   const loadedOlder = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const initialized = useRef(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
+  const route = snapshot.routes.find(
+    (item) =>
+      item.channel_id === source.channel_id &&
+      item.conversation_kind === source.conversation_kind &&
+      item.conversation_id === source.conversation_id,
+  );
+  const canReset =
+    route &&
+    snapshot.connections.some((host) => host.id === route.host_id && host.kind === "a13n") &&
+    ["conversation", "sender"].includes(route.thread_policy ?? "conversation");
   const query = new URLSearchParams({
     channel_id: source.channel_id,
     conversation_kind: source.conversation_kind,
@@ -130,9 +156,56 @@ function ConversationMessages({
   }
   return (
     <div className="grid min-w-0 gap-4">
-      <p className="break-all text-sm text-muted-foreground">
-        {message(source.conversation_kind)}: {source.conversation_id}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="min-w-0 break-all text-sm text-muted-foreground">
+          {message(source.conversation_kind)}: {source.conversation_id}
+        </p>
+        {canReset && (
+          <AlertDialog open={resetOpen} onOpenChange={(value) => !busy && setResetOpen(value)}>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm" disabled={busy}>
+                <RotateCcw />
+                {t("Reset conversation")}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t("Reset conversation?")}</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {t(
+                    "The next message starts a new Agent thread. Gateway history is retained. All sender threads in this conversation are reset. Pending messages must finish first.",
+                  )}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              {actionError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {message(actionError)}
+                </p>
+              )}
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={busy}>{t("Cancel")}</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={busy}
+                  onClick={async (event) => {
+                    event.preventDefault();
+                    if (await action(`routes/${route.id}/reset-thread`)) {
+                      setResetOpen(false);
+                      setResetDone(true);
+                    }
+                  }}
+                >
+                  {busy ? t("Resetting…") : t("Confirm reset")}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+      </div>
+      {resetDone && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("Conversation reset. The next message starts a new Agent thread.")}
+        </p>
+      )}
       {error && <p role="alert">{message(error)}</p>}
       <div
         ref={scroller}

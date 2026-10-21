@@ -1103,7 +1103,11 @@ class Store:
             if policy == "fixed":
                 thread_id = route.get("fixed_thread_id") or thread_id
             elif policy == "conversation":
-                thread_id = thread_id or route["thread_id"]
+                # A manual reset may have cleared the binding after the worker
+                # read this route. Consult the current binding inside the lock.
+                async with db.execute("SELECT thread_id FROM routes WHERE id=?", (route["id"],)) as cursor:
+                    current = await cursor.fetchone()
+                thread_id = thread_id or (current[0] if current else None)
             target = "/threads/" + quote(thread_id, safe="") + "/inbox" if thread_id else "/threads"
             await db.execute(
                 "INSERT INTO event_thread_bindings(event_id,binding_key,route_id) VALUES (?,?,?)",
@@ -1112,6 +1116,43 @@ class Store:
             await db.execute("UPDATE events SET target=?,body=? WHERE id=?", (target, json.dumps(body), event["id"]))
         return target
 
+    async def reset_thread(self, route_id: str) -> dict | None:
+        """Detach one concrete conversation without replaying or deleting history."""
+        async with self.transaction() as db:
+            async with db.execute("SELECT * FROM routes WHERE id=?", (route_id,)) as cursor:
+                row = await cursor.fetchone()
+            if row is None:
+                return None
+            route = self.route_view(dict(row))
+            async with db.execute("SELECT value FROM connections WHERE id=?", (route["host_id"],)) as cursor:
+                host = await cursor.fetchone()
+            if not host or json.loads(host[0])["kind"] != "a13n":
+                raise ValueError("Only a13n conversations have thread bindings")
+            if route["conversation_id"] == "*":
+                raise ValueError("Select a concrete conversation to reset its thread")
+            if route["thread_policy"] == "fixed":
+                raise ValueError("Choose a new fixed thread in route settings")
+            if route["thread_policy"] == "message":
+                raise ValueError("This route already creates a new thread for each message")
+            async with db.execute(
+                "SELECT 1 FROM events WHERE route_id=? AND state IN ('queued','submitted') LIMIT 1", (route_id,)
+            ) as cursor:
+                if await cursor.fetchone():
+                    raise RouteConflict("Wait for pending messages to finish before resetting the conversation")
+            await db.execute(
+                "DELETE FROM thread_bindings WHERE binding_key IN "
+                "(SELECT b.binding_key FROM event_thread_bindings b JOIN events e ON e.id=b.event_id WHERE e.route_id=?)",
+                (route_id,),
+            )
+            # Retried historical requests retain their frozen target/receipt but
+            # must never restore a binding that an administrator detached.
+            await db.execute(
+                "DELETE FROM event_thread_bindings WHERE event_id IN (SELECT id FROM events WHERE route_id=?)",
+                (route_id,),
+            )
+            await db.execute("UPDATE routes SET thread_id=NULL WHERE id=?", (route_id,))
+        return {"id": route_id, "thread_id": None}
+
     async def submitted(self, event_id: str, route_id: str, receipt: dict) -> None:
         thread_id = receipt["thread"]["id"]
         entry_id = receipt["entry"]["id"]
@@ -1119,8 +1160,9 @@ class Store:
         async with self.transaction() as db:
             await db.execute(
                 "UPDATE routes SET thread_id=COALESCE(thread_id,?) WHERE id=? "
-                "AND COALESCE(json_extract(value,'$.thread_policy'),'conversation')='conversation'",
-                (thread_id, route_id),
+                "AND COALESCE(json_extract(value,'$.thread_policy'),'conversation')='conversation' "
+                "AND EXISTS(SELECT 1 FROM event_thread_bindings WHERE event_id=?)",
+                (thread_id, route_id, event_id),
             )
             await db.execute(
                 "INSERT OR IGNORE INTO thread_bindings(binding_key,route_id,thread_id) "

@@ -1,5 +1,7 @@
 """Host selection, thread scope isolation, and durable delivery retries."""
 
+from functools import partial
+
 import pytest
 
 from .test_bridge import gateway as gateway_fixture
@@ -150,6 +152,106 @@ def test_binding_survives_storage_reopen(gateway):
     client.portal.call(app.state.store.open)
     assert deliver(gateway, 2)["thread_id"] == first["thread_id"]
     assert configured["thread_policy"] == "sender"
+
+
+@pytest.mark.parametrize("policy", ["conversation", "sender"])
+def test_reset_detaches_only_selected_conversation_and_preserves_history(gateway, policy):
+    configure(gateway, policy)
+    first = deliver(gateway, 1)
+    second_sender = deliver(gateway, 2, user=8)
+    other = deliver(gateway, 3, conversation=124)
+    client, app, *_ = gateway
+    before = client.get("/api/v1/events").json()
+    response = client.post(f"/api/v1/routes/{first['route_id']}/reset-thread")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"id": first["route_id"], "thread_id": None}
+    assert client.get("/api/v1/events").json() == before
+    # Clearing both route and policy bindings survives a process restart.
+    client.portal.call(app.state.store.close)
+    client.portal.call(app.state.store.open)
+    fresh = deliver(gateway, 4)
+    fresh_sender = deliver(gateway, 5, user=8)
+    assert fresh["thread_id"] != first["thread_id"]
+    assert fresh_sender["thread_id"] != second_sender["thread_id"]
+    assert deliver(gateway, 6, conversation=124)["thread_id"] == other["thread_id"]
+    assert client.get("/api/v1/replies").json() == []
+
+
+@pytest.mark.parametrize("submitted", [False, True])
+def test_reset_refuses_pending_work_atomically(gateway, submitted):
+    configure(gateway, "conversation")
+    first = deliver(gateway, 1)
+    webhook(gateway, message_id=2)
+    if submitted:
+        tick(gateway)
+    client = gateway[0]
+    response = client.post(f"/api/v1/routes/{first['route_id']}/reset-thread")
+    assert response.status_code == 409
+    tick(gateway)
+    tick(gateway)
+    assert deliver(gateway, 3)["thread_id"] == first["thread_id"]
+
+
+@pytest.mark.parametrize("policy", ["fixed", "message"])
+def test_reset_rejects_shared_and_per_message_policies(gateway, policy):
+    configure(gateway, policy)
+    first = deliver(gateway, 1)
+    assert gateway[0].post(f"/api/v1/routes/{first['route_id']}/reset-thread").status_code == 422
+
+
+def test_reset_requires_admin_and_concrete_a13n_route(gateway):
+    configured = configure(gateway, "conversation")
+    client = gateway[0]
+    assert client.post(f"/api/v1/routes/{configured['id']}/reset-thread").status_code == 422
+    assert client.post("/api/v1/routes/route_missing/reset-thread").status_code == 404
+    generic = client.post("/api/v1/connections", json={"name": "Generic", "kind": "mcp"}).json()
+    route = client.post(
+        "/api/v1/routes",
+        json={
+            "name": "Generic",
+            "host_id": generic["id"],
+            "channel_id": gateway[3]["id"],
+            "conversation_kind": "private",
+            "conversation_id": "7",
+            "allowed_user_ids": ["7"],
+        },
+    ).json()
+    assert client.post(f"/api/v1/routes/{route['id']}/reset-thread").status_code == 422
+    client.cookies.clear()
+    assert client.post(f"/api/v1/routes/{configured['id']}/reset-thread").status_code == 401
+
+
+def test_reset_does_not_restore_detached_binding_when_failed_request_is_retried(gateway):
+    configure(gateway, "conversation")
+    first = deliver(gateway, 1)
+    client, app, upstream, *_ = gateway
+    webhook(gateway, message_id=2)
+    upstream.fail_submit = True
+    tick(gateway)
+    failed = client.get("/api/v1/events").json()[0]
+    frozen = submissions(gateway)[-1]
+    client.portal.call(partial(app.state.store.update_event, failed["id"], state="failed"))
+    assert client.post(f"/api/v1/routes/{first['route_id']}/reset-thread").status_code == 200
+    assert client.post(f"/api/v1/events/{failed['id']}/retry").status_code == 200
+    tick(gateway)
+    retried = submissions(gateway)[-1]
+    assert retried.url == frozen.url
+    assert retried.content == frozen.content
+    assert retried.headers["Idempotency-Key"] == frozen.headers["Idempotency-Key"]
+    tick(gateway)
+    assert deliver(gateway, 3)["thread_id"] != first["thread_id"]
+
+
+def test_reset_wins_over_stale_worker_route_snapshot(gateway):
+    configure(gateway, "conversation")
+    first = deliver(gateway, 1)
+    client, app, *_ = gateway
+    stale = client.portal.call(app.state.store.route, first["route_id"])
+    assert client.post(f"/api/v1/routes/{first['route_id']}/reset-thread").status_code == 200
+    webhook(gateway, message_id=2)
+    event = client.portal.call(app.state.store.pending)[0]
+    target = client.portal.call(app.state.store.prepare_delivery, event, stale, {"agent_id": "ap_example"})
+    assert target == "/threads"
 
 
 def test_host_catalog_is_admin_only_paginated_and_filters_unusable_resources(gateway):

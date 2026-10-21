@@ -442,6 +442,19 @@ def create_app(
             raise HTTPException(404, "Route not found")
         return {"agent_token": await store.rotate_token(route_id)}
 
+    @app.post("/api/v1/routes/{route_id}/reset-thread")
+    async def reset_thread(route_id: str, _admin: None = Depends(admin)) -> dict:
+        try:
+            result = await store.reset_thread(route_id)
+        except RouteConflict as error:
+            raise HTTPException(409, str(error)) from None
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+        if result is None:
+            raise HTTPException(404, "Route not found")
+        bridge.wake.set()
+        return result
+
     @app.get("/api/v1/events")
     async def events(_admin: None = Depends(admin)) -> list[dict]:
         return await store.events()

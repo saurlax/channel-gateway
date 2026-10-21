@@ -115,7 +115,10 @@ CG always preserves that configuration. Select Agents from the Host list. Thread
 delivery defaults to one thread per source conversation, with per-sender, fixed,
 and per-message choices. a13n routes default to submitting new messages into the
 current run at a safe boundary, with a queue-until-finished option under
-Messages during execution. Modal forms keep
+Messages during execution.
+You can reset a retained Agent thread from **Messages → View conversation → Reset
+conversation** after pending inputs finish. The next message starts fresh while
+gateway history is preserved. Modal forms keep
 one field per row at every width. Sign in
 with the account and password you configured. Follow the
 [OneBots and a13n setup guide](docs/onebots-a13n.md) or the

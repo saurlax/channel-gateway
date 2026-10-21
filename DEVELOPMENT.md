@@ -104,8 +104,8 @@ channel and Agent Host creation open a shadcn Dialog. Creating a route from Mess
 opens the same page with the source conversation prefilled. Route pages support
 direct visits and reloads, show missing routes without redirecting, and return to
 the list after saving or deleting. Thread reset stays on the route edit page;
-its confirmation explicitly covers all conversations and sender threads on the
-saved route. Token rotation keeps the edit page open and
+its red outline button follows Delete route in the action row, and its confirmation
+explicitly covers all conversations and sender threads on the saved route. Token rotation keeps the edit page open and
 shows the new token once in its own dialog. Use a single-column form directly on
 the page without a Card wrapper, and provide a Back to routes link and Cancel action.
 Route configuration uses Basic information, Routing, and Connections tabs. Basic

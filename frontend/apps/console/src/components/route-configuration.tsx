@@ -79,6 +79,7 @@ export function RouteConfiguration({
   const [binding, setBinding] = useState(route?.mcp_connection_id ?? "");
   const [enabled, setEnabled] = useState(route?.enabled ?? true);
   const [validation, setValidation] = useState("");
+  const [threadsReset, setThreadsReset] = useState(false);
   const mcpOnly = hosts.find((c) => c.id === host)?.kind === "mcp";
   const dedicated = singleSource(sources);
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -403,20 +404,11 @@ export function RouteConfiguration({
           <AlertDescription>{message(validation)}</AlertDescription>
         </Alert>
       )}
-      {route &&
-        snapshot.connections.some((item) => item.id === route.host_id && item.kind === "a13n") &&
-        route.thread_policy !== "message" &&
-        !route.fixed_thread_id && (
-          <div className="w-fit">
-            <ResetThreads
-              routeId={route.id}
-              action={action}
-              busy={busy}
-              error={error}
-              clearError={clearError}
-            />
-          </div>
-        )}
+      {threadsReset && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("Route conversations reset. Future messages start new Agent threads.")}
+        </p>
+      )}
       <div className="flex flex-wrap justify-end gap-2">
         {route && (
           <>
@@ -433,6 +425,20 @@ export function RouteConfiguration({
               clearError={clearError}
               onDeleted={onSaved}
             />
+            {snapshot.connections.some(
+              (item) => item.id === route.host_id && item.kind === "a13n",
+            ) &&
+              route.thread_policy !== "message" &&
+              !route.fixed_thread_id && (
+                <ResetThreads
+                  routeId={route.id}
+                  action={action}
+                  busy={busy}
+                  error={error}
+                  clearError={clearError}
+                  onReset={() => setThreadsReset(true)}
+                />
+              )}
             <Button
               type="button"
               variant="outline"

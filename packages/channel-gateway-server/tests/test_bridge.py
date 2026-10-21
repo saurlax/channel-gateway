@@ -1340,6 +1340,45 @@ def test_source_specificity_does_not_fall_back_after_denial(gateway):
     assert len(children(client, broad)) == 1 and not children(client, specific)
 
 
+@pytest.mark.parametrize("channel_scope", ["*", "account"])
+def test_all_conversation_source_accepts_private_and_group_and_keeps_concrete_bindings(gateway, channel_scope):
+    client, _, _, channel, host = gateway
+    configured = create_rule(gateway, [source(channel["id"] if channel_scope == "account" else "*", "*")])
+    assert configured["sources"][0]["conversation_kind"] == "*"
+    assert webhook(gateway, kind="private").json()["state"] == "accepted"
+    assert webhook(gateway, kind="group", message_id=2).json()["state"] == "accepted"
+    assert {row["conversation_kind"] for row in children(client, configured)} == {"private", "group"}
+    added = new_channel(client)
+    other = (client, gateway[1], gateway[2], added, host)
+    expected = "accepted" if channel_scope == "*" else "blocked"
+    assert webhook(other, kind="private", message_id=3).json()["state"] == expected
+    assert webhook(other, kind="group", message_id=4).json()["state"] == expected
+
+
+def test_private_only_source_overrides_all_conversations_without_denial_fallback(gateway):
+    client, *_ = gateway
+    broad = create_rule(gateway, [source(kind="*")])
+    specific = create_rule(gateway, [source()], enabled=False)
+    assert webhook(gateway, kind="private").json()["state"] == "blocked"
+    assert webhook(gateway, kind="group", message_id=2).json()["state"] == "accepted"
+    assert len(children(client, broad)) == 1 and not children(client, specific)
+
+
+def test_all_conversations_rejects_exact_ids_and_conflicting_rules(gateway):
+    client, _, _, _, host = gateway
+    configured = create_rule(gateway, [source(kind="*")])
+    body = {
+        "name": "Other",
+        "sources": [source(kind="*")],
+        "host_id": host["id"],
+        "agent_id": "agt_example",
+        "sender_policy": "any",
+    }
+    assert client.post("/api/v1/routes", json=body).status_code == 409
+    for method, path in [(client.post, "/api/v1/routes"), (client.patch, f"/api/v1/routes/{configured['id']}")]:
+        assert method(path, json={**body, "sources": [source(kind="*", conversation="7")]}).status_code == 422
+
+
 def test_more_specific_source_retires_old_binding_without_reassigning_history(gateway):
     client, _, _, channel, _ = gateway
     broad = create_rule(gateway, [source()])
@@ -1502,15 +1541,34 @@ def test_deleted_channel_blocks_only_its_bindings_and_rule_delete_revokes_all(ga
     assert rpc(client, configured["agent_token"], "tools/list", {}).status_code == 401
 
 
-def test_multi_source_rules_persist_across_reopening(gateway):
+@pytest.mark.parametrize("all_conversations", [False, True])
+def test_multi_source_rules_persist_across_reopening(gateway, all_conversations):
     client, app, _, channel, _ = gateway
-    configured = create_rule(gateway, [source(channel["id"], conversation="7"), source(conversation="8")])
+    configured = create_rule(
+        gateway,
+        [source(kind="*")]
+        if all_conversations
+        else [source(channel["id"], conversation="7"), source(conversation="8")],
+    )
     webhook(gateway, kind="private")
     before = client.get("/api/v1/routes").json()
     client.portal.call(app.state.store.close)
     client.portal.call(app.state.store.open)
     assert client.get("/api/v1/routes").json() == before
     assert rpc(client, configured["agent_token"], "tools/list", {}).status_code == 200
+
+
+def test_all_conversations_discovers_old_history_without_replaying_agent_work(gateway):
+    client, _, upstream, *_ = gateway
+    webhook(gateway, kind="private", text="Old private message")
+    webhook(gateway, kind="group", message_id=2, text="Old group message")
+    configured = create_rule(gateway, [source(kind="*")])
+    listed = mcp_result(client, configured["agent_token"], "discover", resource="conversations")
+    assert len(listed["conversations"]) == 2
+    assert {row["conversation_kind"] for row in children(client, configured)} == {"private", "group"}
+    tick(gateway)
+    assert not upstream.requests
+    assert {event["state"] for event in client.get("/api/v1/events").json()} == {"unmatched"}
 
 
 def test_legacy_catchall_mcp_listing_respects_new_source_specificity(gateway):

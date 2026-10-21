@@ -4,6 +4,7 @@ import type { ConversationKind, RouteSource, Snapshot } from "@/api";
 import { conversations } from "@/conversations";
 import { useLocale } from "@/i18n";
 import { isHost } from "@/hosts";
+import { sourceLabel } from "@/lib/route-sources";
 import { Choice, FormField } from "@/components/form-controls";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -130,28 +131,24 @@ function SourceTarget({
     "channel",
     "thread",
   ];
-  const labels = {
-    private: ["All users", "User {id}"],
-    group: ["All groups", "Group {id}"],
-    guild: ["All guild channels", "Guild channel {id}"],
-    guild_dm: ["All guild direct messages", "Guild direct message {id}"],
-    channel: ["All channel conversations", "Channel {id}"],
-    thread: ["All message threads", "Message thread {id}"],
-  } as const;
-  const label = (kind: ConversationKind, id: string) =>
-    id === "*" ? t(labels[kind][0]) : t(labels[kind][1], { id });
+  const label = (kind: RouteSource["conversation_kind"], id: string) =>
+    t(
+      sourceLabel({ channel_id: source.channel_id, conversation_kind: kind, conversation_id: id }),
+      { id },
+    );
   const options = new Map<
     string,
-    { conversation_kind: ConversationKind; conversation_id: string; label: string }
+    { conversation_kind: RouteSource["conversation_kind"]; conversation_id: string; label: string }
   >();
-  const add = (kind: ConversationKind, id: string, name?: string | null) => {
-    if (!allowedKinds.includes(kind)) return;
+  const add = (kind: RouteSource["conversation_kind"], id: string, name?: string | null) => {
+    if (kind !== "*" && !allowedKinds.includes(kind)) return;
     options.set(`${kind}:${id}`, {
       conversation_kind: kind,
       conversation_id: id,
       label: name ? `${name} / ${label(kind, id)}` : label(kind, id),
     });
   };
+  add("*", "*");
   for (const kind of allowedKinds) add(kind, "*");
   for (const group of conversations(snapshot)) {
     if (source.channel_id === "*" || group.source.channel_id === source.channel_id)

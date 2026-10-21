@@ -94,6 +94,8 @@ The configured source scopes govern activation. A wildcard channel includes futu
 accounts; it does not link people across platforms. The same user/group ID is
 matched literally on each selected account. Group selection authorizes the group
 as a destination; sender restrictions are checked separately.
+An explicit all-conversations source authorizes every supported conversation kind
+on its selected accounts. Existing private-only sources are never expanded automatically.
 `sender_policy` is `allowlist` by default at the API boundary,
 requiring a nonempty `allowed_user_ids`, or explicitly `any`, requiring an empty
 list and accepting any verified platform sender within the source scope. A

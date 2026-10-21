@@ -107,6 +107,7 @@ export function RouteConfiguration({
       sources.some(
         (source) =>
           source.channel_id !== "*" &&
+          source.conversation_kind !== "*" &&
           !snapshot.connections
             .find((c) => c.id === source.channel_id)
             ?.capabilities?.conversations.includes(source.conversation_kind),

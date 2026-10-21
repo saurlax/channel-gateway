@@ -3,9 +3,16 @@
 ## Conversation routes
 
 A configured route binds a nonempty `sources` list to one Agent Host. Each source
-contains `channel_id`, `conversation_kind` (`private` or `group`), and
+contains `channel_id`, `conversation_kind` (`private`, `group`, `guild`,
+`guild_dm`, `channel`, `thread`, or `*`), and
 `conversation_id`. `channel_id: "*"` includes current and future channel accounts;
-`conversation_id: "*"` matches all conversations of that kind. Private user IDs
+`conversation_id: "*"` matches all conversations of that kind. A source with both
+`conversation_kind: "*"` and `conversation_id: "*"` matches all supported
+conversation types, including on future accounts selected by `channel_id: "*"`.
+A wildcard kind requires a wildcard conversation ID. The console labels this
+scope **All conversations** and labels private-only scope **All private chats**.
+Existing private-only sources remain private-only until explicitly edited.
+Private user IDs
 and group IDs are distinct, literal platform identifiers, not linked identities.
 Each source selects a conversation, not an individual sender within a group.
 The console treats these sources as the complete activation filter. Legacy API
@@ -21,7 +28,8 @@ refused while an input is queued or submitted. The
 [authorization contract](02-identity-and-access.md) owns sender and tool authority.
 
 Selection prefers a specific user/group over all conversations, then a specific
-channel over all channels. Equal-specificity overlaps between configured routes
+channel over all channels, then a specific conversation kind over all kinds.
+Equal-specificity overlaps between configured routes
 are rejected atomically, including disabled routes. A disabled or sender-denying
 specific rule never falls back to a broader rule. Each account/kind/conversation
 has at most one live concrete binding and cannot fan out to multiple Agents.

@@ -12,13 +12,17 @@ def route_sources(route: dict) -> list[dict]:
 def source_matches(source: dict, channel: str, kind: str, conversation: str) -> bool:
     return (
         source["channel_id"] in {"*", channel}
-        and source["conversation_kind"] == kind
+        and source["conversation_kind"] in {"*", kind}
         and source["conversation_id"] in {"*", conversation}
     )
 
 
 def specificity(source: dict) -> int:
-    return 2 * (source["conversation_id"] != "*") + (source["channel_id"] != "*")
+    return (
+        4 * (source["conversation_id"] != "*")
+        + 2 * (source["channel_id"] != "*")
+        + (source["conversation_kind"] != "*")
+    )
 
 
 def select_route(routes: list[dict], channel: str, kind: str, conversation: str) -> dict | None:
@@ -41,7 +45,10 @@ def check_source_conflicts(value: dict, routes: list[dict]) -> None:
         for left in route_sources(value):
             for right in route_sources(route):
                 if (
-                    left["conversation_kind"] == right["conversation_kind"]
+                    (
+                        left["conversation_kind"] == right["conversation_kind"]
+                        or "*" in {left["conversation_kind"], right["conversation_kind"]}
+                    )
                     and (left["channel_id"] == right["channel_id"] or "*" in {left["channel_id"], right["channel_id"]})
                     and (
                         left["conversation_id"] == right["conversation_id"]

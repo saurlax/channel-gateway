@@ -33,8 +33,12 @@ direct official platform connections. See the
    selects a channel and a user or group. Search observed conversations or enter
    a platform ID and select its user/group type. Use the plus button for another
    row and the row's delete button to remove it. **All channels** includes channels
-   added later; **All users** and **All groups** match their respective conversation
-   types. These sources determine which incoming messages trigger the Agent.
+   added later. **All conversations** matches every supported conversation type;
+   choose **All channels / All conversations** to receive all supported messages
+   across current and future accounts. **All private chats** matches only private
+   conversations, while **All groups** matches only groups. Existing private-only
+   routes retain that scope until edited. These sources determine which incoming
+   messages trigger the Agent; older unmatched messages are not replayed after saving.
    In **Routing → Destination**, choose the Agent Host and select an Agent from
    its list. Search by name or ID; use **Load more** for later pages. Choose
    **Conversation continuity** (one thread per private chat or group by default).

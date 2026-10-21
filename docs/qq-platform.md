@@ -94,7 +94,7 @@ message-type overview and older guild send page describe different surfaces.
 For C2C streaming, call `send_message` with one text part and `stream: {"index": 0}`.
 Retain `stream_handle`, increment `index`, and set `finished: true` on the last
 fragment. `input_mode` is `append` or `replace`. Fragments keep the first message's
-passive context; streams require an MCP-output route. Poll `get_operation` before
+passive context; streams require a source-authorized route. Poll `get_operation` before
 continuing after uncertainty. `execute_action(action="typing", arguments={"seconds": 30})`
 is a separate C2C status action, with a 1–60 second duration.
 

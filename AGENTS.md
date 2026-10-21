@@ -87,7 +87,7 @@ those stages only when the user has authorized them.
 - Only explicit Agent message-tool requests create channel messages. Agent final output is never sent. Show incoming
   messages and Agent replies together in conversation history under Messages.
   Conversation history is opened only from Messages, not from route rows. Route
-  rows have one Edit action; token rotation, enable/disable settings, and deletion
+  rows have one Edit action; thread reset, token rotation, enable/disable settings, and deletion
   belong on the route edit page. Channels and Agent Hosts expose deletion in
   their management dialogs; routes expose it on the edit page, using the shared red outline Delete
   button and official Alert Dialog confirmation. Do not add a separate reply page or per-reply

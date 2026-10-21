@@ -7,6 +7,7 @@ import { RouteSources } from "@/components/route-sources";
 import { HostResourceSelect } from "@/components/host-resource-select";
 import { ConsoleLink } from "@/components/console-link";
 import { DeleteResource } from "@/components/delete-resource";
+import { ResetThreads } from "@/components/reset-threads";
 import { Choice, FormField, type Action } from "@/components/form-controls";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -402,6 +403,20 @@ export function RouteConfiguration({
           <AlertDescription>{message(validation)}</AlertDescription>
         </Alert>
       )}
+      {route &&
+        snapshot.connections.some((item) => item.id === route.host_id && item.kind === "a13n") &&
+        route.thread_policy !== "message" &&
+        !route.fixed_thread_id && (
+          <div className="w-fit">
+            <ResetThreads
+              routeId={route.id}
+              action={action}
+              busy={busy}
+              error={error}
+              clearError={clearError}
+            />
+          </div>
+        )}
       <div className="flex flex-wrap justify-end gap-2">
         {route && (
           <>

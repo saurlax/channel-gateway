@@ -1117,7 +1117,7 @@ class Store:
         return target
 
     async def reset_thread(self, route_id: str) -> dict | None:
-        """Detach one concrete conversation without replaying or deleting history."""
+        """Detach a route's threads without replaying or deleting history."""
         async with self.transaction() as db:
             async with db.execute("SELECT * FROM routes WHERE id=?", (route_id,)) as cursor:
                 row = await cursor.fetchone()
@@ -1128,29 +1128,35 @@ class Store:
                 host = await cursor.fetchone()
             if not host or json.loads(host[0])["kind"] != "a13n":
                 raise ValueError("Only a13n conversations have thread bindings")
-            if route["conversation_id"] == "*":
-                raise ValueError("Select a concrete conversation to reset its thread")
-            if route["thread_policy"] == "fixed":
+            if route["thread_policy"] == "fixed" and route["fixed_thread_id"]:
                 raise ValueError("Choose a new fixed thread in route settings")
             if route["thread_policy"] == "message":
                 raise ValueError("This route already creates a new thread for each message")
             async with db.execute(
-                "SELECT 1 FROM events WHERE route_id=? AND state IN ('queued','submitted') LIMIT 1", (route_id,)
+                "SELECT id FROM routes WHERE id=? OR json_extract(value,'$.parent_route_id')=?", (route_id, route_id)
+            ) as cursor:
+                scope = tuple(item[0] for item in await cursor.fetchall())
+            placeholders = ",".join("?" for _ in scope)
+            async with db.execute(
+                f"SELECT 1 FROM events WHERE route_id IN ({placeholders}) AND state IN ('queued','submitted') LIMIT 1",
+                scope,
             ) as cursor:
                 if await cursor.fetchone():
-                    raise RouteConflict("Wait for pending messages to finish before resetting the conversation")
+                    raise RouteConflict("Wait for this route's pending messages to finish before resetting its threads")
             await db.execute(
-                "DELETE FROM thread_bindings WHERE binding_key IN "
-                "(SELECT b.binding_key FROM event_thread_bindings b JOIN events e ON e.id=b.event_id WHERE e.route_id=?)",
-                (route_id,),
+                f"DELETE FROM thread_bindings WHERE route_id IN ({placeholders}) OR binding_key IN "
+                "(SELECT b.binding_key FROM event_thread_bindings b JOIN events e ON e.id=b.event_id "
+                f"WHERE e.route_id IN ({placeholders}))",
+                (*scope, *scope),
             )
             # Retried historical requests retain their frozen target/receipt but
             # must never restore a binding that an administrator detached.
             await db.execute(
-                "DELETE FROM event_thread_bindings WHERE event_id IN (SELECT id FROM events WHERE route_id=?)",
-                (route_id,),
+                "DELETE FROM event_thread_bindings WHERE event_id IN "
+                f"(SELECT id FROM events WHERE route_id IN ({placeholders}))",
+                scope,
             )
-            await db.execute("UPDATE routes SET thread_id=NULL WHERE id=?", (route_id,))
+            await db.execute(f"UPDATE routes SET thread_id=NULL WHERE id IN ({placeholders})", scope)
         return {"id": route_id, "thread_id": None}
 
     async def submitted(self, event_id: str, route_id: str, receipt: dict) -> None:

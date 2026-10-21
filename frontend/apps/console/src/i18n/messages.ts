@@ -1,4 +1,13 @@
 export const chinese = {
+  "Messages during execution": "执行中新消息",
+  "Join current execution": "立即加入当前执行",
+  "Queue for the next run": "排队等待",
+  "Submit immediately. The Host incorporates the message at the next safe boundary.":
+    "立即投递，在下一个安全边界将消息加入当前执行。",
+  "Wait for the current execution to finish, then process messages in order.":
+    "等待当前执行结束，再按顺序处理消息。",
+  "Execution input policies require an a13n Host": "执行中新消息策略仅适用于 a13n 宿主",
+
   Slack: "Slack",
   Discord: "Discord",
   "Feishu / Lark": "飞书 / Lark",

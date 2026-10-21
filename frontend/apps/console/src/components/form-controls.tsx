@@ -43,6 +43,7 @@ export function Choice({
   items,
   placeholder,
   disabled,
+  showSelectedDescription = true,
 }: {
   id: string;
   value: string;
@@ -50,6 +51,7 @@ export function Choice({
   items: Array<[string, string, string?]>;
   placeholder?: string;
   disabled?: boolean;
+  showSelectedDescription?: boolean;
 }) {
   const { t } = useLocale();
   const selected = items.find(([key]) => key === value);
@@ -60,7 +62,9 @@ export function Choice({
         <SelectTrigger
           id={id}
           className="w-full"
-          aria-describedby={selected?.[2] ? `${id}-description` : undefined}
+          aria-describedby={
+            showSelectedDescription && selected?.[2] ? `${id}-description` : undefined
+          }
         >
           <SelectValue placeholder={placeholder ?? t("Choose…")}>{selected?.[1]}</SelectValue>
         </SelectTrigger>
@@ -84,7 +88,7 @@ export function Choice({
           ))}
         </SelectContent>
       </Select>
-      {selected?.[2] && (
+      {showSelectedDescription && selected?.[2] && (
         <p id={`${id}-description`} className="text-xs text-muted-foreground">
           {selected[2]}
         </p>

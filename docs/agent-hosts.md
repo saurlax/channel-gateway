@@ -13,6 +13,10 @@ permission to list published Agents and existing threads.
 
 CG submits inputs, uses the route's thread delivery policy, and tracks its runs.
 The default creates one thread per conversation; see [thread delivery](onebots-a13n.md#thread-delivery).
+**Messages during execution** defaults to joining the current run (`steer`);
+choose queue mode to wait for its completion. See the
+[busy-input setting](onebots-a13n.md#messages-during-execution) for scope, retries
+and shared-run reply behavior.
 MCP is optional for final-output replies. For tools, configure one shared MCP
 connection with the Host key and select destinations with `route_id`, following
 the [a13n MCP setup](onebots-a13n.md#optional-mcp-tools-in-a13n). Adding conversations

@@ -111,7 +111,9 @@ readable bot accounts independently, granting reads across their received
 conversations. Agent tools are configured in the Agent Host interface and
 CG always preserves that configuration. Select Agents from the Host list. Thread
 delivery defaults to one thread per source conversation, with per-sender, fixed,
-and per-message choices. Modal forms keep
+and per-message choices. a13n routes default to submitting new messages into the
+current run at a safe boundary, with a queue-until-finished option under
+Messages during execution. Modal forms keep
 one field per row at every width. Sign in
 with the account and password you configured. Follow the
 [OneBots and a13n setup guide](docs/onebots-a13n.md) or the

@@ -18,6 +18,7 @@ export type RouteSource = {
   conversation_kind: ConversationKind;
   conversation_id: string;
 };
+export type BusyPolicy = "steer" | "queue";
 export type ThreadPolicy = "conversation" | "sender" | "fixed" | "message";
 export type Route = {
   id: string;
@@ -34,6 +35,7 @@ export type Route = {
   parent_route_id: string | null;
   agent_id: string | null;
   thread_policy?: ThreadPolicy;
+  busy_policy?: BusyPolicy;
   fixed_thread_id?: string | null;
   enabled: boolean;
   reply_source: "output" | "mcp";

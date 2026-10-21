@@ -8,7 +8,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import aiosqlite
 
@@ -51,6 +51,10 @@ CREATE TABLE IF NOT EXISTS replies (
  state TEXT NOT NULL DEFAULT 'queued', message_id TEXT, error TEXT,
  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE TABLE IF NOT EXISTS host_run_outputs (
+ host_id TEXT NOT NULL, thread_id TEXT NOT NULL, run_id TEXT NOT NULL,
+ event_id TEXT NOT NULL, PRIMARY KEY(host_id,thread_id,run_id)
+);
 CREATE TABLE IF NOT EXISTS reply_payloads (
  reply_id TEXT PRIMARY KEY, payload TEXT NOT NULL
 );
@@ -78,6 +82,7 @@ CREATE TABLE IF NOT EXISTS observations (
  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS event_route ON events(route_id, created_at);
+CREATE INDEX IF NOT EXISTS event_run ON events(thread_id, run_id);
 CREATE INDEX IF NOT EXISTS observation_conversation ON observations(
  json_extract(message,'$.address.account_id'), json_extract(message,'$.address.conversation_id'), created_at, id
 );
@@ -282,6 +287,7 @@ class Store:
         value.setdefault("read_channel_ids", None)
         value.setdefault("action_grants", [])
         value.setdefault("thread_policy", "conversation")
+        value.setdefault("busy_policy", "steer")
         value.setdefault("fixed_thread_id", None)
         return value
 
@@ -307,6 +313,7 @@ class Store:
                         "read_channel_ids",
                         "action_grants",
                         "thread_policy",
+                        "busy_policy",
                         "fixed_thread_id",
                     ):
                         row[key] = parent[key]
@@ -763,21 +770,97 @@ class Store:
         return rows
 
     async def pending(self) -> list[dict]:
-        # Fixed destinations serialize across every source of their configured route.
-        return await self.rows("""WITH work AS (
-            SELECT e.rowid AS sequence,e.id,
-                CASE WHEN json_extract(r.value,'$.thread_policy')='fixed'
-                          AND json_extract(r.value,'$.fixed_thread_id') IS NOT NULL
-                     THEN json_extract(r.value,'$.host_id')||':'||json_extract(r.value,'$.fixed_thread_id')
-                     WHEN json_extract(r.value,'$.thread_policy')='fixed'
-                     THEN COALESCE(json_extract(r.value,'$.parent_route_id'),r.id)
-                     ELSE r.id END AS delivery_scope
-            FROM events e JOIN routes r ON r.id=e.route_id
-            WHERE e.state IN ('queued','submitted')
-        ) SELECT e.* FROM events e JOIN work w ON w.id=e.id
-          WHERE NOT EXISTS (SELECT 1 FROM work older
-                            WHERE older.delivery_scope=w.delivery_scope AND older.sequence<w.sequence)
-          ORDER BY w.sequence LIMIT 100""")
+        """Admit FIFO submissions independently of polling already accepted runs."""
+        routes = {route["id"]: route for route in await self.routes()}
+        bindings = {row["binding_key"]: row["thread_id"] for row in await self.rows("SELECT * FROM thread_bindings")}
+        work = await self.rows("""SELECT rowid AS sequence,id,route_id,state,thread_id,target,
+            json_extract(message,'$.sender_id') AS sender_id,
+            body IS NOT NULL AS frozen,json_extract(body,'$.delivery') AS delivery
+            FROM events WHERE state IN ('queued','submitted') ORDER BY rowid""")
+        scopes: dict[tuple, list[dict]] = {}
+        for event in work:
+            route = routes.get(event["route_id"])
+            if not route:
+                continue
+            key = thread_binding_key(route, {"sender_id": event["sender_id"]})
+            target = event["target"] or ""
+            pinned = (
+                unquote(target[len("/threads/") : -len("/inbox")])
+                if target.startswith("/threads/") and target.endswith("/inbox")
+                else None
+            )
+            thread = event["thread_id"] or pinned
+            if not thread:
+                thread = bindings.get(key) if key else None
+                if route.get("thread_policy", "conversation") == "fixed":
+                    thread = route.get("fixed_thread_id") or thread
+                elif route.get("thread_policy", "conversation") == "conversation":
+                    thread = thread or route.get("thread_id")
+            scope = ("thread", route["host_id"], thread) if thread else ("binding", key or event["id"])
+            scopes.setdefault(scope, []).append(event)
+        queued, submitted = [], []
+        for events in scopes.values():
+            submitted.extend(event for event in events if event["state"] == "submitted")
+            head = next((event for event in events if event["state"] == "queued"), None)
+            if head is None:
+                continue
+            route = routes[head["route_id"]]
+            policy = (
+                ("queue" if head["delivery"] != "steer" else "steer")
+                if head["frozen"]
+                else route.get("busy_policy", "steer")
+            )
+            if policy == "steer" or not any(
+                event["state"] == "submitted" and event["sequence"] < head["sequence"] for event in events
+            ):
+                queued.append(head)
+        queued.sort(key=lambda event: event["sequence"])
+        submitted.sort(key=lambda event: event["sequence"])
+        # Reserve polling capacity even under a continuous stream of new input.
+        count = min(len(queued), max(50, 100 - len(submitted)))
+        selected = queued[:count] + submitted[: 100 - count]
+        if not selected:
+            return []
+        ids = [event["id"] for event in selected]
+        rows = await self.rows("SELECT * FROM events WHERE id IN (" + ",".join("?" for _ in ids) + ")", tuple(ids))
+        values = {row["id"]: row for row in rows}
+        return [values[identifier] for identifier in ids]
+
+    async def host_thread_events(self, host_id: str, thread_id: str, run_id: str) -> list[dict]:
+        return await self.rows(
+            """WITH destinations AS (
+            SELECT id,value FROM routes UNION ALL SELECT id,value FROM archived_routes
+        ) SELECT e.*,e.rowid AS sequence FROM events e JOIN destinations r ON r.id=e.route_id
+          WHERE json_extract(r.value,'$.host_id')=? AND e.thread_id=? AND (e.run_id=? OR e.state='submitted' OR (e.state IN ('blocked','failed') AND e.run_id IS NULL AND e.entry_id IS NOT NULL)) ORDER BY e.rowid""",
+            (host_id, thread_id, run_id),
+        )
+
+    async def finish_host_run(
+        self,
+        host_id: str,
+        thread_id: str,
+        run_id: str,
+        event_id: str,
+        *,
+        text: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Record one final-output decision per Host/thread/run, atomically with replies."""
+        async with self.transaction() as db:
+            claimed = await db.execute(
+                "INSERT OR IGNORE INTO host_run_outputs(host_id,thread_id,run_id,event_id) VALUES(?,?,?,?)",
+                (host_id, thread_id, run_id, event_id),
+            )
+            if claimed.rowcount == 1 and text is not None:
+                await db.execute(
+                    "INSERT OR IGNORE INTO replies(id,route_id,event_id,text,state) SELECT ?,route_id,id,?,'queued' FROM events WHERE id=? AND state='submitted'",
+                    (new_id("reply"), text, event_id),
+                )
+            await db.execute(
+                """UPDATE events SET state='completed',error=? WHERE state='submitted' AND run_id=? AND thread_id=?
+                AND route_id IN (SELECT id FROM routes WHERE json_extract(value,'$.host_id')=?)""",
+                (error, run_id, thread_id, host_id),
+            )
 
     async def received_messages(
         self,

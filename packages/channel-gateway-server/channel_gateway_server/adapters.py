@@ -150,7 +150,7 @@ def host_body(message: dict, route: dict) -> dict:
     )
     body = {
         "agent_id": route["agent_id"],
-        "delivery": "next_run",
+        "delivery": "next_run" if route.get("busy_policy", "steer") == "queue" else "steer",
         "payload": {
             "content": [{"type": "text", "text": text}]
             + ([{"type": "url", "url": image["url"]} for image in message.get("images", [])] if direct_media else [])

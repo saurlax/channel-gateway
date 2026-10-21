@@ -342,7 +342,10 @@ def create_app(
                 and body.allowed_user_ids != [body.conversation_id]
             ):
                 raise HTTPException(422, "A private route authorizes only its conversation user")
-            if source["conversation_kind"] not in capabilities(channel)["conversations"]:
+            if (
+                source["conversation_kind"] != "*"
+                and source["conversation_kind"] not in capabilities(channel)["conversations"]
+            ):
                 raise HTTPException(422, "This channel does not support that conversation type")
 
     @app.get("/api/v1/routes")

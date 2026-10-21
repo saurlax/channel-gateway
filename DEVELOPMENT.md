@@ -113,7 +113,9 @@ binding, and readable channels. Sources use repeatable rows with two input colum
 (channel, user/group) and a trailing delete button,
 including at narrow widths. A compact plus button adds a row. Channel choices
 include All channels, which includes future channels; target choices distinguish
-All users and All groups and support observed identities or explicit platform IDs.
+All conversations, All private chats, and All groups and support observed identities
+or explicit platform IDs. All conversations includes every supported conversation
+type; existing private-only sources keep their scope until explicitly edited.
 Sources are the complete console trigger condition; do not add a separate sender
 permission control. Destination selects the Host and Agent from its published,
 unarchived Agent list, then chooses thread delivery: per conversation (default),

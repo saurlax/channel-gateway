@@ -194,8 +194,14 @@ class ConnectionInput(Contract):
 
 class RouteSource(Contract):
     channel_id: Identifier | Literal["*"]
-    conversation_kind: ConversationKind
+    conversation_kind: ConversationKind | Literal["*"]
     conversation_id: Identifier | Literal["*"]
+
+    @model_validator(mode="after")
+    def all_conversations(self) -> "RouteSource":
+        if self.conversation_kind == "*" and self.conversation_id != "*":
+            raise ValueError("All conversation types require all conversation IDs")
+        return self
 
 
 class RouteInput(Contract):

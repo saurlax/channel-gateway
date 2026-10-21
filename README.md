@@ -104,8 +104,10 @@ and Agent replies. Management pages use a search toolbar and table; Add and
 row actions open dialogs for channels and Agent Hosts. Route creation and editing
 use separate pages with Basic information, Routing, and Connections tabs.
 Routing shows Sources and Destination together. Sources support multiple
-channel/user-or-group rows, including all current and future channels, all users,
-or all groups. Sources govern Agent activation and reply destinations. Connections
+channel/conversation rows, including all current and future channels, all conversations,
+all private chats, or all groups. All conversations includes every supported
+conversation type; all private chats excludes groups. Existing routes retain their
+source scope until edited. Sources govern Agent activation and reply destinations. Connections
 contains reply source and the supported a13n MCP connection binding, and selects
 readable bot accounts independently, granting reads across their received
 conversations. Agent tools are configured in the Agent Host interface and

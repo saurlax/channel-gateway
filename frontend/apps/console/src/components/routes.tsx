@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/table";
 import { isHost } from "@/hosts";
 import type { Snapshot } from "@/api";
-import { routeSources } from "@/lib/route-sources";
+import { routeSources, sourceLabel } from "@/lib/route-sources";
 import { ConsoleLink } from "@/components/console-link";
 import { routeEditPath } from "@/lib/navigation";
 
@@ -90,13 +90,7 @@ export function Routes({ snapshot, busy }: { snapshot: Snapshot; busy: boolean }
                           {source.channel_id === "*"
                             ? t("All channels")
                             : connectionName(source.channel_id)}{" "}
-                          /{" "}
-                          {source.conversation_id === "*"
-                            ? t(source.conversation_kind === "private" ? "All users" : "All groups")
-                            : t(
-                                source.conversation_kind === "private" ? "User {id}" : "Group {id}",
-                                { id: source.conversation_id },
-                              )}
+                          / {t(sourceLabel(source), { id: source.conversation_id })}
                         </p>
                       ))}
                     </div>

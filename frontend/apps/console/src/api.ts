@@ -15,7 +15,7 @@ export type Connection = {
 };
 export type RouteSource = {
   channel_id: string;
-  conversation_kind: ConversationKind;
+  conversation_kind: ConversationKind | "*";
   conversation_id: string;
 };
 export type BusyPolicy = "steer" | "queue";

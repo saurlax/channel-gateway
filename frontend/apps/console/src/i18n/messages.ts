@@ -118,7 +118,8 @@ export const chinese = {
   "Choose existing channels for message reads": "请选择现有渠道作为消息读取范围",
   "Save route": "保存路由",
   "All channels": "全部渠道",
-  "All users": "全部用户",
+  "All private chats": "全部私聊",
+  "Private chat {id}": "私聊 {id}",
   "All groups": "全部群",
   "User or group": "用户或群",
   "User {id}": "用户 {id}",
@@ -184,7 +185,7 @@ export const chinese = {
 
   "Use this token as an MCP bearer credential. It is shown once and grants access to this route. All-conversation routes include their concrete conversations.":
     "将此令牌作为 MCP Bearer 凭证。令牌仅显示一次，授予此路由的访问权限；任意会话路由包含其已接收的具体会话。",
-  "All conversations": "任意会话",
+  "All conversations": "全部会话",
   "Specific conversation": "指定会话",
   "Conversation scope": "会话范围",
   "Any sender": "任意发送者",

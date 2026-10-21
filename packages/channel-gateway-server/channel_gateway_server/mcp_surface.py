@@ -134,7 +134,7 @@ def install_tools(server, operations, store, authorized_route, readable_route):
                 "default_delivery": "proactive" if can_send and proactive_authority(route, connection) else "passive",
                 "stream": {
                     "supported": kind == "qq" and scene == "private",
-                    "authorized": can_send and route.get("reply_source") == "mcp",
+                    "authorized": can_send,
                 },
                 "max_text_characters": adapter.get("max_text_characters", 16000),
                 "max_media_parts": 1,
@@ -144,7 +144,7 @@ def install_tools(server, operations, store, authorized_route, readable_route):
             "actions": {
                 "reaction": {
                     "supported": platform or kind == "onebots" or (kind == "qq" and scene == "guild"),
-                    "authorized": "message.react" in grants or (kind == "onebots" and can_send),
+                    "authorized": "message.react" in grants or (kind == "onebots" and "message.react.onebot" in grants),
                     "restriction": "platform emoji representation required"
                     if platform
                     else "optional OneBot extension"
@@ -157,7 +157,7 @@ def install_tools(server, operations, store, authorized_route, readable_route):
                 },
                 "typing": {
                     "supported": (kind == "qq" and scene == "private") or adapter.get("typing", False),
-                    "authorized": can_send and route.get("reply_source") == "mcp",
+                    "authorized": can_send,
                 },
             },
             "upstream_permissions": "not_verified; platform permissions, reply windows and rate limits still apply",
@@ -364,6 +364,9 @@ def install_tools(server, operations, store, authorized_route, readable_route):
         row = rows[0]
         connection = await store.connection(route["channel_id"])
         allowed = connection and tool_message_allowed(route, connection)
+        payload = await store.reply_payload(operation_id)
+        if payload and payload.get("delivery") in {"proactive", "wakeup"}:
+            allowed = allowed and "message.proactive" in route.get("action_grants", [])
         return {
             "operation_id": row["id"],
             "kind": "message",

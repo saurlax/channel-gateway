@@ -86,11 +86,10 @@ currently combine with Markdown, a quote, native options, or a stream. New-platf
 combinations follow their adapter guide.
 
 QQ sends default to proactive when the route has `message.proactive`; otherwise
-MCP-output routes keep passive replies. `delivery` explicitly selects `passive`,
-`proactive`, or C2C-only `wakeup`. Final run text retains its original passive
-context. See [QQ delivery and limits](qq-platform.md#message-creation).
+all routes keep passive tool delivery. `delivery` explicitly selects `passive`,
+`proactive`, or C2C-only `wakeup`. Agent final output is never sent. See [QQ delivery and limits](qq-platform.md#message-creation).
 
-For a QQ C2C stream on an MCP-output route, send one text part with
+For a QQ C2C stream, send one text part with
 `stream: {"index": 0}`. Reuse the returned `stream_handle`, increment `index`, and
 set `finished: true` on the last fragment. Optional `input_mode` is `append` or
 `replace`. Do not combine streams with explicit delivery, quotes, or native options.

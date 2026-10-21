@@ -51,10 +51,6 @@ CREATE TABLE IF NOT EXISTS replies (
  state TEXT NOT NULL DEFAULT 'queued', message_id TEXT, error TEXT,
  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE TABLE IF NOT EXISTS host_run_outputs (
- host_id TEXT NOT NULL, thread_id TEXT NOT NULL, run_id TEXT NOT NULL,
- event_id TEXT NOT NULL, PRIMARY KEY(host_id,thread_id,run_id)
-);
 CREATE TABLE IF NOT EXISTS reply_payloads (
  reply_id TEXT PRIMARY KEY, payload TEXT NOT NULL
 );
@@ -134,6 +130,25 @@ class Store:
         async with self.transaction() as db:
             await db.execute("UPDATE routes SET value=json_remove(value,'$.auto_reply','$.access_mode')")
             await db.execute("UPDATE replies SET state='queued' WHERE state='approved'")
+            await db.execute(
+                "UPDATE replies SET state='blocked',error='Automatic output delivery retired' WHERE event_id IS NOT NULL AND state='queued'"
+            )
+            for table in ("routes", "archived_routes"):
+                async with db.execute(f"SELECT id,value FROM {table}") as cursor:
+                    stored = await cursor.fetchall()
+                for row in stored:
+                    value = json.loads(row[1])
+                    previous = value.pop("reply_source", None)
+                    # Preserve existing OneBot reaction authority without granting it to other routes.
+                    if previous == "mcp":
+                        grants = value.setdefault("action_grants", [])
+                        if "message.react" not in grants and "message.react.onebot" not in grants:
+                            grants.append("message.react.onebot")
+                    if previous is not None:
+                        await db.execute(f"UPDATE {table} SET value=? WHERE id=?", (json.dumps(value), row[0]))
+            await db.execute(
+                "UPDATE channel_actions SET required_grant='message.react.onebot' WHERE required_grant='legacy.react'"
+            )
             await db.execute(
                 "UPDATE replies SET state='blocked',error='Legacy draft retired; send a new message' WHERE state='draft'"
             )
@@ -283,6 +298,7 @@ class Store:
         value = {**json.loads(row["value"]), "thread_id": row["thread_id"]}
         value.setdefault("sender_policy", "allowlist")
         value.pop("access_mode", None)
+        value.pop("reply_source", None)
         value.setdefault("parent_route_id", None)
         value.setdefault("read_channel_ids", None)
         value.setdefault("action_grants", [])
@@ -308,7 +324,6 @@ class Store:
                     for key in (
                         "sender_policy",
                         "allowed_user_ids",
-                        "reply_source",
                         "mcp_connection_id",
                         "read_channel_ids",
                         "action_grants",
@@ -546,7 +561,6 @@ class Store:
                     "agent_id",
                     "thread_policy",
                     "fixed_thread_id",
-                    "reply_source",
                     "mcp_connection_id",
                 )
             ):
@@ -825,42 +839,6 @@ class Store:
         rows = await self.rows("SELECT * FROM events WHERE id IN (" + ",".join("?" for _ in ids) + ")", tuple(ids))
         values = {row["id"]: row for row in rows}
         return [values[identifier] for identifier in ids]
-
-    async def host_thread_events(self, host_id: str, thread_id: str, run_id: str) -> list[dict]:
-        return await self.rows(
-            """WITH destinations AS (
-            SELECT id,value FROM routes UNION ALL SELECT id,value FROM archived_routes
-        ) SELECT e.*,e.rowid AS sequence FROM events e JOIN destinations r ON r.id=e.route_id
-          WHERE json_extract(r.value,'$.host_id')=? AND e.thread_id=? AND (e.run_id=? OR e.state='submitted' OR (e.state IN ('blocked','failed') AND e.run_id IS NULL AND e.entry_id IS NOT NULL)) ORDER BY e.rowid""",
-            (host_id, thread_id, run_id),
-        )
-
-    async def finish_host_run(
-        self,
-        host_id: str,
-        thread_id: str,
-        run_id: str,
-        event_id: str,
-        *,
-        text: str | None = None,
-        error: str | None = None,
-    ) -> None:
-        """Record one final-output decision per Host/thread/run, atomically with replies."""
-        async with self.transaction() as db:
-            claimed = await db.execute(
-                "INSERT OR IGNORE INTO host_run_outputs(host_id,thread_id,run_id,event_id) VALUES(?,?,?,?)",
-                (host_id, thread_id, run_id, event_id),
-            )
-            if claimed.rowcount == 1 and text is not None:
-                await db.execute(
-                    "INSERT OR IGNORE INTO replies(id,route_id,event_id,text,state) SELECT ?,route_id,id,?,'queued' FROM events WHERE id=? AND state='submitted'",
-                    (new_id("reply"), text, event_id),
-                )
-            await db.execute(
-                """UPDATE events SET state='completed',error=? WHERE state='submitted' AND run_id=? AND thread_id=?
-                AND route_id IN (SELECT id FROM routes WHERE json_extract(value,'$.host_id')=?)""",
-                (error, run_id, thread_id, host_id),
-            )
 
     async def received_messages(
         self,
@@ -1155,10 +1133,8 @@ class Store:
                 (thread_id, entry_id, run_id, event_id),
             )
 
-    async def queue_reply(
-        self, route: dict, text: str, *, event_id: str | None = None, payload: dict | None = None
-    ) -> dict:
-        row = {"id": new_id("reply"), "route_id": route["id"], "event_id": event_id, "text": text, "state": "queued"}
+    async def queue_reply(self, route: dict, text: str, *, payload: dict | None = None) -> dict:
+        row = {"id": new_id("reply"), "route_id": route["id"], "event_id": None, "text": text, "state": "queued"}
         async with self.transaction() as db:
             cursor = await db.execute(
                 "INSERT OR IGNORE INTO replies(id,route_id,event_id,text,state) VALUES (?,?,?,?,?)",
@@ -1166,8 +1142,6 @@ class Store:
             )
             if payload is not None and cursor.rowcount == 1:
                 await db.execute("INSERT INTO reply_payloads VALUES (?,?)", (row["id"], json.dumps(payload)))
-            if event_id:
-                await db.execute("UPDATE events SET state='completed',error=NULL WHERE id=?", (event_id,))
         return row
 
     async def reply_payload(self, identifier: str) -> dict | None:

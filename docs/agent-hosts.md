@@ -17,9 +17,9 @@ The default creates one thread per conversation; see [thread delivery](onebots-a
 choose queue mode to wait for its completion. See the
 [busy-input setting](onebots-a13n.md#messages-during-execution) for scope, retries
 and shared-run reply behavior.
-MCP is optional for final-output replies. For tools, configure one shared MCP
+All channel messages use tools. Configure one shared MCP
 connection with the Host key and select destinations with `route_id`, following
-the [a13n MCP setup](onebots-a13n.md#optional-mcp-tools-in-a13n). Adding conversations
+the [a13n MCP setup](onebots-a13n.md#mcp-tools-in-a13n). Adding conversations
 does not add connections or tools. This key grants access to every enabled route
 assigned to the Host; use separate Hosts or deliberately narrower route credentials
 when clients must not share that access. Separate threads alone do not narrow

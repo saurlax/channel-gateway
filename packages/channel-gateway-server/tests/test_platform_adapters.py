@@ -239,7 +239,6 @@ def platform_gateway(request, tmp_path):
                 "conversation_kind": "group" if kind == "lark" else "channel",
                 "conversation_id": TARGET[kind],
                 "sender_policy": "any",
-                "reply_source": "mcp",
                 "action_grants": ["message.react", "message.recall", "history.read"],
             },
         )
@@ -593,7 +592,6 @@ def test_cursor_cannot_be_reused_in_another_conversation(platform_gateway):
             "conversation_kind": route["conversation_kind"],
             "conversation_id": "OTHER",
             "sender_policy": "any",
-            "reply_source": "mcp",
             "action_grants": ["history.read"],
         },
     ).json()
@@ -664,7 +662,6 @@ def test_thread_binding_is_explicit_and_preserves_native_target(platform_gateway
             "conversation_kind": "thread",
             "conversation_id": conversation,
             "sender_policy": "any",
-            "reply_source": "mcp",
         },
     )
     assert response.status_code == 201, response.text
@@ -798,7 +795,7 @@ def test_discord_resume_advances_only_after_durable_ingress(platform_gateway, mo
     client.portal.call(scenario)
 
 
-def test_host_delivery_uses_media_handles_and_automatic_text_reply(platform_gateway):
+def test_host_delivery_uses_media_handles_and_tool_reply(platform_gateway):
     kind, client, app, provider, _, route = platform_gateway
     host_requests = []
     original = provider.api
@@ -819,9 +816,7 @@ def test_host_delivery_uses_media_handles_and_automatic_text_reply(platform_gate
         "/api/v1/connections",
         json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "host-secret"},
     ).json()
-    updated = client.patch(
-        f"/api/v1/routes/{route['id']}", json={"host_id": host["id"], "agent_id": "agent1", "reply_source": "output"}
-    )
+    updated = client.patch(f"/api/v1/routes/{route['id']}", json={"host_id": host["id"], "agent_id": "agent1"})
     assert updated.status_code == 200, updated.text
     hook(platform_gateway)
     tick(platform_gateway)
@@ -833,6 +828,9 @@ def test_host_delivery_uses_media_handles_and_automatic_text_reply(platform_gate
     assert context["media_access"]["tool"] == "read"
     assert context["media_access"]["source"] == "gateway"
     assert "files.slack.com" not in content[0]["text"] and "lark-resource:" not in content[0]["text"]
+    assert not tool(platform_gateway, "send_message", content=[{"type": "text", "text": "Explicit reply"}]).get(
+        "isError"
+    )
     tick(platform_gateway)
     replies = client.get("/api/v1/replies").json()
     assert len(replies) == 1 and replies[0]["state"] == "sent", replies

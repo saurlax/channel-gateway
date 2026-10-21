@@ -62,8 +62,8 @@ those stages only when the user has authorized them.
   Read-only activity lists need no Add button.
 - Route configuration uses Basic information, Routing, and Connections tabs
   without a Card wrapper. Basic information contains name and enabled state;
-  Routing shows Sources and Destination together; Connections contains reply source,
-  the supported a13n MCP connection binding, and readable channel accounts.
+  Routing shows Sources and Destination together; Connections contains the optional
+  dedicated a13n MCP connection binding and readable channel accounts.
   Agent tool permissions are configured in the Agent Host interface; CG always
   inherits the Agent's configured connection tools.
   Each source row has channel and user/group input columns, followed by a delete
@@ -84,7 +84,7 @@ those stages only when the user has authorized them.
   product and responsive adjustments. Preserve browser-language localization,
   accessible labels, keyboard interaction, and destination authorization checks.
 
-- Authorized private and group replies are sent automatically. Show incoming
+- Only explicit Agent message-tool requests create channel messages. Agent final output is never sent. Show incoming
   messages and Agent replies together in conversation history under Messages.
   Conversation history is opened only from Messages, not from route rows. Route
   rows have one Edit action; token rotation, enable/disable settings, and deletion

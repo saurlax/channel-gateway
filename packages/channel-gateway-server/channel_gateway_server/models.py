@@ -21,6 +21,7 @@ type ActionGrant = Literal[
     "history.search",
     "resource.read",
     "message.react",
+    "message.react.onebot",
     "message.recall",
     "message.recall_members",
     "message.proactive",
@@ -29,7 +30,7 @@ type ActionGrant = Literal[
     "content.manage",
     "bot.manage",
 ]
-type ActionGrants = Annotated[list[ActionGrant], Field(max_length=11)]
+type ActionGrants = Annotated[list[ActionGrant], Field(max_length=12)]
 
 
 @dataclass(frozen=True)
@@ -220,7 +221,6 @@ class RouteInput(Contract):
     busy_policy: BusyPolicy = "steer"
     fixed_thread_id: Identifier | None = None
     enabled: bool = True
-    reply_source: Literal["output", "mcp"] = "output"
     mcp_connection_id: Identifier | None = None
 
     @model_validator(mode="after")
@@ -277,7 +277,6 @@ class RouteUpdate(Contract):
     sender_policy: Literal["allowlist", "any"] | None = None
     enabled: bool | None = None
     allowed_user_ids: SenderIds | None = None
-    reply_source: Literal["output", "mcp"] | None = None
     mcp_connection_id: Identifier | None = None
 
 

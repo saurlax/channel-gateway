@@ -77,7 +77,7 @@ Host's configured tool list. CG never changes the Agent's enabled tools. The
 default is empty; upgrades grant no new management authority. Supported grants:
 
 - `resource.read`: native resource and notification reads within source scope.
-- `message.react`: reactions independently of final-output versus MCP replies.
+- `message.react`: native reactions in authorized source conversations.
 - `message.recall`: recall the bot's own confirmed sent messages.
 - `message.recall_members`: recall source-authorized received messages.
 - `message.proactive`: proactive/recall-period sends without a passive source.
@@ -86,12 +86,12 @@ default is empty; upgrades grant no new management authority. Supported grants:
 - `content.manage`: announcements, pins, schedules, forums, and guild audio.
 - `bot.manage`: account-wide menus/panels/sharing and approval-policy administration.
 
-Message tools require an authorized source destination. QQ routes with
-`message.proactive` permit message tools on both final-output and MCP routes.
-Without that grant, existing MCP routes retain passive tool replies, and
-final-output routes reject message tools. Independent actions may also run on
-final-output routes when explicitly granted.
-Legacy MCP OneBot reactions retain their existing authority. Read-channel grants
+Message tools require an authorized source destination. Every route can request
+passive tool messages; `message.proactive` additionally authorizes proactive sends.
+Existing MCP OneBot reaction authority is preserved through the OneBot-only
+`message.react.onebot` grant during
+upgrade. Other platform actions retain their separate explicit grants.
+Read-channel grants
 never authorize mutations or native resource management. Parent grants propagate
 to current children and are rechecked at invocation and execution. Removing a
 grant, changing a source, disabling/deleting a route, or changing its channel
@@ -99,24 +99,15 @@ blocks queued actions before further external effects.
 
 ## Passive replies and proactive tools
 
-Final Agent text on `reply_source: output` remains a passive reply to that
-input's saved `msg_id` or `event_id`. A tool send does not suppress a later final
-output; the Agent must avoid repeating already sent content. No expired passive
-reply is automatically promoted to proactive delivery.
-
-`send_message` accepts optional `delivery` for text and media.
-Omitting it selects proactive delivery on QQ routes with `message.proactive`;
-otherwise legacy MCP routes keep passive delivery. Explicit `passive`,
-`proactive`, and C2C-only `wakeup` override that default under current authority.
-Delivery is saved in the queued payload, never re-derived after grant changes.
-Proactive bodies omit `msg_id`, `event_id`, and passive `msg_seq`. Final output
-and explicit passive tool sends continue to use authorized native context.
-OneBot and Weixin behavior does not change. Discovery returns `default_delivery`
-and `can_send_proactively` alongside `can_reply`.
-Verified a13n input context also includes `reply_source`, `default_delivery`,
-and `can_send_proactively`, so ordinary final-text replies do not need a tool
-discovery round merely to determine their delivery policy. These fields are
-context, not replacement authority; tools and workers still recheck the route.
+All outgoing content uses `send_message`. Agent final output is never sent.
+The tool accepts optional `delivery` for text and media. Omitting it selects
+proactive delivery with `message.proactive`, otherwise passive delivery.
+Explicit `passive`, `proactive`, and C2C-only `wakeup` follow current authority.
+Delivery is frozen in the queued payload. Passive sends use current authorized
+native context and never become proactive after expiry. Proactive bodies omit
+`msg_id`, `event_id`, and passive `msg_seq`. OneBot and Weixin retain passive tool
+sending. Discovery and verified a13n input context expose `default_delivery` and
+`can_send_proactively`; these fields never replace current server authorization.
 
 Proactive/wakeup attempts share persistent, conservative budgets by QQ AppID:
 5 per rolling second, 30 per rolling minute, 20 per destination per rolling

@@ -104,8 +104,7 @@ configured. They are deterministic opaque IDs, not stored routes or send
 destinations; use an explicit `route_id` to read them. Providing any unauthorized
 handle fails without exposing destination content.
 Listing returns route ID (`id`), name, channel connection ID, conversation kind
-and ID, reply source, and `can_read`/`can_reply` flags. Read-only handles have null
-reply source and `can_reply: false`. Source destinations can be reply-authorized
+and ID, and `can_read`/`can_reply` flags. Read-only handles have `can_reply: false`. Source destinations can be reply-authorized
 without being readable when their account is outside the explicit read grant. It exposes neither sender allowlists nor credentials.
 For enabled all-conversation scopes, listing materializes handles for previously
 observed authorized conversations without triggering Agent work. Specific routes,
@@ -157,10 +156,10 @@ Image bytes are available separately through `read(resource='image')` under the 
 read policy, not embedded in every history response.
 
 `send_message` accepts up to 16000 characters (nonempty text or a supported guild
-card is required) and accepts invocation only for
-`reply_source: mcp`, or a QQ route with explicit `message.proactive` authority.
-The latter can retain final-output passive replies while tools proactively send
-messages/media. Tool delivery defaults and rate budgets follow the
+card is required) in any currently source-authorized writable route. All channel
+messages use tools; no Agent final output is forwarded. Proactive delivery still
+requires `message.proactive`; ungranted routes use authorized passive context.
+Tool delivery defaults and rate budgets follow the
 [QQ platform contract](06-qq-platform.md#passive-replies-and-proactive-tools).
 It returns a reply ID and initial state; this is a request
 receipt, not confirmed platform delivery. The [reply lifecycle](03-routing-and-delivery.md#reply-lifecycle)
@@ -181,19 +180,14 @@ An Agent sharing one Host trust boundary uses one MCP connection authenticated
 with that Host's key. The tool inventory is fixed across conversations; each
 invocation selects an authorized `route_id`. Adding a group, private chat, or
 guild channel changes route data, not tool names, connection count, or Tool Search
-groups. Per-conversation Tool Search groups are not required. Final-output routes
-need no dedicated MCP binding; QQ proactive tools additionally require the
-explicit route grant described in the [QQ contract](06-qq-platform.md#passive-replies-and-proactive-tools).
-
-For an intentionally narrower client capability, a route with exactly one concrete source can bind
-one dedicated a13n MCP connection. Multi-source and wildcard a13n rules use final
-run output, while generic MCP clients can use multi-source scopes directly.
-The same dedicated connection cannot
-be shared by two routes on a Host. Its URL points to CG `/mcp/`, and its bearer
-credential is that route's token. The shared Host connection spans all enabled
-assigned route read grants and source destinations. A route
-token includes its configured readable channels, which can exceed its trigger sources. Without a binding, the a13n bridge operates through
-final run output without requiring MCP.
+groups. Per-conversation Tool Search groups are not required. This shared
+connection supports exact, multi-source and wildcard route configurations.
+For an intentionally narrower capability, one concrete source can optionally bind
+one dedicated a13n MCP connection using its route token. The connection cannot be
+shared by two routes on a Host. No dedicated binding is required when using the
+Host key. Route read grants can exceed trigger sources. Without an MCP connection
+in the Agent's configuration, it cannot send channel messages; final output is
+never a substitute.
 
 CG always preserves the selected Agent's configured tools. Host submission bodies
 never set `options.overrides.connection_tools`. Configure enabled connections and
@@ -211,7 +205,7 @@ blocked before retry rather than changed under the same idempotency key. Send a
 new message to start a new command. Already submitted runs continue their normal
 completion workflow.
 
-Changing reply source or MCP connection binding is refused while an input is
+Changing the optional MCP connection binding is refused while an input is
 queued/submitted, including inputs in an all-conversation route's children.
 Rotating a token does not rewrite a frozen Host submission body. After rotation,
 the administrator must replace the bearer credential in the corresponding a13n

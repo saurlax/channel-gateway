@@ -8,7 +8,7 @@ import httpx
 from channel_gateway_core import Message
 from websockets.exceptions import ConnectionClosed
 
-from .adapters import AdapterError, HttpAdapters, event_key, host_body, output_text, resource_path
+from .adapters import AdapterError, HttpAdapters, event_key, host_body, resource_path
 from .channels.actions import tool_message_allowed
 from .channels.common import OperationRejected, SendBlocked
 from .channels.manager import ChannelManager
@@ -134,12 +134,11 @@ class Bridge:
         if not run_id:
             path = resource_path("threads", event["thread_id"]) + "/inbox/" + event["entry_id"]
             entry = await self.adapters.host(connection, "GET", path)
+            if entry["status"] not in {"pending", "assigned", "consumed"}:
+                await self.store.update_event(event["id"], state="failed", error="a13n did not accept the inbox entry")
+                return
             run_id = entry.get("assigned_run_id")
             if not run_id:
-                if entry["status"] not in {"pending", "assigned"}:
-                    await self.store.update_event(
-                        event["id"], state="failed", error="a13n did not accept the inbox entry"
-                    )
                 return
             await self.store.update_event(event["id"], run_id=run_id)
         run = await self.adapters.host(connection, "GET", resource_path("runs", run_id))
@@ -151,54 +150,7 @@ class Bridge:
                 event["id"], state="failed", error="Agent run ended without a completed result"
             )
             return
-        await self.complete_run(connection, {**event, "run_id": run_id}, run)
-
-    async def complete_run(self, connection: dict, event: dict, run: dict) -> None:
-        """Resolve steered entries before assigning a run's single final output."""
-        host_id, thread_id, run_id = connection["id"], event["thread_id"], event["run_id"]
-        members = await self.store.host_thread_events(host_id, thread_id, run_id)
-        candidates = [
-            row
-            for row in members
-            if row["state"] in {"submitted", "blocked", "failed"} and row["run_id"] in {None, run_id}
-        ]
-        if len(candidates) > 1 or any(row["run_id"] is None for row in candidates):
-            for row in candidates:
-                path = resource_path("threads", thread_id) + "/inbox/" + row["entry_id"]
-                entry = await self.adapters.host(connection, "GET", path)
-                assigned = entry.get("assigned_run_id")
-                if entry["status"] == "pending":
-                    await self.store.update_event(row["id"], run_id=None)
-                elif entry["status"] not in {"assigned", "consumed"}:
-                    await self.store.update_event(
-                        row["id"],
-                        state=row["state"] if row["state"] in {"blocked", "failed"} else "failed",
-                        run_id=None,
-                        error="a13n did not accept the inbox entry",
-                    )
-                elif not isinstance(assigned, str) or not assigned:
-                    raise AdapterError("Host omitted the assigned run ID")
-                else:
-                    await self.store.update_event(row["id"], run_id=assigned)
-            members = await self.store.host_thread_events(host_id, thread_id, run_id)
-        assigned_members = [row for row in members if row["run_id"] == run_id]
-        if not assigned_members:
-            return
-        # The last gateway input incorporated into this run owns its final output.
-        # A revoked/deleted latest source suppresses output instead of redirecting it.
-        latest = assigned_members[-1]
-        route = await self.store.route(latest["route_id"])
-        message = json.loads(latest["message"])
-        text, error = None, None
-        if latest["state"] == "submitted" and route and route_allows_sender(route, message["sender_id"]):
-            output = run.get("output")
-            if route["reply_source"] == "output" and not (isinstance(output, dict) and output.get("reply") is False):
-                candidate = output_text(output)
-                if candidate and len(candidate) <= 16000:
-                    text = candidate
-                else:
-                    error = "No supported text reply (or output exceeds 16000 characters)"
-        await self.store.finish_host_run(host_id, thread_id, run_id, latest["id"], text=text, error=error)
+        await self.store.update_event(event["id"], state="completed", error=None)
         self.wake.set()
 
     async def send(self, reply: dict) -> None:

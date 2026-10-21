@@ -148,7 +148,6 @@ def configure(platform, kind="group", grants=(), conversation=None, **overrides)
             "conversation_id": conversation
             or {"private": "7", "group": "123", "guild": "childA", "guild_dm": "dmA"}[kind],
             "host_id": host["id"],
-            "reply_source": "mcp",
             "sender_policy": "any",
             "action_grants": list(grants),
             **overrides,
@@ -280,9 +279,7 @@ def test_actions_have_independent_grants_and_never_appear_as_sent_replies(platfo
         "/api/v1/connections",
         json={"name": "API host", "kind": "a13n", "api_url": "https://host.test", "token": "host-token"},
     ).json()
-    route = configure(
-        platform, "guild", ["message.react"], host_id=host["id"], agent_id="agent1", reply_source="output"
-    )
+    route = configure(platform, "guild", ["message.react"], host_id=host["id"], agent_id="agent1")
     incoming(platform, "guild")
     receipt = decoded(
         call(
@@ -755,7 +752,7 @@ def test_qq_group_file_cdn_reaches_history_attachment_reads_and_host(platform, q
         "/api/v1/connections",
         json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "host-token"},
     ).json()
-    route = configure(platform, host_id=host["id"], agent_id="agent1", reply_source="output")
+    route = configure(platform, host_id=host["id"], agent_id="agent1")
     url = "https://gzc-download.ftn.qq.com/ftn_handler/file?key=private-file-key"
     attachment = {"content_type": "file", "filename": "notes.txt", "url": url, "size": 21}
     provider.media_data = b"Quoted file contents."
@@ -1014,7 +1011,6 @@ def test_source_children_inherit_current_action_grants_without_read_expansion(pl
             "name": "Groups",
             "sources": [{"channel_id": channel["id"], "conversation_kind": "group", "conversation_id": "*"}],
             "host_id": host["id"],
-            "reply_source": "mcp",
             "sender_policy": "any",
             "action_grants": ["resource.read"],
         },
@@ -1159,14 +1155,14 @@ def output_route(platform, grants=()):
         "/api/v1/connections",
         json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "test-host-key"},
     ).json()
-    return configure(platform, grants=grants, host_id=host["id"], agent_id="agent1", reply_source="output")
+    return configure(platform, grants=grants, host_id=host["id"], agent_id="agent1")
 
 
 def sent_messages(platform):
     return [r for r in platform[2].requests if r.method == "POST" and r.url.path.endswith("/messages")]
 
 
-def test_final_output_and_proactive_tool_sends_coexist(platform):
+def test_only_proactive_tool_send_publishes_and_final_output_is_ignored(platform):
     route = output_route(platform, ["message.proactive"])
     incoming(platform)
     decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Notification"}]))
@@ -1174,18 +1170,17 @@ def test_final_output_and_proactive_tool_sends_coexist(platform):
     tick(platform)
     submission = next(r for r in platform[2].requests if r.url.host == "host.test" and r.method == "POST")
     context_text = json.loads(submission.content)["payload"]["content"][0]["text"]
-    assert '"reply_source": "output"' in context_text and '"default_delivery": "proactive"' in context_text
+    assert "reply_source" not in context_text and '"default_delivery": "proactive"' in context_text
     bodies = [json.loads(r.content) for r in sent_messages(platform)]
-    assert len(bodies) == 2
+    assert len(bodies) == 1
     assert (
         bodies[0]["content"] == "Notification"
         and "msg_id" not in bodies[0]
         and "event_id" not in bodies[0]
         and "msg_seq" not in bodies[0]
     )
-    assert bodies[1]["content"] == "Automatic reply" and bodies[1]["msg_id"] == "source1"
     view = decoded(call(platform, route, "discover", resource="conversations"))["conversations"][0]
-    assert view["reply_source"] == "output" and view["can_reply"] and view["can_send_proactively"]
+    assert "reply_source" not in view and view["can_reply"] and view["can_send_proactively"]
     assert view["default_delivery"] == "proactive"
 
 
@@ -1251,7 +1246,7 @@ def test_explicit_passive_tools_keep_source_context_on_output_routes(platform, t
     assert json.loads(sent_messages(platform)[0].content)["msg_id"] == "source1"
 
 
-def test_output_route_without_proactive_grant_denies_all_message_tools(platform):
+def test_a13n_route_without_proactive_grant_accepts_passive_tools_only(platform):
     route = output_route(platform)
     incoming(platform)
     for tool, arguments in [
@@ -1273,8 +1268,9 @@ def test_output_route_without_proactive_grant_denies_all_message_tools(platform)
             },
         ),
     ]:
-        assert call(platform, route, tool, **arguments).get("isError")
-    assert platform[0].get("/api/v1/replies").json() == []
+        assert not call(platform, route, tool, **arguments).get("isError")
+        assert call(platform, route, tool, delivery="proactive", **arguments).get("isError")
+    assert len(platform[0].get("/api/v1/replies").json()) == 3
 
 
 def test_queued_delivery_is_frozen_and_revocation_blocks_proactive_sends(platform):
@@ -1388,7 +1384,7 @@ def test_proactive_rejections_and_uncertain_sends_are_not_retried(platform, fail
 
 
 def test_expired_passive_reply_does_not_become_proactive(platform):
-    output_route(platform, ["message.proactive"])
+    route = output_route(platform, ["message.proactive"])
     incoming(platform)
     tick(platform)
 
@@ -1396,6 +1392,7 @@ def test_expired_passive_reply_does_not_become_proactive(platform):
         if request.url.path.endswith("/messages"):
             platform[2].failure = 400
 
+    decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Passive"}], delivery="passive"))
     platform[2].on_request = reject_message
     tick(platform)
     tick(platform)

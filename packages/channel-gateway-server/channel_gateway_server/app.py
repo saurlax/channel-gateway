@@ -294,6 +294,8 @@ def create_app(
 
     def validate_host_route(host: dict, body: RouteInput) -> None:
         if host["kind"] == "mcp":
+            if body.busy_policy != "steer":
+                raise HTTPException(422, "Execution input policies require an a13n Host")
             if (
                 body.agent_id
                 or body.mcp_connection_id

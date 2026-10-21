@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import type { Route, RouteSource, Snapshot, ThreadPolicy } from "@/api";
+import type { BusyPolicy, Route, RouteSource, Snapshot, ThreadPolicy } from "@/api";
 import { useLocale } from "@/i18n";
 import { isHost } from "@/hosts";
 import { duplicateSources, routeSources, singleSource } from "@/lib/route-sources";
@@ -56,6 +56,7 @@ export function RouteConfiguration({
   const [threadPolicy, setThreadPolicy] = useState<ThreadPolicy>(
     route?.thread_policy ?? "conversation",
   );
+  const [busyPolicy, setBusyPolicy] = useState<BusyPolicy>(route?.busy_policy ?? "steer");
   const [fixedThread, setFixedThread] = useState(route?.fixed_thread_id ?? "");
   const [readChannels, setReadChannels] = useState<string[]>(() => {
     if (route?.read_channel_ids != null) return route.read_channel_ids;
@@ -135,6 +136,7 @@ export function RouteConfiguration({
       host_id: host,
       agent_id: mcpOnly ? null : agent.trim(),
       thread_policy: mcpOnly ? "conversation" : threadPolicy,
+      busy_policy: mcpOnly ? "steer" : busyPolicy,
       fixed_thread_id: !mcpOnly && threadPolicy === "fixed" ? fixedThread || null : null,
       read_channel_ids: readChannels,
       action_grants: actionGrants,
@@ -224,6 +226,7 @@ export function RouteConfiguration({
                 <FormField id="thread-policy" label={t("Conversation continuity")}>
                   <Choice
                     id="thread-policy"
+                    showSelectedDescription={false}
                     value={threadPolicy}
                     onChange={(value) => setThreadPolicy(value as ThreadPolicy)}
                     disabled={busy}
@@ -254,6 +257,31 @@ export function RouteConfiguration({
                         t("Share context across all sources"),
                         t(
                           "For cross-source collaboration. All private chats and groups selected by this route share one thread and its history.",
+                        ),
+                      ],
+                    ]}
+                  />
+                </FormField>
+                <FormField id="busy-policy" label={t("Messages during execution")}>
+                  <Choice
+                    id="busy-policy"
+                    showSelectedDescription={false}
+                    value={busyPolicy}
+                    onChange={(value) => setBusyPolicy(value as BusyPolicy)}
+                    disabled={busy}
+                    items={[
+                      [
+                        "steer",
+                        t("Join current execution"),
+                        t(
+                          "Submit immediately. The Host incorporates the message at the next safe boundary.",
+                        ),
+                      ],
+                      [
+                        "queue",
+                        t("Queue for the next run"),
+                        t(
+                          "Wait for the current execution to finish, then process messages in order.",
                         ),
                       ],
                     ]}

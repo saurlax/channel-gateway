@@ -14,6 +14,7 @@ type Identifier = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^
 type SenderIds = Annotated[list[Identifier], Field(max_length=256)]
 type ReadChannels = Annotated[list[Identifier | Literal["*"]], Field(max_length=100)]
 type ThreadPolicy = Literal["conversation", "sender", "fixed", "message"]
+type BusyPolicy = Literal["steer", "queue"]
 type ConversationKind = Literal["private", "group", "guild", "guild_dm", "channel", "thread"]
 type ActionGrant = Literal[
     "history.read",
@@ -210,6 +211,7 @@ class RouteInput(Contract):
     sender_policy: Literal["allowlist", "any"] = "allowlist"
     agent_id: Identifier | None = None
     thread_policy: ThreadPolicy = "conversation"
+    busy_policy: BusyPolicy = "steer"
     fixed_thread_id: Identifier | None = None
     enabled: bool = True
     reply_source: Literal["output", "mcp"] = "output"
@@ -264,6 +266,7 @@ class RouteUpdate(Contract):
     host_id: Identifier | None = None
     agent_id: Identifier | None = None
     thread_policy: ThreadPolicy | None = None
+    busy_policy: BusyPolicy | None = None
     fixed_thread_id: Identifier | None = None
     sender_policy: Literal["allowlist", "any"] | None = None
     enabled: bool | None = None

@@ -90,6 +90,33 @@ Replies stay attached to their original source conversation under every policy.
 Wait for queued/submitted inputs to finish before changing the Agent or thread
 policy. Existing bound conversations remain unchanged until you change the policy.
 
+### Messages during execution
+
+In **Routing → Destination → Messages during execution**, choose:
+
+- **Join current execution** (default): CG immediately submits `steer`. Compatible
+  messages join the active a13n run at its next safe boundary.
+- **Queue for the next run**: CG waits for earlier work in the destination thread
+  to finish, then submits messages in order using `next_run`.
+
+This is a per-route setting, inherited by its conversation children. Independent
+threads remain independent. Shared threads apply the policy across their source
+conversations. Generic MCP clients own their execution and do not show this setting.
+The immediate mode continues the active task; it does not cancel the run. Waiting
+on a question/approval still follows a13n's resume rules.
+
+The management field is `busy_policy: "steer" | "queue"`; missing values default
+to `steer`, including older routes. You can change it while a run is active.
+The new choice affects only input not already frozen for submission; retrying a
+lost receipt preserves its original body and idempotency key.
+
+Multiple messages can join one run. CG sends its final output once, using the
+latest input assigned to that run and its source reply context. With a shared
+thread, this means one reply to the latest contributing source. Other inputs are
+marked completed. Revoking that source suppresses the reply; it does not redirect
+combined output to a previous source. `reply: false` and MCP-only output stay silent.
+
+
 ## Other OneBot transports
 
 Choose the transport in **Add channel**:

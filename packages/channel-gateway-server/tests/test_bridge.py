@@ -70,12 +70,12 @@ class Upstreams:
                 201,
                 json={
                     "thread": {"id": thread_id},
-                    "entry": {"id": "entry_1"},
-                    "run": None if self.queued_receipt else {"id": "run_1"},
+                    "entry": {"id": "entry_" + str(self.thread_count)},
+                    "run": None if self.queued_receipt else {"id": "run_" + str(self.thread_count)},
                 },
             )
         if "/inbox/" in path:
-            return httpx.Response(200, json={"status": "assigned", "assigned_run_id": "run_1"})
+            return httpx.Response(200, json={"status": "consumed", "assigned_run_id": "run_" + path.rsplit("_", 1)[-1]})
         return httpx.Response(200, json={"status": self.run_status, "output": self.output})
 
 
@@ -178,7 +178,7 @@ def test_verified_events_enforce_actor_and_account_and_deduplicate(gateway):
     assert request.headers["Authorization"] == "Bearer host-token"
     assert request.headers["Idempotency-Key"].startswith("evt_")
     body = json.loads(request.content)
-    assert body["delivery"] == "next_run"
+    assert body["delivery"] == "steer"
     assert "options" not in body
     assert '"sender_id": "7"' in body["payload"]["content"][0]["text"]
 

@@ -59,16 +59,56 @@ source cannot retract history already submitted to that thread.
 
 Thread bindings persist across restarts. Before an external request, an event
 freezes its binding scope, target and body; retries reuse that exact request and
-idempotency key, including for `message`. Only the oldest queued/submitted input
-per concrete conversation advances. Fixed delivery instead serializes across all
-sources of the configured route; routes explicitly selecting the same Host/thread
-also share that queue scope. This preserves attribution of a run's output to its
-source input. Replies always target the event's original source conversation.
-Changes to policy or fixed destination are refused during queued/submitted work,
-and obsolete children are archived so the next input starts under the new policy.
-Per-event thread IDs, including reply history, identify the actual delivered
-thread rather than a conversation's last thread. This remains single-process
-scheduling, not a distributed worker protocol.
+idempotency key, including for `message`. Only the oldest unconfirmed submission
+in a destination scope advances. Accepted inputs are polled independently;
+the busy-input policy below controls whether they delay new submissions.
+Independent sender or per-message threads do not block each other. Fixed delivery
+shares its scope across all sources, including other routes explicitly targeting
+the same Host/thread. Replies use the source owning the final-output decision.
+Changes to thread policy or fixed destination are refused during queued/submitted
+work, and obsolete children are archived so the next input starts under the new
+thread policy. Per-event thread IDs identify the actual delivered thread rather
+than a conversation's last thread. This remains single-process scheduling, not a
+distributed worker protocol.
+
+## Messages during execution
+
+`busy_policy` is independent of `thread_policy` and applies to a13n Hosts:
+
+| Policy | Submission behavior |
+| --- | --- |
+| `steer` (default) | Submit new input immediately with a13n `delivery: steer`; compatible input joins the active run at its next safe boundary |
+| `queue` | Keep new input queued until earlier submitted work in the destination thread finishes, then submit FIFO with `delivery: next_run` |
+
+A steer continues the current run; it does not call the interrupt/cancel API.
+The Host owns safe-boundary incorporation, compatibility and waiting/resume
+semantics. An idle thread starts a run for either policy. A fresh per-message
+thread is independent; queue mode does not impose a global account or Host queue.
+Generic MCP Hosts expose no execution control and reject non-default busy policy.
+
+Missing stored policies default to `steer`. Children inherit the current parent's
+policy. The policy may change during execution without changing thread identity
+or resetting bindings. A change affects only requests whose bodies are not yet
+frozen. Previously frozen bodies retain their delivery selection on every retry;
+a lost acceptance receipt still blocks later submissions in that scope until
+resolved. Each cycle reserves capacity for polling accepted work as well as
+admitting new requests.
+
+Several steers may be assigned to one native run. Before handling its terminal
+output, CG resolves outstanding inbox assignments for that Host/thread, keeping
+entries assigned to a successor run separate. The latest CG input assigned to
+the completed run owns its one final-output decision and source reply context.
+Other inputs assigned to the same run complete without duplicate output replies.
+Shared fixed threads can span sources; their final reply targets that latest
+input's source, never every contributing conversation. If the owning source was
+revoked/deleted, CG suppresses the output instead of redirecting it to an older
+source. A refused/unincorporated entry does not acquire another run's output.
+
+The `(host_id, thread_id, run_id)` output decision is durable and is recorded
+atomically with completion of its inputs and any event-linked queued reply.
+Restart, repeated polling, silent output, and MCP-output routes cannot create a
+second automatic reply for the same run. Channel delivery retains the existing
+uncertain-outcome policy; this is not exactly-once delivery by the channel.
 
 Administrator-only `GET /api/v1/connections/{id}/host-resources/{resource}` supports
 `agents` and `threads` for a configured a13n Host. It uses that Host's server-side
@@ -158,7 +198,8 @@ stateDiagram-v2
 
 Before the first submission attempt, CG persists the target path and complete
 request body. Creation uses `POST /threads`; continuation uses
-`POST /threads/{thread_id}/inbox`, with `delivery: next_run`. The event ID is the
+`POST /threads/{thread_id}/inbox`, with `delivery: steer` by default or
+`next_run` for queue mode. The event ID is the
 stable `Idempotency-Key`. A lost receipt retries the same target, body, and key,
 even when configuration or thread observations change later.
 
@@ -174,8 +215,8 @@ receipt; it preserves a frozen submission request. Replacement a13n keys must
 retain the same upstream principal/workspace for the upstream idempotency scope
 to remain valid.
 
-For `reply_source: output`, a completed output creates at most one event-linked
-reply. Only a nonempty string or an object with a nonempty `text` string is
+For `reply_source: output`, a completed run creates at most one event-linked
+reply under the shared-run attribution rules above. Only a nonempty string or an object with a nonempty `text` string is
 supported, with at most 16000 characters. Unsupported/oversized output completes
 the event with a diagnostic and no reply. Arbitrary structured data is not
 serialized into a channel message. For `reply_source: mcp`, run completion does

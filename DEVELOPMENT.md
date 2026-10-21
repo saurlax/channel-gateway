@@ -122,6 +122,9 @@ Present Conversation continuity choices in use-case order: ongoing private/group
 chats, personal assistance within groups, independent messages, then shared
 context across sources. Each choice has a concise scope/use description in the
 menu and below the selected value; connect the latter with aria-describedby.
+The Messages during execution selector applies to a13n Hosts, defaults to joining
+the current run at a safe boundary, and offers FIFO queueing until completion.
+It is independent of conversation continuity and hidden for generic MCP clients.
 Fixed delivery offers existing unarchived Host threads and create-on-first-message.
 Use searchable shadcn comboboxes with paginated resource loading, loading/error
 states and retry. Host changes clear the selected Agent and fixed thread.

@@ -21,67 +21,62 @@ export function ResetThreads({
   busy,
   error,
   clearError,
+  onReset,
 }: {
   routeId: string;
   action: Action;
   busy: boolean;
   error: string;
   clearError: () => void;
+  onReset: () => void;
 }) {
   const { t, message } = useLocale();
   const [open, setOpen] = useState(false);
-  const [done, setDone] = useState(false);
   return (
-    <div className="grid gap-2">
-      <AlertDialog open={open} onOpenChange={(value) => !busy && setOpen(value)}>
-        <AlertDialogTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            className="w-fit"
+    <AlertDialog open={open} onOpenChange={(value) => !busy && setOpen(value)}>
+      <AlertDialogTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive focus-visible:ring-destructive/20 dark:border-destructive dark:hover:bg-destructive/10"
+          disabled={busy}
+          onClick={clearError}
+        >
+          <RotateCcw />
+          {t("Reset conversations")}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("Reset this route's conversations?")}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(
+              "All conversation and sender threads on this route will be reset. Future messages start new Agent threads. Message history is retained. Pending messages must finish first.",
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {message(error)}
+          </p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>{t("Cancel")}</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
             disabled={busy}
-            onClick={clearError}
+            onClick={async (event) => {
+              event.preventDefault();
+              if (await action(`routes/${routeId}/reset-thread`)) {
+                setOpen(false);
+                onReset();
+              }
+            }}
           >
-            <RotateCcw />
-            {t("Reset conversations")}
-          </Button>
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("Reset this route's conversations?")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(
-                "All conversation and sender threads on this route will be reset. Future messages start new Agent threads. Message history is retained. Pending messages must finish first.",
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {message(error)}
-            </p>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>{t("Cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={busy}
-              onClick={async (event) => {
-                event.preventDefault();
-                if (await action(`routes/${routeId}/reset-thread`)) {
-                  setOpen(false);
-                  setDone(true);
-                }
-              }}
-            >
-              {busy ? t("Resetting…") : t("Confirm reset")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      {done && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {t("Route conversations reset. Future messages start new Agent threads.")}
-        </p>
-      )}
-    </div>
+            {busy ? t("Resetting…") : t("Confirm reset")}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

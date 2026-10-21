@@ -130,6 +130,11 @@ def host_body(message: dict, route: dict) -> dict:
         ],
         "default_delivery": "proactive" if proactive else "passive",
         "can_send_proactively": proactive,
+        "channel_output": {
+            "tool": "send_message",
+            "final_output_delivered": False,
+            "instruction": "Send every warranted channel answer, clarification or limitation through send_message with this route_id. Final output is private. If no reply is warranted, call no messaging tool.",
+        },
     }
     if not direct_media and (context["image_count"] or context["attachments"]):
         context["media_access"] = {

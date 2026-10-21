@@ -94,6 +94,16 @@ Replies stay attached to their original source conversation under every policy.
 Wait for queued/submitted inputs to finish before changing the Agent or thread
 policy. Existing bound conversations remain unchanged until you change the policy.
 
+To clear a conversation's Agent context, open **Messages → View conversation →
+Reset conversation** and confirm. Wait for pending inputs to finish first.
+The next new message starts a fresh a13n thread and session; gateway history and
+the previous upstream thread remain available. Sender isolation resets every
+sender thread in the selected conversation, without affecting other conversations.
+Fixed shared threads must instead be changed in route settings; per-message
+delivery already starts fresh. A new Agent revision applies to new runs even in
+an existing thread, so resetting is for clearing history rather than publishing
+prompt changes.
+
 ### Messages during execution
 
 In **Routing → Destination → Messages during execution**, choose:

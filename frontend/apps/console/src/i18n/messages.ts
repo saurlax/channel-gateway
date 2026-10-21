@@ -119,6 +119,7 @@ export const chinese = {
   "Save route": "保存路由",
   "All channels": "全部渠道",
   "All private chats": "全部私聊",
+  "Automatic output delivery retired": "自动回复已停用",
   "React to OneBot messages": "回应 OneBot 消息表情",
   "Private chat {id}": "私聊 {id}",
   "All groups": "全部群",

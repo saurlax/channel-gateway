@@ -61,7 +61,7 @@ QQ native options are `native: {'qq': {'keyboard': ..., 'embed': ..., 'ark': ...
 unknown namespaces/options fail. Cards can use empty `content`. `reply_to` selects
 a locally known message under source authority. `stream` contains `index`,
 `stream_handle`, `finished`, and `input_mode`; it supports QQ C2C passive streams
-on MCP-output routes only, with text content and no other send options.
+with text content and no other send options, under current route authorization.
 
 Native reads/mutations accept `arguments: {'operation': 'qq.<catalog-name>',
 'parameters': {...}}`. The catalog validates every argument and route-bound

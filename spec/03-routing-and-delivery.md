@@ -80,18 +80,20 @@ than a conversation's last thread. This remains single-process scheduling, not a
 distributed worker protocol.
 
 Administrator-only `POST /api/v1/routes/{id}/reset-thread` detaches the current
-thread bindings of one concrete a13n conversation. Conversation policy resets
-that conversation's thread; sender policy resets all sender threads within it.
-The operation is atomic and returns 409 while any input for that conversation is
-queued or submitted. The next new input creates a fresh thread and session.
-Route identity, credentials, access, other conversations, channel message history,
-and upstream threads remain unchanged. No historical input is replayed. Failed
+thread bindings of an a13n route and all its concrete children. Conversation
+policy resets every source conversation's thread; sender policy resets all
+sender threads within those conversations. An automatically created shared fixed
+thread is also detached. The operation is atomic and returns 409 while any input
+for the route or a child is queued or submitted. The next new input in each scope
+creates a fresh thread and session. Route identity, credentials, access, other
+routes, channel message history, and upstream threads remain unchanged. No historical input is replayed. Failed
 historical requests retain their frozen destination when explicitly retried but
 cannot restore a detached binding. Resetting before the first message is harmless.
-The console exposes **Reset conversation** with confirmation in Messages'
-conversation details. Parent wildcard routes and generic MCP routes are rejected;
-fixed-thread routes require choosing a new shared destination in route settings,
-and per-message routes already start fresh for every input.
+The console exposes **Reset conversations** with confirmation on the route edit
+page. Confirmation identifies the route-wide scope, including all conversations
+and senders. Generic MCP routes are rejected; explicitly pinned fixed-thread
+routes require choosing a new shared destination in route settings, and
+per-message routes already start fresh for every input.
 
 ## Messages during execution
 

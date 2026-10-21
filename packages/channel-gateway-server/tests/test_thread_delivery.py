@@ -5,6 +5,7 @@ from functools import partial
 import pytest
 
 from .test_bridge import gateway as gateway_fixture
+from .test_bridge import route as exact_route
 from .test_bridge import tick, webhook
 
 gateway = gateway_fixture
@@ -154,38 +155,41 @@ def test_binding_survives_storage_reopen(gateway):
     assert configured["thread_policy"] == "sender"
 
 
-@pytest.mark.parametrize("policy", ["conversation", "sender"])
-def test_reset_detaches_only_selected_conversation_and_preserves_history(gateway, policy):
-    configure(gateway, policy)
+@pytest.mark.parametrize("policy", ["conversation", "sender", "fixed"])
+def test_reset_detaches_all_route_conversations_and_preserves_other_routes_and_history(gateway, policy):
+    configured = configure(gateway, policy)
+    exact_route(gateway, conversation="125")
     first = deliver(gateway, 1)
     second_sender = deliver(gateway, 2, user=8)
     other = deliver(gateway, 3, conversation=124)
+    separate = deliver(gateway, 4, conversation=125)
     client, app, *_ = gateway
     before = client.get("/api/v1/events").json()
-    response = client.post(f"/api/v1/routes/{first['route_id']}/reset-thread")
+    response = client.post(f"/api/v1/routes/{configured['id']}/reset-thread")
     assert response.status_code == 200, response.text
-    assert response.json() == {"id": first["route_id"], "thread_id": None}
+    assert response.json() == {"id": configured["id"], "thread_id": None}
     assert client.get("/api/v1/events").json() == before
     # Clearing both route and policy bindings survives a process restart.
     client.portal.call(app.state.store.close)
     client.portal.call(app.state.store.open)
-    fresh = deliver(gateway, 4)
-    fresh_sender = deliver(gateway, 5, user=8)
+    fresh = deliver(gateway, 5)
+    fresh_sender = deliver(gateway, 6, user=8)
     assert fresh["thread_id"] != first["thread_id"]
     assert fresh_sender["thread_id"] != second_sender["thread_id"]
-    assert deliver(gateway, 6, conversation=124)["thread_id"] == other["thread_id"]
+    assert deliver(gateway, 7, conversation=124)["thread_id"] != other["thread_id"]
+    assert deliver(gateway, 8, conversation=125)["thread_id"] == separate["thread_id"]
     assert client.get("/api/v1/replies").json() == []
 
 
 @pytest.mark.parametrize("submitted", [False, True])
 def test_reset_refuses_pending_work_atomically(gateway, submitted):
-    configure(gateway, "conversation")
+    configured = configure(gateway, "conversation")
     first = deliver(gateway, 1)
-    webhook(gateway, message_id=2)
+    webhook(gateway, message_id=2, conversation=124)
     if submitted:
         tick(gateway)
     client = gateway[0]
-    response = client.post(f"/api/v1/routes/{first['route_id']}/reset-thread")
+    response = client.post(f"/api/v1/routes/{configured['id']}/reset-thread")
     assert response.status_code == 409
     tick(gateway)
     tick(gateway)
@@ -194,15 +198,15 @@ def test_reset_refuses_pending_work_atomically(gateway, submitted):
 
 @pytest.mark.parametrize("policy", ["fixed", "message"])
 def test_reset_rejects_shared_and_per_message_policies(gateway, policy):
-    configure(gateway, policy)
-    first = deliver(gateway, 1)
-    assert gateway[0].post(f"/api/v1/routes/{first['route_id']}/reset-thread").status_code == 422
+    configured = configure(gateway, policy, fixed="thread_existing" if policy == "fixed" else None)
+    deliver(gateway, 1)
+    assert gateway[0].post(f"/api/v1/routes/{configured['id']}/reset-thread").status_code == 422
 
 
-def test_reset_requires_admin_and_concrete_a13n_route(gateway):
+def test_reset_requires_admin_and_a13n_route(gateway):
     configured = configure(gateway, "conversation")
     client = gateway[0]
-    assert client.post(f"/api/v1/routes/{configured['id']}/reset-thread").status_code == 422
+    assert client.post(f"/api/v1/routes/{configured['id']}/reset-thread").status_code == 200
     assert client.post("/api/v1/routes/route_missing/reset-thread").status_code == 404
     generic = client.post("/api/v1/connections", json={"name": "Generic", "kind": "mcp"}).json()
     route = client.post(

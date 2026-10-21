@@ -91,7 +91,7 @@ confirm destructive actions and destination authorization.
 Use a search toolbar followed by a table for channels, hosts, routes, and message
 conversations. Incoming messages and Agent replies share the same chronological
 conversation history, opened only from the Messages panel. Route rows have one
-Edit action opening `/routes/{id}/edit`; token rotation, enable/disable settings,
+Edit action opening `/routes/{id}/edit`; thread reset, token rotation, enable/disable settings,
 and deletion are on that page. Channel and Agent Host management dialogs and route
 edit pages expose deletion using the shared red outline button and official Alert
 Dialog confirmation. Do not add a
@@ -103,7 +103,9 @@ Creation starts from an Add button in the toolbar. Routes open `/routes/new`;
 channel and Agent Host creation open a shadcn Dialog. Creating a route from Messages
 opens the same page with the source conversation prefilled. Route pages support
 direct visits and reloads, show missing routes without redirecting, and return to
-the list after saving or deleting. Token rotation keeps the edit page open and
+the list after saving or deleting. Thread reset stays on the route edit page;
+its confirmation explicitly covers all conversations and sender threads on the
+saved route. Token rotation keeps the edit page open and
 shows the new token once in its own dialog. Use a single-column form directly on
 the page without a Card wrapper, and provide a Back to routes link and Cancel action.
 Route configuration uses Basic information, Routing, and Connections tabs. Basic

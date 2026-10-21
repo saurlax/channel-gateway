@@ -121,16 +121,15 @@ of a13n API delivery.
 The bridge works without MCP. Its MCP Streamable HTTP endpoint is
 `https://GATEWAY/mcp/` (including the trailing slash). It exposes:
 
-- `list_conversations()`: list currently authorized conversation handles and capabilities.
-- `read_conversation(route_id, limit=20)`: incoming messages and confirmed bot sends from the authorized conversation,
-  up to 100 records. Readable-channel grants include all received conversations
-  on those accounts; trigger sources only govern activation and reply destinations.
-- `send_message(text, route_id)`: create a reply for that same destination. It never
-  accepts an arbitrary account, conversation, or operation.
-- `read_image(source_message_id, route_id, image_index=0)`: return an authorized received image.
-- `send_image(image_base64, media_type, route_id, caption='')`: queue an image reply.
-- `set_message_reaction(source_message_id, emoji_id, route_id, add=True)`: queue a message
-  reaction when the provider supports the optional NapCat-compatible extension.
+- `discover`: list authorized conversations and inspect capability/operation schemas.
+- `read`: read messages, received images/attachments, sanitized events, and native resources.
+- `send_message`: queue text, supported media/cards, or stream fragments.
+- `execute_action`: queue reactions, recalls, typing, and native mutations.
+- `get_operation`: inspect confirmed or uncertain outcomes in either durable ledger.
+
+See the [tool guide](agent-tools.md) for exact request examples and migration.
+Refresh the MCP inventory, enable these five tools, and update Agent instructions
+that reference removed tool names. Existing credentials and route grants persist.
 
 See [images and reactions](images-and-reactions.md) for formats, bounds, native
 a13n attachments, and capability differences. Final-run-output routes forward
@@ -155,7 +154,7 @@ one through **Agent hosts → Manage → Rotate MCP key**. Use the key as the
 
 Select that connection and the desired tools in the Agent interface. The gateway
 exposes one fixed tool inventory, including the additional
-[QQ tools and operations](qq-platform.md). Call `list_conversations` to discover
+[QQ tools and operations](qq-platform.md). Call `discover(resource="conversations")` to discover
 current authorized destinations, then pass the selected `id` as `route_id` to
 reads, sends, and actions. For an incoming channel message, use its gateway-verified
 `route_id`. Adding groups, private chats, or guild channels only changes route
@@ -216,7 +215,7 @@ The Agent still processes authorized full-message inputs to make that decision.
 It must not send message tools for a silent input, or repeat a tool-sent answer
 in final output. Private chats can continue to receive normal answers.
 
-`read_conversation` combines incoming and confirmed outgoing messages, with
+`read(resource="messages")` combines incoming and confirmed outgoing messages, with
 `direction`, `history_id`, and `created_at`. Outgoing media has safe descriptions,
 not incoming-media read handles. Unconfirmed sends and non-message actions do not
 appear as sent conversation content. Existing read grants remain authoritative.

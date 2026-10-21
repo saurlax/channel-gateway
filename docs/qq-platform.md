@@ -46,18 +46,19 @@ their existing scope and require the provider's optional compatible extension.
 
 ## Message creation
 
-`send_message` accepts plain text or `message_format: "markdown"`, optional
-`keyboard`, and `reply_to_source_message_id` for a locally known quoted message.
-Guild messages may also supply native `embed` or `ark` content where QQ permits
-it. Structured message options are bounded to 64 KiB. Markdown and button
-availability remain governed by the QQ application and client.
+Use the fixed [five MCP tools](agent-tools.md). `send_message.content` contains
+a text part (`type: "text"`, `text`, optional `format: "markdown"`) and optionally
+one media part. `reply_to` quotes a locally known message. QQ-only keyboards,
+Embed, and ARK use `native: {"qq": {"keyboard": ..., "embed": ..., "ark": ...}}`.
+Cards may use empty `content`. Native options are bounded to 64 KiB. Application
+permissions and client support still govern Markdown and buttons.
 
 For automatic text replies plus proactive tool sends, choose **Final run output**,
 enable **Proactive messaging** (`message.proactive`), and configure the desired
 MCP tools on the Agent. Final text replies to the triggering message; calls to
-`send_message`, `send_image`, and `send_media` default to proactive delivery.
+`send_message` defaults to proactive delivery.
 An existing MCP route without the proactive grant keeps its passive default.
-`list_conversations` reports `default_delivery` and `can_send_proactively`.
+`discover(resource="conversations")` reports `default_delivery` and `can_send_proactively`.
 
 Pass `delivery: "passive"` explicitly when a tool should reply using the latest
 authorized incoming context. `delivery: "proactive"` and C2C-only `"wakeup"`
@@ -80,12 +81,14 @@ destinations and passive replies continue. Reservations survive restart and
 consume budget even if a claimed attempt fails. Explicit rejection is `failed`;
 uncertain delivery is `unknown`. Neither is automatically retried.
 
-`send_media(media_kind, media_type, filename, data_base64=None, url=None,
-caption='', route_id=None)` accepts exactly one source. `media_kind` is `image`,
-`audio`, `video`, or `file`. Inline base64 is limited to 16 MiB decoded; larger
-than 4 MiB uses prepare/part/finish/merge internally. A public HTTPS URL delegates
-download to QQ under QQ's own size limits. CG accepts no local file path.
-Presigned part uploads carry no bot token or cookies. Upload tickets remain private.
+A media content part has `type` (`image`, `audio`, `video`, or `file`),
+`media_type`, `filename`, and exactly one of `data_base64` or `url`. An accompanying
+plain-text part becomes its caption. Inline base64 is limited to 16 MiB decoded;
+larger than 4 MiB uses prepare/part/finish/merge internally. A public HTTPS URL
+delegates download to QQ under QQ's own size limits. CG accepts no local file path.
+Media cannot combine with Markdown, native options, quotes, or stream options;
+unsupported combinations fail before queuing. Presigned part uploads carry no
+bot token or cookies. Upload tickets remain private.
 
 The documented guild send endpoint provides image URL/multipart fields and
 Embed/ARK/Markdown; it does not document the C2C/group generic file-upload flow.
@@ -94,67 +97,66 @@ and exposes guild audio control separately. It refuses unsupported generic guild
 media sends before queuing rather than guessing undocumented fields. QQ's broad
 message-type overview and older guild send page describe different surfaces.
 
-For C2C streaming, call `send_stream_message(text, index=0)`, retain the returned
-`stream_handle`, increment `index` for each fragment, and set `finished: true` on
-the last fragment. Fragments keep the first message's passive context. `input_mode`
-is `append` or `replace`; already published prefixes remain subject to QQ's rules.
-Unknown or failed fragments stop continuation. `set_typing(seconds=30)` is a
-separate C2C status action, with a 1–60 second duration.
+For C2C streaming, call `send_message` with one text part and `stream: {"index": 0}`.
+Retain `stream_handle`, increment `index`, and set `finished: true` on the last
+fragment. `input_mode` is `append` or `replace`. Fragments keep the first message's
+passive context; streams require an MCP-output route. Poll `get_operation` before
+continuing after uncertainty. `execute_action(action="typing", arguments={"seconds": 30})`
+is a separate C2C status action, with a 1–60 second duration.
 
 ## Actions and resource discovery
 
-Reactions and recalls do not send message content:
+Reactions and recalls use `execute_action`, independently of message sends:
 
 ```json
 {
-  "name": "set_message_reaction",
+  "name": "execute_action",
   "arguments": {
     "route_id": "route_EXAMPLE",
-    "source_message_id": "KNOWN_MESSAGE_ID",
-    "emoji_id": "203",
-    "emoji_type": 1,
-    "add": true
+    "action": "reaction",
+    "arguments": {"source_message_id": "KNOWN_MESSAGE_ID", "emoji_id": "203", "emoji_type": 1, "add": true}
   }
 }
 ```
 
-QQ reactions are guild-channel-only; `add: false` removes a reaction. Use
-`recall_message(message_id, route_id)` for a known sent or received message.
-Own-message recall and member moderation require different grants. QQ retains
-the final decision about ownership, permissions, and recall deadlines.
+QQ reactions are guild-channel-only; `add: false` removes a reaction. Recall uses
+`action: "recall"` and `arguments: {"message_id": "KNOWN_MESSAGE_ID"}`. Own-message
+recall and member moderation require different grants. QQ retains the final
+decision about ownership, permissions, and recall deadlines.
 
-For other platform functions, first call `list_channel_operations(route_id)`.
-Each entry includes its exact argument schema, scope, required grant, local
-authorization, and platform restriction. Use `query_channel_resource` for reads
-and `perform_channel_action` for mutations. Neither accepts a raw API URL/path.
+Call `discover(resource="operations", route_id=...)` to inspect exact schemas,
+scopes, grants, and restrictions. Native reads use `read(resource="native")`;
+mutations use `execute_action(action="native")`. Both accept namespaced catalog
+operations, without arbitrary API paths or replacement destinations:
 
 ```json
 {
-  "name": "perform_channel_action",
+  "name": "execute_action",
   "arguments": {
     "route_id": "route_EXAMPLE",
-    "operation": "set_group_mutes",
+    "action": "native",
     "arguments": {
-      "members": [{"op": "del", "member_openid": "MEMBER_OPENID"}]
+      "operation": "qq.set_group_mutes",
+      "parameters": {"members": [{"op": "del", "member_openid": "MEMBER_OPENID"}]}
     }
   }
 }
 ```
 
-Mutations return an `action_id`. Poll `get_channel_action(action_id, route_id)`:
-`queued`/`sending` are pending, `succeeded` has a confirmed platform receipt,
-`failed` is an explicit QQ rejection, `blocked` means gateway authority prevented
-execution, and `unknown` means an effect may have occurred. Verify unknown actions
-in QQ before repeating them. Restart never automatically repeats interrupted
-actions. Existing Messages history shows these as **Channel action**, separately
-from ordinary Agent replies. Management action views expose no arguments or
-credentials. Action results become unreadable after the required grant is revoked.
+Sends, streams, and actions return `operation_id`. Poll `get_operation(operation_id, route_id)`:
+`queued`/`sending` are pending, `sent` confirms a message receipt, `succeeded`
+confirms an action, `failed` is explicit rejection, `blocked` means gateway
+authority prevented execution, and `unknown` means an effect may have occurred.
+Verify unknown outcomes in QQ before repeating. Restart never automatically
+repeats interrupted actions. Messages history displays non-message actions as
+**Channel action**. Management views expose no arguments or credentials. Action
+results become unreadable after their required grant is revoked.
 
 ## Received attachments, cards, and notifications
 
-`read_conversation` exposes image and attachment indices and sanitized card data.
-`read_image` returns image pixels; `read_attachment(source_message_id,
-attachment_index=0, route_id=None)` returns native MCP audio or an embedded file
+`read(resource="messages")` exposes image and attachment indices and sanitized card data.
+`read(resource="image")` returns image pixels; `read(resource="attachment",
+arguments={"source_message_id": "ID", "attachment_index": 0}, route_id=...)` returns native MCP audio or an embedded file
 resource, at most 16 MiB. UTF-8 text files return text resources. Generic binary
 CDN headers are resolved using the authenticated attachment type, common media
 signatures, and filename. Reads recheck current authority after download and
@@ -165,11 +167,11 @@ sandbox. Use sandbox commands to inspect files, extract video frames, and parse
 documents. A video-specific model is optional; an image-capable primary model
 can inspect extracted frames. a13n's configured media-understanding models are
 used by its file tools, not an automatic fallback for arbitrary MCP binary output.
-Do not call `read_attachment` with an unsupported binary type directly into a
+Do not call `read(resource="attachment")` with an unsupported binary type directly into a
 model; use the delivered sandbox file instead. A filename without an extension
 can be copied to one matching the verified attachment metadata before parsing.
 
-`read_channel_events` returns sanitized notifications for the source conversation
+`read(resource="events")` returns sanitized notifications for the source conversation
 or verified parent guild. Account notifications require `bot.manage` in addition
 to `resource.read`. This includes friend/bot/member changes, receive switches,
 join requests, interactions, subscription status, reactions, message audit,
@@ -202,8 +204,8 @@ and [accepted gateway contract](../spec/06-qq-platform.md).
 
 ## Resource operation inventory
 
-The following catalog is implemented in addition to the dedicated message,
-stream, typing, reaction, recall, attachment, and notification tools. Availability
+The following catalog uses the `qq.` namespace through the generic read/action
+parameters. These are operations, not additional MCP tools. Availability
 is still subject to the listed route grant and QQ application permissions.
 
 | Operation | Mode | Scope | Required grant | Platform restriction |

@@ -42,20 +42,20 @@ Under **Routes & access**, **Add a route** opens a dedicated configuration page.
 Set its name and enabled state in **Basic information**. In **Routing**, configure
 the channel and user/group rows in **Sources** and select this Host in **Destination**.
 Choose readable accounts in **Connections**. a13n-specific fields are omitted and replies
-use MCP. The client calls `list_conversations`, then supplies an authorized
+use MCP. The client calls `discover(resource="conversations")`, then supplies an authorized
 conversation’s `id` as `route_id`:
 
 ```json
 {
-  "name": "read_conversation",
-  "arguments": { "route_id": "route_EXAMPLE", "limit": 20 }
+  "name": "read",
+  "arguments": { "resource": "messages", "route_id": "route_EXAMPLE", "arguments": {"limit": 20} }
 }
 ```
 
 ```json
 {
   "name": "send_message",
-  "arguments": { "route_id": "route_EXAMPLE", "text": "Hello" }
+  "arguments": { "route_id": "route_EXAMPLE", "content": [{"type": "text", "text": "Hello"}] }
 }
 ```
 
@@ -75,8 +75,9 @@ conversations when listed. This is not native platform history. Reply requests
 are queued and sent automatically after current route authorization
 checks, for private and group conversations. In **Messages → View conversation**, received messages and outgoing replies
 appear together in chronological order.
-Use `read_image` for received image pixels, `send_image` for image replies, and
-`set_message_reaction` for optional OneBot reactions. See
+Use `read(resource="image")` for received pixels, `send_message` with an image
+content part for image replies, and `execute_action(action="reaction")` for reactions.
+The [tool guide](agent-tools.md) documents the fixed inventory and migration. See
 [images and reactions](images-and-reactions.md) for arguments and platform limits.
 
 ## Key scope and rotation
@@ -112,7 +113,7 @@ those channels, including retained history. **All channels** includes accounts
 added later; selecting none disables message reads. Source rows independently
 determine which new messages trigger the Agent and where it can reply.
 
-MCP `list_conversations` marks readable/replyable entries with `can_read` and
+MCP `discover(resource="conversations")` marks readable/replyable entries with `can_read` and
 `can_reply`. Read-only handles require an explicit `route_id` and cannot be used
 with `send_message`. Disabling/deleting a route or removing its read grant revokes
 access on subsequent calls. Existing routes keep their previous API read scope

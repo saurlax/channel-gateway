@@ -12,17 +12,17 @@ The Host must allow the QQ CDN endpoints in its outbound endpoint policy and
 use a model/configuration supporting image input. Temporary QQ download links
 can expire; send the image again if the Host can no longer fetch it.
 
-For MCP clients, call `list_conversations`, select a readable `id`, then call
-`read_conversation`. Messages include `source_message_id` and `images` with
+For MCP clients, call `discover(resource="conversations")`, select a readable `id`, then call
+`read(resource="messages")`. Messages include `source_message_id` and `images` with
 zero-based indices. Fetch the pixels using:
 
 ```json
 {
-  "name": "read_image",
+  "name": "read",
   "arguments": {
     "route_id": "route_EXAMPLE",
-    "source_message_id": "PLATFORM_MESSAGE_ID",
-    "image_index": 0
+    "resource": "image",
+    "arguments": {"source_message_id": "PLATFORM_MESSAGE_ID", "image_index": 0}
   }
 }
 ```
@@ -42,30 +42,31 @@ remain in the private raw journal. a13n applies its own attachment limits.
 
 ## Send images
 
-Enable CG's `send_image` tool in the Agent Host. For QQ, choose **Final run output**
+Enable CG's `send_message` tool in the Agent Host. For QQ, choose **Final run output**
 and grant `message.proactive` to combine automatic text replies with proactive
 image tools. Existing **MCP send_message tool** routes without that grant keep
 passive image replies. OneBot images still require MCP replies. Configure a
 dedicated a13n MCP connection for the route when needed.
-Check `list_conversations` capability fields for the channel's supported formats.
+Check `discover(resource="conversations")` capability fields for the channel's supported formats.
 
 ```json
 {
-  "name": "send_image",
+  "name": "send_message",
   "arguments": {
     "route_id": "route_EXAMPLE",
-    "image_base64": "BASE64_IMAGE_BYTES",
-    "media_type": "image/png",
-    "caption": "Optional caption"
+    "content": [
+      {"type": "text", "text": "Optional caption"},
+      {"type": "image", "filename": "picture.png", "data_base64": "BASE64_IMAGE_BYTES", "media_type": "image/png"}
+    ]
   }
 }
 ```
 
-Supply strict base64 without a `data:` prefix, at most 4 MiB decoded. QQ official
+Supply strict base64 without a `data:` prefix, at most 4 MiB decoded for OneBot and 16 MiB for QQ. QQ official
 supports PNG/JPEG; OneBot also supports GIF/WebP. CG accepts no server-local path
-or arbitrary remote URL. A caption may contain up to 16000 characters.
+as a file source. QQ also accepts a public HTTPS media URL; OneBot requires inline base64. A caption may contain up to 16000 characters.
 
-The tool returns a queued reply ID. Replies are sent automatically and appear in
+The tool returns a queued `operation_id`; query it with `get_operation`. Replies are sent automatically and appear in
 the existing conversation history with their delivery state. QQ uploads first,
 then sends the image. With `message.proactive`, QQ tools default to proactive
 delivery; `delivery: "passive"` explicitly uses incoming reply context and its
@@ -86,12 +87,11 @@ ordinary message replies; see [QQ platform tools](qq-platform.md).
 
 ```json
 {
-  "name": "set_message_reaction",
+  "name": "execute_action",
   "arguments": {
     "route_id": "route_EXAMPLE",
-    "source_message_id": "PLATFORM_MESSAGE_ID",
-    "emoji_id": "76",
-    "add": true
+    "action": "reaction",
+    "arguments": {"source_message_id": "PLATFORM_MESSAGE_ID", "emoji_id": "76", "add": true}
   }
 }
 ```

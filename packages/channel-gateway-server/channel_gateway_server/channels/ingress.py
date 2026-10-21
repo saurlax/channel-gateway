@@ -19,6 +19,11 @@ class ProjectionError(ValueError):
 
 
 def event_type(event: dict) -> str:
+    header = event.get("header", {})
+    if isinstance(header, dict) and isinstance(header.get("event_type"), str):
+        return header["event_type"][:128]
+    if isinstance(event.get("event"), dict):
+        return str(event["event"].get("type", event.get("type", "unknown")))[:128]
     value = event.get("t")
     if isinstance(value, str):
         return value[:128]

@@ -218,7 +218,7 @@ def tick(platform):
 
 
 def status(platform, route, receipt):
-    return decoded(call(platform, route, "get_channel_action", action_id=receipt["action_id"]))
+    return decoded(call(platform, route, "get_operation", operation_id=receipt["action_id"]))
 
 
 @pytest.mark.parametrize(
@@ -234,7 +234,7 @@ def test_each_qq_conversation_kind_routes_and_sends_to_its_own_native_endpoint(p
     client, _, provider, channel, _ = platform
     route = configure(platform, kind)
     incoming(platform, kind)
-    result = decoded(call(platform, route, "send_message", text="Native reply"))
+    result = decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Native reply"}]))
     assert result["state"] == "queued"
     tick(platform)
     sent = [r for r in provider.requests if r.url.path.endswith("/messages")]
@@ -243,7 +243,7 @@ def test_each_qq_conversation_kind_routes_and_sends_to_its_own_native_endpoint(p
     assert body["msg_id"] == "source1" and body["content"] == "Native reply"
     assert ("msg_type" in body) == (kind in {"private", "group"})
     assert client.get("/api/v1/replies").json()[0]["state"] == "sent"
-    recorded = decoded(call(platform, route, "read_conversation"))["messages"]
+    recorded = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"]
     assert any(m["direction"] == "outgoing" and m["text"] == "Native reply" for m in recorded)
     history = client.get(
         "/api/v1/history",
@@ -262,10 +262,9 @@ def test_markdown_keyboard_and_native_quote_are_content_not_actions(platform):
             platform,
             route,
             "send_message",
-            text="**Answer**",
-            message_format="markdown",
-            keyboard=keyboard,
-            reply_to_source_message_id="source1",
+            content=[{"type": "text", "text": "**Answer**", "format": "markdown"}],
+            reply_to="source1",
+            native={"qq": {"keyboard": keyboard}},
         )
     )
     tick(platform)
@@ -286,7 +285,13 @@ def test_actions_have_independent_grants_and_never_appear_as_sent_replies(platfo
     )
     incoming(platform, "guild")
     receipt = decoded(
-        call(platform, route, "set_message_reaction", source_message_id="source1", emoji_id="203", emoji_type=1)
+        call(
+            platform,
+            route,
+            "execute_action",
+            action="reaction",
+            arguments={"source_message_id": "source1", "emoji_id": "203", "emoji_type": 1},
+        )
     )
     # Directly advance the action, avoiding unrelated Host input execution.
     action = client.portal.call(platform[1].state.store.channel_action, receipt["action_id"])
@@ -308,18 +313,30 @@ def test_actions_have_independent_grants_and_never_appear_as_sent_replies(platfo
 def test_official_reactions_are_rejected_outside_guild_channels(platform, kind):
     route = configure(platform, kind, ["message.react"])
     incoming(platform, kind)
-    assert call(platform, route, "set_message_reaction", source_message_id="source1", emoji_id="203").get("isError")
+    assert call(
+        platform,
+        route,
+        "execute_action",
+        action="reaction",
+        arguments={"source_message_id": "source1", "emoji_id": "203"},
+    ).get("isError")
     assert not platform[2].requests
 
 
 def test_native_resources_and_management_are_denied_by_default(platform):
     route = configure(platform)
-    catalog = decoded(call(platform, route, "list_channel_operations"))["operations"]
+    catalog = decoded(call(platform, route, "discover", resource="operations"))["native"]
     assert catalog and all(not item["authorized"] for item in catalog)
-    assert call(platform, route, "query_channel_resource", operation="get_group").get("isError")
-    assert call(platform, route, "perform_channel_action", operation="set_group_mutes", arguments={"members": []}).get(
-        "isError"
-    )
+    assert call(
+        platform, route, "read", resource="native", arguments={"operation": "qq.get_group", "parameters": {}}
+    ).get("isError")
+    assert call(
+        platform,
+        route,
+        "execute_action",
+        action="native",
+        arguments={"operation": "qq.set_group_mutes", "parameters": {"members": []}},
+    ).get("isError")
     assert not platform[2].requests and not platform[0].get("/api/v1/actions").json()
 
 
@@ -375,8 +392,11 @@ def test_native_resources_and_management_are_denied_by_default(platform):
 )
 def test_group_and_account_operations_follow_official_methods_and_scoped_paths(platform, name, args, method, path):
     route = configure(platform, grants=GRANTS)
-    tool = "query_channel_resource" if method == "GET" else "perform_channel_action"
-    receipt = decoded(call(platform, route, tool, operation=name, arguments=args))
+    tool = "read" if method == "GET" else "execute_action"
+    selector = {"resource": "native"} if method == "GET" else {"action": "native"}
+    receipt = decoded(
+        call(platform, route, tool, **selector, arguments={"operation": "qq." + name, "parameters": args})
+    )
     if method != "GET":
         tick(platform)
         assert status(platform, route, receipt)["state"] == "succeeded"
@@ -452,8 +472,11 @@ def test_group_and_account_operations_follow_official_methods_and_scoped_paths(p
 def test_guild_operations_bind_verified_guild_and_accept_empty_or_list_receipts(platform, name, args, method, path):
     route = configure(platform, "guild", GRANTS)
     incoming(platform, "guild")
-    tool = "query_channel_resource" if method == "GET" else "perform_channel_action"
-    receipt = decoded(call(platform, route, tool, operation=name, arguments=args))
+    tool = "read" if method == "GET" else "execute_action"
+    selector = {"resource": "native"} if method == "GET" else {"action": "native"}
+    receipt = decoded(
+        call(platform, route, tool, **selector, arguments={"operation": "qq." + name, "parameters": args})
+    )
     if method != "GET":
         tick(platform)
         assert status(platform, route, receipt)["state"] == "succeeded"
@@ -468,9 +491,9 @@ def test_foreign_guild_targets_are_denied_before_mutation(platform):
         call(
             platform,
             route,
-            "perform_channel_action",
-            operation="delete_subchannel",
-            arguments={"target_channel_id": "foreign"},
+            "execute_action",
+            action="native",
+            arguments={"operation": "qq.delete_subchannel", "parameters": {"target_channel_id": "foreign"}},
         )
     )
     tick(platform)
@@ -489,7 +512,13 @@ def test_foreign_guild_targets_are_denied_before_mutation(platform):
 def test_agents_cannot_override_scope_credentials_or_api_paths(platform, args):
     route = configure(platform, "guild", GRANTS)
     incoming(platform, "guild")
-    assert call(platform, route, "perform_channel_action", operation="update_role", arguments=args).get("isError")
+    assert call(
+        platform,
+        route,
+        "execute_action",
+        action="native",
+        arguments={"operation": "qq.update_role", "parameters": args},
+    ).get("isError")
     assert not platform[2].requests and not platform[0].get("/api/v1/actions").json()
 
 
@@ -497,7 +526,13 @@ def test_revoking_a_grant_blocks_pending_actions_and_hides_results(platform):
     client, _, provider, _, _ = platform
     route = configure(platform, grants=["group.manage"])
     receipt = decoded(
-        call(platform, route, "perform_channel_action", operation="set_group_mutes", arguments={"members": []})
+        call(
+            platform,
+            route,
+            "execute_action",
+            action="native",
+            arguments={"operation": "qq.set_group_mutes", "parameters": {"members": []}},
+        )
     )
     changed = client.patch(f"/api/v1/routes/{route['id']}", json={"action_grants": []})
     assert changed.status_code == 200, changed.text
@@ -511,7 +546,13 @@ def test_revoking_a_grant_blocks_pending_actions_and_hides_results(platform):
 def test_platform_denials_and_uncertain_effects_are_distinct_and_not_retried(platform, failure, expected):
     route = configure(platform, grants=["group.manage"])
     receipt = decoded(
-        call(platform, route, "perform_channel_action", operation="set_group_mutes", arguments={"members": []})
+        call(
+            platform,
+            route,
+            "execute_action",
+            action="native",
+            arguments={"operation": "qq.set_group_mutes", "parameters": {"members": []}},
+        )
     )
     platform[2].failure = failure
     tick(platform)
@@ -525,18 +566,18 @@ def test_platform_denials_and_uncertain_effects_are_distinct_and_not_retried(pla
 def test_stream_fragments_are_ordered_private_and_anchored_to_the_first_source(platform):
     route = configure(platform, "private")
     incoming(platform, "private")
-    first = decoded(call(platform, route, "send_stream_message", text="One", index=0))
+    first = decoded(
+        call(platform, route, "send_message", content=[{"type": "text", "text": "One"}], stream={"index": 0})
+    )
     tick(platform)
     incoming(platform, "private", mid="source2")
     final = decoded(
         call(
             platform,
             route,
-            "send_stream_message",
-            text="Two",
-            index=1,
-            stream_handle=first["stream_handle"],
-            finished=True,
+            "send_message",
+            content=[{"type": "text", "text": "Two"}],
+            stream={"index": 1, "stream_handle": first["stream_handle"], "finished": True},
         )
     )
     tick(platform)
@@ -544,18 +585,28 @@ def test_stream_fragments_are_ordered_private_and_anchored_to_the_first_source(p
     requests = [json.loads(r.content) for r in platform[2].requests if r.url.path.endswith("/stream_messages")]
     assert [r["index"] for r in requests] == [0, 1] and [r["msg_id"] for r in requests] == ["source1", "source1"]
     assert requests[1]["stream_msg_id"] == "stream-native" and requests[1]["input_state"] == 10
-    assert call(platform, route, "send_stream_message", text="Late", index=2, stream_handle=first["stream_handle"]).get(
-        "isError"
-    )
+    assert call(
+        platform,
+        route,
+        "send_message",
+        content=[{"type": "text", "text": "Late"}],
+        stream={"index": 2, "stream_handle": first["stream_handle"]},
+    ).get("isError")
     assert "One" not in platform[0].get("/api/v1/actions").text
 
 
 def test_stream_failure_does_not_continue_or_resend_fragments(platform):
     route = configure(platform, "private")
     incoming(platform, "private")
-    first = decoded(call(platform, route, "send_stream_message", text="One"))
+    first = decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "One"}], stream={}))
     second = decoded(
-        call(platform, route, "send_stream_message", text="Two", index=1, stream_handle=first["stream_handle"])
+        call(
+            platform,
+            route,
+            "send_message",
+            content=[{"type": "text", "text": "Two"}],
+            stream={"index": 1, "stream_handle": first["stream_handle"]},
+        )
     )
     platform[2].failure = "timeout"
     tick(platform)
@@ -575,11 +626,10 @@ def test_qq_media_uploads_use_correct_types_and_passive_receipts(platform, media
         call(
             platform,
             route,
-            "send_media",
-            media_kind=media_kind,
-            media_type=mime,
-            filename="asset.bin",
-            url="https://example.com/asset",
+            "send_message",
+            content=[
+                {"type": media_kind, "media_type": mime, "filename": "asset.bin", "url": "https://example.com/asset"}
+            ],
         )
     )
     tick(platform)
@@ -587,7 +637,7 @@ def test_qq_media_uploads_use_correct_types_and_passive_receipts(platform, media
     assert json.loads(upload.content)["file_type"] == file_type and json.loads(upload.content)["srv_send_msg"] is False
     sent = json.loads(platform[2].requests[-1].content)
     assert sent["msg_type"] == 7 and sent["media"] == {"file_info": "private-file-info"}
-    history = decoded(call(platform, route, "read_conversation"))["messages"]
+    history = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"]
     outgoing = next(m for m in history if m["direction"] == "outgoing")
     assert outgoing["media"] == [{"kind": media_kind, "media_type": mime, "filename": "asset.bin"}]
     assert outgoing["images"] == [] and outgoing["attachments"] == []
@@ -597,13 +647,25 @@ def test_qq_media_uploads_use_correct_types_and_passive_receipts(platform, media
 def test_sent_image_history_contains_no_payload_bytes_or_received_image_handle(platform):
     route = configure(platform)
     incoming(platform)
-    decoded(call(platform, route, "send_image", image_base64=PNG_BASE64, media_type="image/png", caption="Bot image"))
+    decoded(
+        call(
+            platform,
+            route,
+            "send_message",
+            content=[
+                {"type": "text", "text": "Bot image"},
+                {"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64},
+            ],
+        )
+    )
     tick(platform)
-    history = decoded(call(platform, route, "read_conversation"))["messages"]
+    history = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"]
     outgoing = next(m for m in history if m["direction"] == "outgoing")
     assert outgoing["text"] == "Bot image" and outgoing["media"][0]["kind"] == "image"
     assert outgoing["images"] == [] and PNG_BASE64 not in str(outgoing)
-    assert call(platform, route, "read_image", source_message_id=outgoing["source_message_id"]).get("isError")
+    assert call(
+        platform, route, "read", resource="image", arguments={"source_message_id": outgoing["source_message_id"]}
+    ).get("isError")
 
 
 def test_large_inline_media_uses_credential_free_multipart_upload(platform):
@@ -615,11 +677,15 @@ def test_large_inline_media_uses_credential_free_multipart_upload(platform):
         call(
             platform,
             route,
-            "send_media",
-            media_kind="file",
-            media_type="application/octet-stream",
-            filename="large.bin",
-            data_base64=encoded,
+            "send_message",
+            content=[
+                {
+                    "type": "file",
+                    "media_type": "application/octet-stream",
+                    "filename": "large.bin",
+                    "data_base64": encoded,
+                }
+            ],
         )
     )
     tick(platform)
@@ -635,7 +701,17 @@ def test_large_inline_media_uses_credential_free_multipart_upload(platform):
 def test_guild_image_uses_native_multipart_and_never_group_uploads(platform):
     route = configure(platform, "guild")
     incoming(platform, "guild")
-    decoded(call(platform, route, "send_image", image_base64=PNG_BASE64, media_type="image/png", caption="Image"))
+    decoded(
+        call(
+            platform,
+            route,
+            "send_message",
+            content=[
+                {"type": "text", "text": "Image"},
+                {"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64},
+            ],
+        )
+    )
     tick(platform)
     request = platform[2].requests[-1]
     assert request.url.path == "/channels/childA/messages" and request.headers["content-type"].startswith(
@@ -647,9 +723,11 @@ def test_guild_image_uses_native_multipart_and_never_group_uploads(platform):
 
 def test_proactive_messages_need_explicit_authority_and_no_fabricated_source(platform):
     route = configure(platform)
-    assert call(platform, route, "send_message", text="Hello", delivery="proactive").get("isError")
+    assert call(platform, route, "send_message", content=[{"type": "text", "text": "Hello"}], delivery="proactive").get(
+        "isError"
+    )
     platform[0].patch(f"/api/v1/routes/{route['id']}", json={"action_grants": ["message.proactive"]})
-    decoded(call(platform, route, "send_message", text="Hello", delivery="proactive"))
+    decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Hello"}], delivery="proactive"))
     tick(platform)
     body = json.loads(platform[2].requests[-1].content)
     assert "msg_id" not in body and body["content"] == "Hello"
@@ -658,10 +736,10 @@ def test_proactive_messages_need_explicit_authority_and_no_fabricated_source(pla
 def test_recall_distinguishes_bot_ownership_and_member_moderation(platform):
     route = configure(platform, grants=["message.recall"])
     incoming(platform)
-    assert call(platform, route, "recall_message", message_id="source1").get("isError")
-    decoded(call(platform, route, "send_message", text="Reply"))
+    assert call(platform, route, "execute_action", action="recall", arguments={"message_id": "source1"}).get("isError")
+    decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Reply"}]))
     tick(platform)
-    receipt = decoded(call(platform, route, "recall_message", message_id="out1"))
+    receipt = decoded(call(platform, route, "execute_action", action="recall", arguments={"message_id": "out1"}))
     tick(platform)
     assert status(platform, route, receipt)["state"] == "succeeded"
     assert (
@@ -692,10 +770,16 @@ def test_qq_group_file_cdn_reaches_history_attachment_reads_and_host(platform, q
         ),
     )
     assert not provider.uploads
-    history = decoded(call(platform, route, "read_conversation"))["messages"][0]
+    history = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"][0]
     assert history["attachments"] == [{"index": 0, "kind": "file", "media_type": "file", "filename": "notes.txt"}]
     assert "private-file-key" not in str(history) + client.get("/api/v1/events").text
-    result = call(platform, route, "read_attachment", source_message_id="source1", attachment_index=0)
+    result = call(
+        platform,
+        route,
+        "read",
+        resource="attachment",
+        arguments={"source_message_id": "source1", "attachment_index": 0},
+    )
     assert not result.get("isError"), result
     resource = result["content"][0]["resource"]
     assert resource["mimeType"] == "text/plain" and resource["text"] == "Quoted file contents."
@@ -721,11 +805,17 @@ def test_audio_video_files_cards_and_nested_quotes_are_projected_without_private
         ark_data={"ark_type": "miniapp", "title": "App", "auth_token": "private-token"},
         msg_elements=[{"content": "Quoted user text"}],
     )
-    history = decoded(call(platform, route, "read_conversation"))["messages"][0]
+    history = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"][0]
     assert [item["kind"] for item in history["attachments"]] == ["audio", "video", "file"]
     assert "Quoted user text" in history["text"] and history["structured"]["card"]["title"] == "App"
     assert "private-token" not in str(history) and "private-image-key" not in str(history)
-    image = call(platform, route, "read_attachment", source_message_id="source1", attachment_index=0)
+    image = call(
+        platform,
+        route,
+        "read",
+        resource="attachment",
+        arguments={"source_message_id": "source1", "attachment_index": 0},
+    )
     assert not image.get("isError"), image
     assert image["content"][0]["type"] == "audio" and image["content"][0]["mimeType"] == "audio/wav"
     message = qq_message(packet, {"id": "account", "kind": "qq"})
@@ -752,7 +842,7 @@ def test_attachment_reads_preserve_types_and_inline_text_from_generic_cdn(
     platform[2].media_type = "application/octet-stream"
     platform[2].media_data = data
     incoming(platform, attachments=[{"content_type": declared, "filename": filename, "url": CDN}])
-    result = call(platform, route, "read_attachment", source_message_id="source1")
+    result = call(platform, route, "read", resource="attachment", arguments={"source_message_id": "source1"})
     assert not result.get("isError"), result
     resource = result["content"][0]["resource"]
     assert resource["mimeType"] == mime
@@ -767,7 +857,7 @@ def test_non_utf8_text_attachment_returns_tool_error_without_binary_model_input(
     platform[2].media_type = "application/octet-stream"
     platform[2].media_data = b"\xff\xfeinvalid utf8"
     incoming(platform, attachments=[{"content_type": "file", "filename": "notes.txt", "url": CDN}])
-    result = call(platform, route, "read_attachment", source_message_id="source1")
+    result = call(platform, route, "read", resource="attachment", arguments={"source_message_id": "source1"})
     assert result["isError"] and all(part["type"] == "text" for part in result["content"])
 
 
@@ -787,13 +877,13 @@ def test_scoped_notifications_are_durable_sanitized_and_not_agent_inputs(platfor
     }
     hook(platform, packet)
     hook(platform, {**packet, "id": "notice2", "d": {**packet["d"], "group_openid": "456"}})
-    events = decoded(call(platform, route, "read_channel_events"))["events"]
+    events = decoded(call(platform, route, "read", resource="events", arguments={}))["events"]
     assert len(events) == 1 and events[0]["event_type"] == "GROUP_MEMBER_ADD"
     assert "private" not in str(events)
     assert not client.portal.call(app.state.store.pending)
     client.portal.call(app.state.store.close)
     client.portal.call(app.state.store.open)
-    assert len(decoded(call(platform, route, "read_channel_events"))["events"]) == 1
+    assert len(decoded(call(platform, route, "read", resource="events", arguments={}))["events"]) == 1
 
 
 def test_interaction_acknowledgement_is_prompt_and_not_repeated_for_duplicate_events(platform):
@@ -818,7 +908,13 @@ def test_interrupted_actions_remain_unknown_after_restart_and_are_not_replayed(p
     client, app, provider, _, _ = platform
     route = configure(platform, grants=["group.manage"])
     receipt = decoded(
-        call(platform, route, "perform_channel_action", operation="set_group_mutes", arguments={"members": []})
+        call(
+            platform,
+            route,
+            "execute_action",
+            action="native",
+            arguments={"operation": "qq.set_group_mutes", "parameters": {"members": []}},
+        )
     )
     assert client.portal.call(app.state.store.claim_channel_action, receipt["action_id"])
     client.portal.call(app.state.store.close)
@@ -831,9 +927,15 @@ def test_action_receipts_are_not_readable_by_another_route(platform):
     route = configure(platform, grants=["group.manage"])
     other = configure(platform, conversation="456", grants=["group.manage"])
     receipt = decoded(
-        call(platform, route, "perform_channel_action", operation="set_group_mutes", arguments={"members": []})
+        call(
+            platform,
+            route,
+            "execute_action",
+            action="native",
+            arguments={"operation": "qq.set_group_mutes", "parameters": {"members": []}},
+        )
     )
-    assert call(platform, other, "get_channel_action", action_id=receipt["action_id"]).get("isError")
+    assert call(platform, other, "get_operation", operation_id=receipt["action_id"]).get("isError")
 
 
 def test_custom_gateway_intents_are_validated_and_saved_without_credentials(platform):
@@ -848,7 +950,13 @@ def test_custom_gateway_intents_are_validated_and_saved_without_credentials(plat
 def test_new_guild_reactions_require_explicit_grant_even_on_mcp_reply_routes(platform):
     route = configure(platform, "guild")
     incoming(platform, "guild")
-    assert call(platform, route, "set_message_reaction", source_message_id="source1", emoji_id="203").get("isError")
+    assert call(
+        platform,
+        route,
+        "execute_action",
+        action="reaction",
+        arguments={"source_message_id": "source1", "emoji_id": "203"},
+    ).get("isError")
     assert not platform[2].requests
 
 
@@ -861,11 +969,15 @@ def test_multipart_revocation_stops_following_parts_and_final_send(platform):
         call(
             platform,
             route,
-            "send_media",
-            media_kind="file",
-            media_type="application/octet-stream",
-            filename="large.bin",
-            data_base64=encoded,
+            "send_message",
+            content=[
+                {
+                    "type": "file",
+                    "media_type": "application/octet-stream",
+                    "filename": "large.bin",
+                    "data_base64": encoded,
+                }
+            ],
         )
     )
 
@@ -889,7 +1001,7 @@ def test_native_read_does_not_return_results_after_grant_revocation(platform):
         assert await app.state.store.update_route(route["id"], {**current, "action_grants": []}, current)
 
     provider.on_request = revoke
-    result = call(platform, route, "query_channel_resource", operation="get_group")
+    result = call(platform, route, "read", resource="native", arguments={"operation": "qq.get_group", "parameters": {}})
     assert result.get("isError") and "Resource" not in str(result)
     assert client.portal.call(app.state.store.route, route["id"])["action_grants"] == []
 
@@ -910,16 +1022,38 @@ def test_source_children_inherit_current_action_grants_without_read_expansion(pl
     incoming(platform)
     child = next(row for row in client.get("/api/v1/routes").json() if row.get("parent_route_id") == parent["id"])
     assert child["action_grants"] == ["resource.read"]
-    decoded(call(platform, parent, "query_channel_resource", operation="get_group", route_id=child["id"]))
+    decoded(
+        call(
+            platform,
+            parent,
+            "read",
+            resource="native",
+            arguments={"operation": "qq.get_group", "parameters": {}},
+            route_id=child["id"],
+        )
+    )
     assert client.patch(f"/api/v1/routes/{parent['id']}", json={"action_grants": []}).status_code == 200
-    assert call(platform, parent, "query_channel_resource", operation="get_group", route_id=child["id"]).get("isError")
+    assert call(
+        platform,
+        parent,
+        "read",
+        resource="native",
+        arguments={"operation": "qq.get_group", "parameters": {}},
+        route_id=child["id"],
+    ).get("isError")
 
 
 def test_deleting_route_blocks_actions_atomically_and_preserves_history(platform):
     client, app, _, channel, _ = platform
     route = configure(platform, grants=["group.manage"])
     receipt = decoded(
-        call(platform, route, "perform_channel_action", operation="set_group_mutes", arguments={"members": []})
+        call(
+            platform,
+            route,
+            "execute_action",
+            action="native",
+            arguments={"operation": "qq.set_group_mutes", "parameters": {"members": []}},
+        )
     )
     assert client.delete(f"/api/v1/routes/{route['id']}").status_code == 200
     row = client.portal.call(app.state.store.channel_action, receipt["action_id"])
@@ -934,12 +1068,12 @@ def test_tool_annotations_and_catalog_keep_mutation_and_read_surfaces_separate(p
     route = configure(platform, "guild", GRANTS)
     tools = rpc(platform[0], route["agent_token"], "tools/list", {}).json()["result"]["tools"]
     by_name = {tool["name"]: tool for tool in tools}
-    assert by_name["query_channel_resource"]["annotations"]["readOnlyHint"] is True
-    assert by_name["perform_channel_action"]["annotations"]["destructiveHint"] is True
-    assert "source_message_id" in by_name["set_message_reaction"]["inputSchema"]["properties"]
-    assert "keyboard" in by_name["send_message"]["inputSchema"]["properties"]
-    catalog = decoded(call(platform, route, "list_channel_operations"))["operations"]
-    operations = {item["name"]: item for item in catalog}
+    assert by_name["read"]["annotations"]["readOnlyHint"] is True
+    assert by_name["execute_action"]["annotations"]["destructiveHint"] is True
+    assert set(by_name) == {"discover", "read", "send_message", "execute_action", "get_operation"}
+    assert "native" in by_name["send_message"]["inputSchema"]["properties"]
+    catalog = decoded(call(platform, route, "discover", resource="operations"))["native"]
+    operations = {item["name"].removeprefix("qq."): item for item in catalog}
     assert operations["join_microphone"]["restriction"] == "audio bot permission required"
     assert operations["list_guild_members"]["restriction"] == "private-domain only"
     assert "set_group_mutes" not in operations
@@ -983,13 +1117,15 @@ def test_button_interactions_activate_only_authorized_sources_and_reply_with_eve
     assert len(events) == 1 and events[0]["route_id"] == route["id"]
     assert events[0]["message"]["sender_id"] == "7" and events[0]["message"]["text"].startswith("[Interaction]")
     assert "reply_event_id" not in str(events)
-    decoded(call(platform, route, "send_message", text="Confirmed"))
+    decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Confirmed"}]))
     tick(platform)
     body = json.loads(provider.requests[-1].content)
     assert body["event_id"] == "button-event" and "msg_id" not in body
     assert len([r for r in provider.requests if r.url.path.startswith("/interactions/")]) == 1
     if kind == "private":
-        first = decoded(call(platform, route, "send_stream_message", text="Streaming"))
+        first = decoded(
+            call(platform, route, "send_message", content=[{"type": "text", "text": "Streaming"}], stream={})
+        )
         tick(platform)
         assert status(platform, route, first)["state"] == "succeeded"
         stream = json.loads(provider.requests[-1].content)
@@ -1033,7 +1169,7 @@ def sent_messages(platform):
 def test_final_output_and_proactive_tool_sends_coexist(platform):
     route = output_route(platform, ["message.proactive"])
     incoming(platform)
-    decoded(call(platform, route, "send_message", text="Notification"))
+    decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Notification"}]))
     tick(platform)
     tick(platform)
     submission = next(r for r in platform[2].requests if r.url.host == "host.test" and r.method == "POST")
@@ -1048,7 +1184,7 @@ def test_final_output_and_proactive_tool_sends_coexist(platform):
         and "msg_seq" not in bodies[0]
     )
     assert bodies[1]["content"] == "Automatic reply" and bodies[1]["msg_id"] == "source1"
-    view = decoded(call(platform, route, "list_conversations"))["conversations"][0]
+    view = decoded(call(platform, route, "discover", resource="conversations"))["conversations"][0]
     assert view["reply_source"] == "output" and view["can_reply"] and view["can_send_proactively"]
     assert view["default_delivery"] == "proactive"
 
@@ -1056,11 +1192,22 @@ def test_final_output_and_proactive_tool_sends_coexist(platform):
 @pytest.mark.parametrize(
     "tool,arguments",
     [
-        ("send_message", {"text": "Notification"}),
-        ("send_image", {"image_base64": PNG_BASE64, "media_type": "image/png"}),
+        ("send_message", {"content": [{"type": "text", "text": "Notification"}]}),
         (
-            "send_media",
-            {"media_kind": "image", "media_type": "image/png", "filename": "test.png", "data_base64": PNG_BASE64},
+            "send_message",
+            {
+                "content": [
+                    {"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64}
+                ]
+            },
+        ),
+        (
+            "send_message",
+            {
+                "content": [
+                    {"type": "image", "media_type": "image/png", "filename": "test.png", "data_base64": PNG_BASE64}
+                ]
+            },
         ),
     ],
 )
@@ -1077,11 +1224,22 @@ def test_output_routes_send_proactive_media_without_incoming_context(platform, t
 @pytest.mark.parametrize(
     "tool,arguments",
     [
-        ("send_message", {"text": "Explicit passive"}),
-        ("send_image", {"image_base64": PNG_BASE64, "media_type": "image/png"}),
+        ("send_message", {"content": [{"type": "text", "text": "Explicit passive"}]}),
         (
-            "send_media",
-            {"media_kind": "image", "media_type": "image/png", "filename": "test.png", "data_base64": PNG_BASE64},
+            "send_message",
+            {
+                "content": [
+                    {"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64}
+                ]
+            },
+        ),
+        (
+            "send_message",
+            {
+                "content": [
+                    {"type": "image", "media_type": "image/png", "filename": "test.png", "data_base64": PNG_BASE64}
+                ]
+            },
         ),
     ],
 )
@@ -1097,11 +1255,22 @@ def test_output_route_without_proactive_grant_denies_all_message_tools(platform)
     route = output_route(platform)
     incoming(platform)
     for tool, arguments in [
-        ("send_message", {"text": "No"}),
-        ("send_image", {"image_base64": PNG_BASE64, "media_type": "image/png"}),
+        ("send_message", {"content": [{"type": "text", "text": "No"}]}),
         (
-            "send_media",
-            {"media_kind": "image", "media_type": "image/png", "filename": "test.png", "data_base64": PNG_BASE64},
+            "send_message",
+            {
+                "content": [
+                    {"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64}
+                ]
+            },
+        ),
+        (
+            "send_message",
+            {
+                "content": [
+                    {"type": "image", "media_type": "image/png", "filename": "test.png", "data_base64": PNG_BASE64}
+                ]
+            },
         ),
     ]:
         assert call(platform, route, tool, **arguments).get("isError")
@@ -1111,12 +1280,12 @@ def test_output_route_without_proactive_grant_denies_all_message_tools(platform)
 def test_queued_delivery_is_frozen_and_revocation_blocks_proactive_sends(platform):
     route = configure(platform)
     incoming(platform)
-    first = decoded(call(platform, route, "send_message", text="Passive before grant"))
+    first = decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Passive before grant"}]))
     platform[0].patch("/api/v1/routes/" + route["id"], json={"action_grants": ["message.proactive"]})
     tick(platform)
     assert json.loads(sent_messages(platform)[0].content)["msg_id"] == "source1"
     assert platform[0].portal.call(platform[1].state.store.reply_payload, first["reply_id"])["delivery"] == "passive"
-    decoded(call(platform, route, "send_message", text="Proactive after grant"))
+    decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Proactive after grant"}]))
     platform[0].patch("/api/v1/routes/" + route["id"], json={"action_grants": []})
     tick(platform)
     assert len(sent_messages(platform)) == 1
@@ -1128,7 +1297,7 @@ def test_proactive_second_budget_survives_restart_and_does_not_retry_sent_messag
     monkeypatch.setattr("channel_gateway_server.storage.time", SimpleNamespace(time=lambda: now[0]))
     route = configure(platform, grants=["message.proactive"])
     for i in range(6):
-        decoded(call(platform, route, "send_message", text=str(i)))
+        decoded(call(platform, route, "send_message", content=[{"type": "text", "text": str(i)}]))
     tick(platform)
     assert len(sent_messages(platform)) == 5
     store = platform[1].state.store
@@ -1148,15 +1317,17 @@ def test_conversation_budget_keeps_other_destinations_and_passive_replies_moving
     monkeypatch.setattr("channel_gateway_server.storage.time", SimpleNamespace(time=lambda: now[0]))
     route = configure(platform, grants=["message.proactive"])
     for i in range(21):
-        decoded(call(platform, route, "send_message", text=str(i)))
+        decoded(call(platform, route, "send_message", content=[{"type": "text", "text": str(i)}]))
     for _ in range(4):
         tick(platform)
         now[0] += 2
     assert len(sent_messages(platform)) == 20
     other = configure(platform, kind="private", grants=["message.proactive"])
-    decoded(call(platform, other, "send_message", text="Other destination"))
+    decoded(call(platform, other, "send_message", content=[{"type": "text", "text": "Other destination"}]))
     incoming(platform)
-    decoded(call(platform, route, "send_message", text="Passive bypass", delivery="passive"))
+    decoded(
+        call(platform, route, "send_message", content=[{"type": "text", "text": "Passive bypass"}], delivery="passive")
+    )
     tick(platform)
     assert len(sent_messages(platform)) == 22
     assert [json.loads(r.content)["content"] for r in sent_messages(platform)][-2:] == [
@@ -1174,7 +1345,7 @@ def test_proactive_account_minute_budget_is_shared_across_conversations(platform
     for conversation in ["123", "456"]:
         route = configure(platform, grants=["message.proactive"], conversation=conversation)
         for i in range(20):
-            decoded(call(platform, route, "send_message", text=str(i)))
+            decoded(call(platform, route, "send_message", content=[{"type": "text", "text": str(i)}]))
     for _ in range(7):
         tick(platform)
         now[0] += 2
@@ -1197,7 +1368,7 @@ def test_proactive_daily_budget_resets_at_china_midnight(platform, monkeypatch):
             )
 
     platform[0].portal.call(seed)
-    decoded(call(platform, route, "send_message", text="Tomorrow"))
+    decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Tomorrow"}]))
     tick(platform)
     assert not sent_messages(platform)
     now[0] = day_start + 86400
@@ -1208,7 +1379,7 @@ def test_proactive_daily_budget_resets_at_china_midnight(platform, monkeypatch):
 @pytest.mark.parametrize("failure,state", [(403, "failed"), (429, "failed"), ("timeout", "unknown")])
 def test_proactive_rejections_and_uncertain_sends_are_not_retried(platform, failure, state):
     route = configure(platform, grants=["message.proactive"])
-    decoded(call(platform, route, "send_message", text="Attempt once"))
+    decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Attempt once"}]))
     platform[2].failure = failure
     tick(platform)
     tick(platform)
@@ -1238,7 +1409,7 @@ def test_revoking_proactive_grant_blocks_throttled_queue_without_waiting(platfor
     monkeypatch.setattr("channel_gateway_server.storage.time", SimpleNamespace(time=lambda: now[0]))
     route = configure(platform, grants=["message.proactive"])
     for i in range(6):
-        decoded(call(platform, route, "send_message", text=str(i)))
+        decoded(call(platform, route, "send_message", content=[{"type": "text", "text": str(i)}]))
     tick(platform)
     assert len(sent_messages(platform)) == 5
     platform[0].patch("/api/v1/routes/" + route["id"], json={"action_grants": []})
@@ -1249,7 +1420,14 @@ def test_revoking_proactive_grant_blocks_throttled_queue_without_waiting(platfor
 
 def test_proactive_image_rechecks_grant_after_upload(platform):
     route = output_route(platform, ["message.proactive"])
-    decoded(call(platform, route, "send_image", image_base64=PNG_BASE64, media_type="image/png"))
+    decoded(
+        call(
+            platform,
+            route,
+            "send_message",
+            content=[{"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64}],
+        )
+    )
     store = platform[1].state.store
 
     async def revoke(request):
@@ -1263,3 +1441,145 @@ def test_proactive_image_rechecks_grant_after_upload(platform):
     assert any(r.url.path.endswith("/files") for r in platform[2].requests)
     assert not sent_messages(platform)
     assert platform[0].get("/api/v1/replies").json()[0]["state"] == "blocked"
+
+
+def test_five_tool_inventory_is_constant_across_conversations_and_keys(platform):
+    client, _, _, _, host = platform
+    routes = [configure(platform, conversation=str(500 + i)) for i in range(4)]
+    routes.append(configure(platform, "guild"))
+    expected = {"discover", "read", "send_message", "execute_action", "get_operation"}
+    for key in [host["mcp_key"], *(route["agent_token"] for route in routes)]:
+        tools = rpc(client, key, "tools/list", {}).json()["result"]["tools"]
+        assert {tool["name"] for tool in tools} == expected
+        assert len(tools) == 5
+    assert client.get("/api/v1/replies").json() == []
+    assert client.get("/api/v1/actions").json() == []
+
+
+@pytest.mark.parametrize(
+    "old_name", ["read_conversation", "send_image", "send_media", "set_message_reaction", "list_channel_operations"]
+)
+def test_removed_tool_names_cannot_queue_work(platform, old_name):
+    route = configure(platform)
+    assert call(platform, route, old_name).get("isError")
+    assert not platform[0].get("/api/v1/replies").json()
+    assert not platform[0].get("/api/v1/actions").json()
+
+
+@pytest.mark.parametrize("read_channel_ids", [None, ["*"]])
+def test_message_read_source_and_cursor_cover_mixed_history(platform, read_channel_ids):
+    route = configure(platform, read_channel_ids=read_channel_ids)
+    for i in range(5):
+        incoming(platform, mid=f"source{i}")
+        decoded(call(platform, route, "send_message", content=[{"type": "text", "text": f"Bot {i}"}]))
+        tick(platform)
+    all_messages = decoded(call(platform, route, "read", resource="messages", arguments={"limit": 100}))["messages"]
+    assert len(all_messages) == 10
+    cursor = None
+    pages = []
+    for _ in range(7):
+        page = decoded(
+            call(
+                platform,
+                route,
+                "read",
+                resource="messages",
+                arguments={"limit": 2, **({"cursor": cursor} if cursor else {})},
+            )
+        )
+        assert page["source"] == "gateway" and page["coverage"]["complete"] is False
+        pages.insert(0, page["messages"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert [m["history_id"] for page in pages for m in page] == [m["history_id"] for m in all_messages]
+    assert call(platform, route, "read", resource="messages", source="platform").get("isError")
+    assert call(platform, route, "read", resource="messages", arguments={"cursor": "invalid"}).get("isError")
+    platform[0].patch(f"/api/v1/routes/{route['id']}", json={"read_channel_ids": []})
+    assert call(platform, route, "read", resource="messages", arguments={"cursor": page["next_cursor"]}).get("isError")
+
+
+def test_common_and_native_argument_validation_has_no_authority_escape(platform):
+    route = configure(platform, grants=GRANTS)
+    incoming(platform)
+    for resource, arguments in [
+        ("messages", {"route_id": "another"}),
+        ("messages", {"unknown": True}),
+        ("native", {"operation": "qq.get_group", "parameters": {"group_id": "another"}}),
+        ("native", {"operation": "qq.get_group", "method": "GET", "path": "/users/@me"}),
+        ("native", {"operation": "get_group", "parameters": {}}),
+        ("native", {"operation": "slack.get_group", "parameters": {}}),
+    ]:
+        assert call(platform, route, "read", resource=resource, arguments=arguments).get("isError")
+    assert call(
+        platform,
+        route,
+        "execute_action",
+        action="reaction",
+        arguments={"source_message_id": "source1", "emoji_id": "203", "unexpected": True},
+    ).get("isError")
+    assert not platform[2].requests
+    assert not platform[0].get("/api/v1/actions").json()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"content": [{"type": "text", "text": "One"}, {"type": "text", "text": "Two"}]},
+        {"content": [{"type": "text", "text": "One"}], "native": {"qq": {"unknown": 1}}},
+        {"content": [{"type": "text", "text": "One"}], "native": {"slack": {}}},
+        {
+            "content": [{"type": "image", "media_type": "image/png", "filename": "x.png", "data_base64": PNG_BASE64}],
+            "reply_to": "source1",
+        },
+        {
+            "content": [
+                {
+                    "type": "image",
+                    "media_type": "image/png",
+                    "filename": "x.png",
+                    "data_base64": PNG_BASE64,
+                    "url": "https://example.com/x.png",
+                }
+            ]
+        },
+        {"content": [{"type": "text", "text": "One"}], "stream": {"index": 0}, "delivery": "passive"},
+    ],
+)
+def test_unsupported_content_combinations_fail_atomically(platform, options):
+    route = configure(platform)
+    incoming(platform)
+    assert call(platform, route, "send_message", **options).get("isError")
+    assert not platform[0].get("/api/v1/replies").json()
+    assert not platform[0].get("/api/v1/actions").json()
+    assert not platform[2].requests
+
+
+def test_unified_message_operation_status_is_scoped_and_revocable(platform):
+    route = output_route(platform, ["message.proactive"])
+    queued = decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "One"}]))
+    operation = queued["operation_id"]
+    before = decoded(call(platform, route, "get_operation", operation_id=operation))
+    assert before["state"] == "queued" and before["result"] is None
+    tick(platform)
+    after = decoded(call(platform, route, "get_operation", operation_id=operation))
+    assert after["state"] == "sent" and after["result"] == {"message_id": "out1"}
+    other = configure(platform, conversation="456")
+    assert call(platform, other, "get_operation", operation_id=operation).get("isError")
+    platform[0].patch(f"/api/v1/routes/{route['id']}", json={"action_grants": []})
+    assert decoded(call(platform, route, "get_operation", operation_id=operation))["result"] is None
+
+
+def test_read_only_handle_discovers_capabilities_without_write_authority(platform):
+    route = configure(platform, conversation="456", read_channel_ids=["*"])
+    incoming(platform)
+    listed = decoded(call(platform, route, "discover"))["conversations"]
+    readonly = next(row for row in listed if row["conversation_id"] == "123")
+    result = decoded(call(platform, route, "discover", resource="operations", route_id=readonly["id"]))
+    assert result["native"] == []
+    assert result["capabilities"]["read"]["messages"]["authorized"]
+    assert result["capabilities"]["send"]["authorized"] is False
+    assert not result["capabilities"]["actions"]["reaction"]["authorized"]
+    assert call(
+        platform, route, "read", resource="native", route_id=readonly["id"], arguments={"operation": "qq.get_group"}
+    ).get("isError")

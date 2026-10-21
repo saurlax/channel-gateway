@@ -187,18 +187,18 @@ def test_image_only_ingress_native_mcp_reads_and_private_urls(service, kind):
         assert first["state"] == "accepted" and duplicate["state"] == "duplicate"
     assert len(client.get("/api/v1/events").json()) == 1
     assert not provider.downloads
-    history = result_json(call(service, configured, "read_conversation"))["messages"]
+    history = result_json(call(service, configured, "read", resource="messages", arguments={}))["messages"]
     assert history[0]["source_message_id"] == "1" and history[0]["images"] == [{"index": 0}]
     assert history[0]["text"] == "[Image]"
     assert "private-image-key" not in str(history) + client.get("/api/v1/events").text
-    image = call(service, configured, "read_image", source_message_id="1")
+    image = call(service, configured, "read", resource="image", arguments={"source_message_id": "1"})
     assert not image.get("isError"), image
     assert image["content"][0] == {"type": "image", "data": PNG_BASE64, "mimeType": "image/png"}
     assert not provider.downloads[0].headers.get("authorization")
     assert not provider.downloads[0].headers.get("cookie")
     client.portal.call(app.state.store.close)
     client.portal.call(app.state.store.open)
-    assert not call(service, configured, "read_image", source_message_id="1").get("isError")
+    assert not call(service, configured, "read", resource="image", arguments={"source_message_id": "1"}).get("isError")
 
 
 def test_mcp_image_lookup_is_not_limited_to_recent_history(service):
@@ -219,7 +219,7 @@ def test_mcp_image_lookup_is_not_limited_to_recent_history(service):
             await app.state.bridge.ingest(stored, message)
 
     client.portal.call(populate)
-    assert not call(service, configured, "read_image", source_message_id="1").get("isError")
+    assert not call(service, configured, "read", resource="image", arguments={"source_message_id": "1"}).get("isError")
 
 
 @pytest.mark.parametrize(
@@ -243,7 +243,10 @@ def test_image_access_is_scoped_and_revocable(service, mode):
     elif mode == "rotated":
         assert client.post(f"/api/v1/routes/{configured['id']}/token").status_code == 200
     response = rpc(
-        client, configured["agent_token"], "tools/call", {"name": "read_image", "arguments": {"source_message_id": "1"}}
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "read", "arguments": {"resource": "image", "arguments": {"source_message_id": "1"}}},
     )
     assert response.status_code == 401 or response.json()["result"].get("isError")
     assert not provider.downloads
@@ -259,7 +262,7 @@ def test_revoke_image_access_during_download(service):
         assert await app.state.store.update_route(configured["id"], {**current, "enabled": False}, current)
 
     provider.on_download = revoke
-    assert call(service, configured, "read_image", source_message_id="1").get("isError")
+    assert call(service, configured, "read", resource="image", arguments={"source_message_id": "1"}).get("isError")
     assert len(provider.downloads) == 1
     assert client.portal.call(app.state.store.route, configured["id"])["enabled"] is False
 
@@ -268,13 +271,22 @@ def test_account_image_read_grants_do_not_grant_actions(service):
     client, _, _ = service
     channel, configured, _ = configure(service, read_channel_ids=["*"])
     ingest(service, channel, sender="8", conversation="456")
-    listed = result_json(call(service, configured, "list_conversations"))["conversations"]
+    listed = result_json(call(service, configured, "discover", resource="conversations"))["conversations"]
     readonly = next(row for row in listed if row["conversation_id"] == "456")
     assert readonly["can_read"] and not readonly["can_reply"]
-    assert not call(service, configured, "read_image", source_message_id="1", route_id=readonly["id"]).get("isError")
+    assert not call(
+        service, configured, "read", resource="image", arguments={"source_message_id": "1"}, route_id=readonly["id"]
+    ).get("isError")
     for name, arguments in [
-        ("send_image", {"image_base64": PNG_BASE64, "media_type": "image/png"}),
-        ("set_message_reaction", {"source_message_id": "1", "emoji_id": "76"}),
+        (
+            "send_message",
+            {
+                "content": [
+                    {"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64}
+                ]
+            },
+        ),
+        ("execute_action", {"action": "reaction", "arguments": {"source_message_id": "1", "emoji_id": "76"}}),
     ]:
         assert call(service, configured, name, route_id=readonly["id"], **arguments).get("isError")
     assert not client.get("/api/v1/replies").json()
@@ -286,7 +298,15 @@ def test_image_send_uses_durable_queue_and_platform_receipts(service, kind):
     channel, configured, _ = configure(service, kind)
     ingest(service, channel)
     receipt = result_json(
-        call(service, configured, "send_image", image_base64=PNG_BASE64, media_type="image/png", caption="A picture")
+        call(
+            service,
+            configured,
+            "send_message",
+            content=[
+                {"type": "text", "text": "A picture"},
+                {"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64},
+            ],
+        )
     )
     assert receipt["state"] == "queued" and not provider.requests
     assert PNG_BASE64 not in client.get("/api/v1/replies").text
@@ -323,7 +343,14 @@ def test_lost_image_send_is_not_automatically_repeated(service, kind):
     client, app, provider = service
     channel, configured, _ = configure(service, kind)
     ingest(service, channel)
-    result_json(call(service, configured, "send_image", image_base64=PNG_BASE64, media_type="image/png"))
+    result_json(
+        call(
+            service,
+            configured,
+            "send_message",
+            content=[{"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64}],
+        )
+    )
     provider.fail_send = True
     client.portal.call(app.state.bridge.tick)
     assert client.get("/api/v1/replies").json()[0]["state"] == "unknown"
@@ -336,7 +363,14 @@ def test_qq_upload_does_not_send_after_route_revocation(service):
     client, app, provider = service
     channel, configured, _ = configure(service, "qq")
     ingest(service, channel)
-    result_json(call(service, configured, "send_image", image_base64=PNG_BASE64, media_type="image/png"))
+    result_json(
+        call(
+            service,
+            configured,
+            "send_message",
+            content=[{"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64}],
+        )
+    )
 
     async def revoke():
         current = await app.state.store.route(configured["id"])
@@ -353,9 +387,17 @@ def test_optional_onebot_reactions_add_and_remove(service, add):
     client, app, provider = service
     channel, configured, _ = configure(service)
     ingest(service, channel)
-    listing = result_json(call(service, configured, "list_conversations"))["conversations"]
+    listing = result_json(call(service, configured, "discover", resource="conversations"))["conversations"]
     assert listing[0]["capabilities"]["message_reactions"] == "optional:set_msg_emoji_like"
-    result_json(call(service, configured, "set_message_reaction", source_message_id="1", emoji_id="76", add=add))
+    result_json(
+        call(
+            service,
+            configured,
+            "execute_action",
+            action="reaction",
+            arguments={"source_message_id": "1", "emoji_id": "76", "add": add},
+        )
+    )
     client.portal.call(app.state.bridge.tick)
     assert client.get("/api/v1/actions").json()[0]["state"] == "succeeded"
     assert provider.requests[-1].url.path == "/set_msg_emoji_like"
@@ -366,7 +408,15 @@ def test_reaction_target_sender_revocation_blocks_queued_action(service):
     client, app, provider = service
     channel, configured, _ = configure(service)
     ingest(service, channel)
-    result_json(call(service, configured, "set_message_reaction", source_message_id="1", emoji_id="76"))
+    result_json(
+        call(
+            service,
+            configured,
+            "execute_action",
+            action="reaction",
+            arguments={"source_message_id": "1", "emoji_id": "76"},
+        )
+    )
     client.patch(f"/api/v1/routes/{configured['id']}", json={"allowed_user_ids": ["8"]})
     client.portal.call(app.state.bridge.tick)
     assert client.get("/api/v1/actions").json()[0]["state"] == "blocked"
@@ -378,7 +428,15 @@ def test_unsupported_provider_reactions_do_not_fall_back_to_messages(service):
     channel, configured, _ = configure(service)
     ingest(service, channel)
     provider.unsupported_reaction = True
-    result_json(call(service, configured, "set_message_reaction", source_message_id="1", emoji_id="76"))
+    result_json(
+        call(
+            service,
+            configured,
+            "execute_action",
+            action="reaction",
+            arguments={"source_message_id": "1", "emoji_id": "76"},
+        )
+    )
     client.portal.call(app.state.bridge.tick)
     assert client.get("/api/v1/actions").json()[0]["state"] == "unknown"
     client.portal.call(app.state.bridge.tick)
@@ -389,7 +447,9 @@ def test_official_qq_group_reactions_are_rejected_before_queueing(service):
     client, _, provider = service
     channel, configured, _ = configure(service, "qq")
     ingest(service, channel)
-    assert call(service, configured, "set_message_reaction", source_message_id="1", emoji_id="76").get("isError")
+    assert call(
+        service, configured, "execute_action", action="reaction", arguments={"source_message_id": "1", "emoji_id": "76"}
+    ).get("isError")
     assert not client.get("/api/v1/replies").json() and not provider.requests
 
 
@@ -398,7 +458,13 @@ def test_reactions_require_known_source_messages_and_platform_emoji_ids(service,
     client, _, _ = service
     channel, configured, _ = configure(service)
     ingest(service, channel)
-    assert call(service, configured, "set_message_reaction", source_message_id=mid, emoji_id=emoji).get("isError")
+    assert call(
+        service,
+        configured,
+        "execute_action",
+        action="reaction",
+        arguments={"source_message_id": mid, "emoji_id": emoji},
+    ).get("isError")
     assert not client.get("/api/v1/replies").json()
 
 
@@ -444,7 +510,7 @@ def test_image_download_failures_do_not_return_pixels(service, problem):
         provider.media_type = "text/html"
     else:
         provider.media_type = "image/jpeg"
-    response = call(service, configured, "read_image", source_message_id="1")
+    response = call(service, configured, "read", resource="image", arguments={"source_message_id": "1"})
     assert response.get("isError")
     assert all(content["type"] != "image" for content in response["content"])
     assert len(provider.downloads) == 1
@@ -458,7 +524,12 @@ def test_image_download_failures_do_not_return_pixels(service, problem):
 def test_invalid_outbound_images_are_not_queued(service, encoded, media_type):
     client, _, provider = service
     _, configured, _ = configure(service)
-    assert call(service, configured, "send_image", image_base64=encoded, media_type=media_type).get("isError")
+    assert call(
+        service,
+        configured,
+        "send_message",
+        content=[{"type": "image", "media_type": media_type, "filename": "image.png", "data_base64": encoded}],
+    ).get("isError")
     assert not client.get("/api/v1/replies").json() and not provider.requests
 
 
@@ -536,7 +607,14 @@ def test_qq_missing_upload_receipt_never_sends_a_message(service):
     client, app, provider = service
     channel, configured, _ = configure(service, "qq")
     ingest(service, channel)
-    result_json(call(service, configured, "send_image", image_base64=PNG_BASE64, media_type="image/png"))
+    result_json(
+        call(
+            service,
+            configured,
+            "send_message",
+            content=[{"type": "image", "media_type": "image/png", "filename": "image.png", "data_base64": PNG_BASE64}],
+        )
+    )
     provider.missing_upload_receipt = True
     client.portal.call(app.state.bridge.tick)
     assert client.get("/api/v1/replies").json()[0]["state"] == "unknown"
@@ -547,11 +625,16 @@ def test_unsupported_qq_image_format_is_rejected_without_upload(service):
     client, _, provider = service
     _, configured, _ = configure(service, "qq")
     gif = base64.b64encode(b"GIF89a" + b"0" * 20).decode()
-    assert call(service, configured, "send_image", image_base64=gif, media_type="image/gif").get("isError")
+    assert call(
+        service,
+        configured,
+        "send_message",
+        content=[{"type": "image", "media_type": "image/gif", "filename": "image.png", "data_base64": gif}],
+    ).get("isError")
     assert not provider.requests and not client.get("/api/v1/replies").json()
 
 
-@pytest.mark.parametrize("action", ["send_image", "set_message_reaction"])
+@pytest.mark.parametrize("action", ["image", "reaction"])
 def test_onebot_socket_images_and_reactions_use_echo_receipts(service, action):
     client, app, _ = service
     channel = client.post(
@@ -585,7 +668,7 @@ def test_onebot_socket_images_and_reactions_use_echo_receipts(service, action):
                         "status": "ok",
                         "retcode": 0,
                         "echo": request["echo"],
-                        "data": {"message_id": "502"} if action == "send_image" else None,
+                        "data": {"message_id": "502"} if action == "image" else None,
                     }
                 )
             )
@@ -609,17 +692,17 @@ def test_onebot_socket_images_and_reactions_use_echo_receipts(service, action):
 
     client.portal.call(arrange)
     arguments = (
-        {"image_base64": PNG_BASE64, "media_type": "image/png"}
-        if action == "send_image"
-        else {"source_message_id": "1", "emoji_id": "76"}
+        {"content": [{"type": "image", "data_base64": PNG_BASE64, "media_type": "image/png", "filename": "test.png"}]}
+        if action == "image"
+        else {"action": "reaction", "arguments": {"source_message_id": "1", "emoji_id": "76"}}
     )
-    result_json(call(service, configured, action, **arguments))
+    result_json(call(service, configured, "send_message" if action == "image" else "execute_action", **arguments))
     client.portal.call(app.state.bridge.tick)
-    assert client.get("/api/v1/replies" if action == "send_image" else "/api/v1/actions").json()[0]["state"] == (
-        "sent" if action == "send_image" else "succeeded"
+    assert client.get("/api/v1/replies" if action == "image" else "/api/v1/actions").json()[0]["state"] == (
+        "sent" if action == "image" else "succeeded"
     )
-    assert sent[0]["action"] == ("send_msg" if action == "send_image" else "set_msg_emoji_like")
-    if action == "send_image":
+    assert sent[0]["action"] == ("send_msg" if action == "image" else "set_msg_emoji_like")
+    if action == "image":
         assert sent[0]["params"]["message"] == [{"type": "image", "data": {"file": "base64://" + PNG_BASE64}}]
 
 
@@ -679,6 +762,6 @@ def test_generic_cdn_media_types_are_inferred_from_image_signature(service, cont
     channel, configured, _ = configure(service)
     ingest(service, channel)
     provider.media_type = content_type
-    result = call(service, configured, "read_image", source_message_id="1")
+    result = call(service, configured, "read", resource="image", arguments={"source_message_id": "1"})
     assert not result.get("isError"), result
     assert result["content"][0]["mimeType"] == "image/png"

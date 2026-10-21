@@ -1,6 +1,7 @@
 """Independent, durable platform actions; these are not message-send requests."""
 
 import json
+import time
 from typing import Literal
 from urllib.parse import quote
 
@@ -10,13 +11,15 @@ from websockets.exceptions import ConnectionClosed
 from ..adapters import AdapterError
 from ..models import route_allows_sender
 from .common import OperationRejected, SendBlocked
+from .emoji import validate_platform_emoji
+from .platforms.common import PLATFORMS
 from .qq_operations import OPERATIONS, execute_operation, require_grant, safe_result
 
 type MessageDelivery = Literal["passive", "proactive", "wakeup"]
 
 
 def proactive_authority(route: dict, connection: dict) -> bool:
-    return connection["kind"] == "qq" and "message.proactive" in route.get("action_grants", [])
+    return connection["kind"] in {"qq", *PLATFORMS} and "message.proactive" in route.get("action_grants", [])
 
 
 def tool_message_allowed(route: dict, connection: dict) -> bool:
@@ -29,10 +32,10 @@ def message_delivery(route: dict, connection: dict, delivery: MessageDelivery | 
         raise SendBlocked("This route forwards final output; QQ message tools require message.proactive")
     selected = delivery or ("proactive" if proactive_authority(route, connection) else "passive")
     if selected != "passive":
-        if connection["kind"] != "qq":
-            raise SendBlocked("Proactive delivery is supported only by official QQ")
+        if connection["kind"] not in {"qq", *PLATFORMS}:
+            raise SendBlocked("Proactive delivery is not supported by this channel")
         require_grant(route, "message.proactive")
-    if selected == "wakeup" and route["conversation_kind"] != "private":
+    if selected == "wakeup" and (connection["kind"] != "qq" or route["conversation_kind"] != "private"):
         raise SendBlocked("Wakeup delivery is available in C2C conversations")
     return selected
 
@@ -54,6 +57,18 @@ async def known_message(store, route: dict, message_id: str) -> tuple[str, dict 
     )
     if streams:
         return "sent", None
+    if "history.read" in route.get("action_grants", []):
+        from ..mcp_platform_adapters import authority_key
+
+        connection = await store.connection(route["channel_id"])
+        if connection and connection["kind"] in PLATFORMS:
+            state = await store.channel_state(connection["id"], "history_message:" + route["id"] + ":" + message_id)
+            if state.get("authority") == authority_key(route, connection) and state.get("expires", 0) >= time.time():
+                message = state["message"]
+                if message["sender_id"] == connection["self_id"]:
+                    return "sent", message
+                if route_allows_sender(route, message["sender_id"]):
+                    return "received", message
     raise SendBlocked("Choose a known, currently authorized message in this conversation")
 
 
@@ -75,6 +90,15 @@ async def action_value(manager, route: dict, connection: dict, operation: str, a
         reaction_authority(route, connection["kind"])
         await known_message(store, route, args["source_message_id"])
         await manager.check_action_access(connection, route)
+        if connection["kind"] in PLATFORMS:
+            await manager.platform(connection).ensure_identity()
+            await manager.check_action_access(connection, route)
+            validate_platform_emoji(connection["kind"], args["emoji"])
+
+            async def check():
+                await manager.check_action_access(connection, route)
+
+            return await manager.platform(connection).reaction(route, args, check)
         if connection["kind"] == "onebots":
             await manager.onebot_call(
                 connection,
@@ -98,12 +122,30 @@ async def action_value(manager, route: dict, connection: dict, operation: str, a
         ownership, _ = await known_message(store, route, args["message_id"])
         require_grant(route, "message.recall" if ownership == "sent" else "message.recall_members")
         await manager.check_action_access(connection, route)
+        if connection["kind"] in PLATFORMS:
+            if connection["kind"] in {"slack", "lark"} and ownership != "sent":
+                raise SendBlocked("This adapter can recall only the bot's confirmed sends")
+            await manager.platform(connection).ensure_identity()
+            await manager.check_action_access(connection, route)
+            await manager.platform(connection).recall(route, args["message_id"])
+            return {}
         if connection["kind"] != "qq":
-            raise SendBlocked("Recall is implemented for official QQ conversations")
+            raise SendBlocked("Recall is not supported by this channel")
         path = manager.qq(connection).messages_path(route) + "/" + quote(args["message_id"], safe="")
         if route["conversation_kind"] in {"guild", "guild_dm"}:
             path += "?hidetip=" + str(args.get("hide_tip", False)).lower()
         return await manager.qq(connection).request_value("DELETE", path)
+    if operation == "typing" and connection["kind"] == "discord":
+        await manager.check_action_access(connection, route)
+        from .platforms.discord import DiscordClient
+
+        client = manager.platform(connection)
+        if not isinstance(client, DiscordClient):
+            raise SendBlocked("Discord adapter is unavailable")
+        await client.ensure_identity()
+        await manager.check_action_access(connection, route)
+        await client.typing(route)
+        return {}
     context = await store.channel_state(
         connection["id"], "context:" + route["conversation_kind"] + ":" + route["conversation_id"]
     )
@@ -197,7 +239,7 @@ async def execute_action(manager, action: dict) -> None:
                 await db.execute("UPDATE stream_sessions SET state='failed' WHERE id=?", (args["stream_handle"],))
     except (AdapterError, httpx.HTTPError, ConnectionClosed, TimeoutError, OSError, ValueError, KeyError, TypeError):
         await store.finish_channel_action(
-            action["id"], "unknown", error="Action not confirmed; verify in QQ before repeating"
+            action["id"], "unknown", error="Action not confirmed; verify in the channel before repeating"
         )
         if action["operation"] == "stream_message":
             async with store.transaction() as db:

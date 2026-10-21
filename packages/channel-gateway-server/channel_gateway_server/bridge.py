@@ -12,6 +12,7 @@ from .adapters import AdapterError, HttpAdapters, event_key, host_body, output_t
 from .channels.actions import tool_message_allowed
 from .channels.common import OperationRejected, SendBlocked
 from .channels.manager import ChannelManager
+from .channels.platforms.common import same_connection
 from .models import route_allows_sender
 from .routing import select_route
 from .storage import Store
@@ -33,8 +34,7 @@ class Bridge:
         if message is None:
             return {"state": "ignored"}
         current = await self.store.connection(connection["id"])
-        keys = ("kind", "transport", "api_url", "token", "webhook_secret", "app_id", "app_secret", "qq_intents")
-        if not current or any(current.get(key) != connection.get(key) for key in keys):
+        if not same_connection(current, connection):
             return {"state": "blocked"}
         kind, conversation_id = message.address.conversation_id.split(":", 1)
         routes = await self.store.routes()
@@ -178,7 +178,7 @@ class Bridge:
         if connection and self.channels and not self.channels.ready(connection):
             return
         payload = await self.store.reply_payload(reply["id"])
-        proactive = connection["kind"] == "qq" and payload and payload.get("delivery") in {"proactive", "wakeup"}
+        proactive = payload and payload.get("delivery") in {"proactive", "wakeup"}
         if payload and (
             not tool_message_allowed(route, connection)
             or (proactive and "message.proactive" not in route.get("action_grants", []))
@@ -189,7 +189,7 @@ class Bridge:
             await self.store.claim_qq_push(
                 reply["id"], connection["app_id"], route["conversation_kind"] + ":" + route["conversation_id"]
             )
-            if proactive
+            if proactive and connection["kind"] == "qq"
             else await self.store.claim_reply(reply["id"])
         )
         if not claimed:

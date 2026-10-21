@@ -436,10 +436,17 @@ def test_mcp_credentials_scope_history_and_actions_and_rotate(gateway):
     webhook(gateway, text="Group message")
     webhook(gateway, kind="private", message_id=2, text="Private secret")
     token = group["agent_token"]
-    response = rpc(client, token, "tools/call", {"name": "read_conversation", "arguments": {}})
+    response = rpc(
+        client, token, "tools/call", {"name": "read", "arguments": {"resource": "messages", "arguments": {}}}
+    )
     assert response.status_code == 200, response.text
     assert "Group message" in response.text and "Private secret" not in response.text
-    sent = rpc(client, token, "tools/call", {"name": "send_message", "arguments": {"text": "Requested reply"}})
+    sent = rpc(
+        client,
+        token,
+        "tools/call",
+        {"name": "send_message", "arguments": {"content": [{"type": "text", "text": "Requested reply"}]}},
+    )
     assert sent.status_code == 200 and "queued" in sent.text
     assert client.get("/api/v1/replies").json()[0]["route_id"] == group["id"]
     assert not upstream.requests
@@ -476,7 +483,10 @@ def test_mcp_reads_authorized_history_independently_of_ingress_routing(gateway):
             client,
             host["mcp_key"],
             "tools/call",
-            {"name": "read_conversation", "arguments": {"route_id": configured["id"], "limit": limit}},
+            {
+                "name": "read",
+                "arguments": {"resource": "messages", "arguments": {"limit": limit}, "route_id": configured["id"]},
+            },
         ).json()["result"]
         assert not result.get("isError")
         return json.loads(result["content"][0]["text"])["messages"]
@@ -500,10 +510,7 @@ def test_mcp_observed_history_does_not_restore_deleted_route_history(gateway):
         client,
         host["mcp_key"],
         "tools/call",
-        {
-            "name": "read_conversation",
-            "arguments": {"route_id": replacement["id"]},
-        },
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": replacement["id"]}},
     )
     assert "Received without a route" in read.text
     assert "Archived route history" not in read.text
@@ -517,7 +524,9 @@ def test_mcp_all_conversation_scope_discovers_previously_received_conversations(
     client.patch(f"/api/v1/routes/{specific['id']}", json={"enabled": False})
     parent = catchall(gateway)
     for key in (host["mcp_key"], parent["agent_token"]):
-        listing = rpc(client, key, "tools/call", {"name": "list_conversations", "arguments": {}}).json()["result"]
+        listing = rpc(
+            client, key, "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+        ).json()["result"]
         conversations = json.loads(listing["content"][0]["text"])["conversations"]
         assert [row["conversation_id"] for row in conversations] == ["7"]
         read = rpc(
@@ -525,8 +534,8 @@ def test_mcp_all_conversation_scope_discovers_previously_received_conversations(
             key,
             "tools/call",
             {
-                "name": "read_conversation",
-                "arguments": {"route_id": conversations[0]["id"]},
+                "name": "read",
+                "arguments": {"resource": "messages", "arguments": {}, "route_id": conversations[0]["id"]},
             },
         )
         assert "Previously received private text" in read.text and "Explicitly denied" not in read.text
@@ -601,16 +610,20 @@ def test_agent_history_merges_confirmed_bot_sends_and_incoming_with_combined_lim
             await db.execute("UPDATE replies SET created_at='2026-10-20T00:00:02Z'")
 
     client.portal.call(order_history)
-    history = mcp_result(client, configured["agent_token"], "read_conversation")["messages"]
+    history = mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})["messages"]
     assert [m["direction"] for m in history] == ["incoming", "outgoing", "incoming"]
     assert [m["text"] for m in history] == ["Original request", upstream.output, "Follow-up"]
     assert history[1]["source_message_id"] == "500" and history[1]["sender_kind"] == "bot"
     assert all(m["history_id"] and m["created_at"] for m in history)
-    limited = mcp_result(client, configured["agent_token"], "read_conversation", limit=2)["messages"]
+    limited = mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={"limit": 2})[
+        "messages"
+    ]
     assert limited == history[-2:]
     client.portal.call(app.state.store.close)
     client.portal.call(app.state.store.open)
-    assert mcp_result(client, configured["agent_token"], "read_conversation")["messages"] == history
+    assert (
+        mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})["messages"] == history
+    )
 
 
 def test_sent_history_never_crosses_account_or_conversation(gateway):
@@ -626,7 +639,7 @@ def test_sent_history_never_crosses_account_or_conversation(gateway):
     ]:
         reply = client.portal.call(app.state.store.queue_reply, configured, text)
         client.portal.call(app.state.store.finish_reply, reply["id"], "sent")
-    history = mcp_result(client, own["agent_token"], "read_conversation")["messages"]
+    history = mcp_result(client, own["agent_token"], "read", resource="messages", arguments={})["messages"]
     assert len(history) == 1 and history[0]["text"] == "Own sent text"
 
 
@@ -636,7 +649,7 @@ def test_unconfirmed_bot_sends_are_not_chat_history(gateway, state):
     configured = route(gateway)
     queued = client.portal.call(app.state.store.queue_reply, configured, "Not confirmed")
     client.portal.call(app.state.store.finish_reply, queued["id"], state)
-    assert mcp_result(client, configured["agent_token"], "read_conversation")["messages"] == []
+    assert mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})["messages"] == []
 
 
 def test_bot_history_rechecks_sender_revocation_and_explicit_read_scope(gateway):
@@ -645,14 +658,18 @@ def test_bot_history_rechecks_sender_revocation_and_explicit_read_scope(gateway)
     webhook(gateway, text="Sender seven request")
     tick(gateway)
     tick(gateway)
-    assert len(mcp_result(client, configured["agent_token"], "read_conversation")["messages"]) == 2
+    assert (
+        len(mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})["messages"]) == 2
+    )
     assert client.patch(f"/api/v1/routes/{configured['id']}", json={"allowed_user_ids": ["8"]}).status_code == 200
-    assert mcp_result(client, configured["agent_token"], "read_conversation")["messages"] == []
+    assert mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})["messages"] == []
     assert (
         client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": [channel["id"]]}).status_code
         == 200
     )
-    assert len(mcp_result(client, configured["agent_token"], "read_conversation")["messages"]) == 2
+    assert (
+        len(mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})["messages"]) == 2
+    )
 
 
 def test_archived_outgoing_only_history_uses_account_grant_without_reply_authority(gateway):
@@ -666,10 +683,12 @@ def test_archived_outgoing_only_history_uses_account_grant_without_reply_authori
         [source(channel["id"], conversation="7")],
         read_channel_ids=[channel["id"]],
     )
-    listing = mcp_result(client, configured["agent_token"], "list_conversations")["conversations"]
+    listing = mcp_result(client, configured["agent_token"], "discover", resource="conversations")["conversations"]
     group = next(r for r in listing if r["conversation_kind"] == "group")
     assert group["can_read"] and not group["can_reply"]
-    history = mcp_result(client, configured["agent_token"], "read_conversation", route_id=group["id"])["messages"]
+    history = mcp_result(
+        client, configured["agent_token"], "read", resource="messages", arguments={}, route_id=group["id"]
+    )["messages"]
     assert len(history) == 1 and history[0]["direction"] == "outgoing"
     assert history[0]["text"] == "Previously sent before any incoming message"
     assert client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": []}).status_code == 200
@@ -677,7 +696,7 @@ def test_archived_outgoing_only_history_uses_account_grant_without_reply_authori
         client,
         configured["agent_token"],
         "tools/call",
-        {"name": "read_conversation", "arguments": {"route_id": group["id"]}},
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": group["id"]}},
     )
     assert denied.json()["result"]["isError"]
 
@@ -717,7 +736,12 @@ def test_access_changes_reauthorize_pending_events_and_mcp_history(gateway):
     tick(gateway)
     assert not upstream.requests
     assert client.get("/api/v1/events").json()[0]["state"] == "blocked"
-    response = rpc(client, configured["agent_token"], "tools/call", {"name": "read_conversation", "arguments": {}})
+    response = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}}},
+    )
     assert "Hello" not in response.text
 
 
@@ -814,7 +838,9 @@ def test_channel_deletion_revokes_parent_and_child_mcp_access(gateway):
     routes = client.get("/api/v1/routes").json()
     assert len(routes) == 2 and all(not row["enabled"] for row in routes)
     assert rpc(client, parent["agent_token"], "tools/list", {}).status_code == 401
-    listing = rpc(client, host["mcp_key"], "tools/call", {"name": "list_conversations", "arguments": {}})
+    listing = rpc(
+        client, host["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+    )
     assert listing.status_code == 200 and all(row["id"] not in listing.text for row in routes)
     value = {key: item for key, item in old.items() if key != "thread_id"}
     assert not client.portal.call(app.state.store.update_route, parent["id"], value, old)
@@ -941,30 +967,41 @@ def test_host_keys_enforce_assignment_and_explicit_conversation_selection(gatewa
     webhook(gateway, conversation=456, text="Codex input")
     webhook(gateway, text="Other host private content", message_id=2)
     key = host["mcp_key"]
-    listed = rpc(client, key, "tools/call", {"name": "list_conversations", "arguments": {}})
+    listed = rpc(client, key, "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}})
     assert configured["id"] in listed.text and other["id"] not in listed.text
     assert "Codex input" not in listed.text
-    for tool, args in (("read_conversation", {}), ("send_message", {"text": "Not allowed"})):
+    for tool, args in (
+        ("read", {"resource": "messages", "arguments": {}}),
+        ("send_message", {"content": [{"type": "text", "text": "Not allowed"}]}),
+    ):
         denied = rpc(client, key, "tools/call", {"name": tool, "arguments": {**args, "route_id": other["id"]}})
         assert denied.json()["result"]["isError"] is True
         assert "Other host private content" not in denied.text
-    missing = rpc(client, key, "tools/call", {"name": "read_conversation", "arguments": {}})
+    missing = rpc(client, key, "tools/call", {"name": "read", "arguments": {"resource": "messages", "arguments": {}}})
     assert missing.json()["result"]["isError"] is True
-    read = rpc(client, key, "tools/call", {"name": "read_conversation", "arguments": {"route_id": configured["id"]}})
+    read = rpc(
+        client,
+        key,
+        "tools/call",
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": configured["id"]}},
+    )
     assert "Codex input" in read.text and "Other host private content" not in read.text
     # Existing per-route capabilities also cannot select another route.
     denied = rpc(
         client,
         other["agent_token"],
         "tools/call",
-        {"name": "read_conversation", "arguments": {"route_id": configured["id"]}},
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": configured["id"]}},
     )
     assert denied.json()["result"]["isError"] is True
     sent = rpc(
         client,
         key,
         "tools/call",
-        {"name": "send_message", "arguments": {"route_id": configured["id"], "text": "Draft reply"}},
+        {
+            "name": "send_message",
+            "arguments": {"content": [{"type": "text", "text": "Draft reply"}], "route_id": configured["id"]},
+        },
     )
     assert "queued" in sent.text and not upstream.requests
     assert client.get("/api/v1/replies").json()[0]["route_id"] == configured["id"]
@@ -985,7 +1022,7 @@ def test_mcp_pull_inputs_never_submit_or_claim_run_completion(gateway):
         client,
         host["mcp_key"],
         "tools/call",
-        {"name": "read_conversation", "arguments": {"route_id": configured["id"]}},
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": configured["id"]}},
     )
     assert all(event["state"] == "available" for event in client.get("/api/v1/events").json())
     assert client.get("/api/v1/replies").json() == []
@@ -1004,22 +1041,30 @@ def test_host_key_rotation_and_current_route_access(gateway):
     assert rpc(client, rotated, "tools/list", {}).status_code == 200
     client.patch(f"/api/v1/routes/{configured['id']}", json={"allowed_user_ids": ["8"]})
     read = rpc(
-        client, rotated, "tools/call", {"name": "read_conversation", "arguments": {"route_id": configured["id"]}}
+        client,
+        rotated,
+        "tools/call",
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": configured["id"]}},
     )
     assert "Hello" not in read.text
     client.patch(f"/api/v1/routes/{configured['id']}", json={"enabled": False})
-    listed = rpc(client, rotated, "tools/call", {"name": "list_conversations", "arguments": {}})
+    listed = rpc(client, rotated, "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}})
     assert configured["id"] not in listed.text
     denied = rpc(
         client,
         rotated,
         "tools/call",
-        {"name": "send_message", "arguments": {"route_id": configured["id"], "text": "Blocked"}},
+        {
+            "name": "send_message",
+            "arguments": {"content": [{"type": "text", "text": "Blocked"}], "route_id": configured["id"]},
+        },
     )
     assert denied.json()["result"]["isError"] is True
     # API + MCP hosts receive independent keys as well.
     other = route(gateway)
-    listed = rpc(client, a13n["mcp_key"], "tools/call", {"name": "list_conversations", "arguments": {}})
+    listed = rpc(
+        client, a13n["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+    )
     assert other["id"] in listed.text and configured["id"] not in listed.text
 
 
@@ -1081,7 +1126,9 @@ def test_unrouted_messages_discover_identity_without_delivery_or_mcp_access(gate
     assert not upstream.requests
     assert (
         "Discover my sender"
-        not in rpc(client, host["mcp_key"], "tools/call", {"name": "list_conversations", "arguments": {}}).text
+        not in rpc(
+            client, host["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+        ).text
     )
     route(gateway, kind="private", conversation="7")
     # Creating a route never replays earlier observations, even on provider redelivery.
@@ -1151,12 +1198,14 @@ def test_parent_policy_revokes_child_ingress_pending_work_and_mcp_history(gatewa
         client,
         parent["agent_token"],
         "tools/call",
-        {"name": "read_conversation", "arguments": {"route_id": child["id"]}},
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": child["id"]}},
     )
     assert "Second sender" not in response.text
     client.patch(f"/api/v1/routes/{parent['id']}", json={"enabled": False})
     assert rpc(client, parent["agent_token"], "tools/list", {}).status_code == 401
-    listing = rpc(client, host["mcp_key"], "tools/call", {"name": "list_conversations", "arguments": {}})
+    listing = rpc(
+        client, host["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+    )
     assert child["id"] not in listing.text
     assert webhook(gateway, kind="private", user=7, message_id=3).json()["state"] == "blocked"
 
@@ -1302,7 +1351,12 @@ def test_more_specific_source_retires_old_binding_without_reassigning_history(ga
     assert webhook(gateway, kind="private", message_id=2, text="New input").json()["state"] == "accepted"
     current = children(client, specific)[0]
     assert current["id"] != old["id"]
-    response = rpc(client, specific["agent_token"], "tools/call", {"name": "read_conversation", "arguments": {}})
+    response = rpc(
+        client,
+        specific["agent_token"],
+        "tools/call",
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}}},
+    )
     assert "New input" in response.text and "Old input" not in response.text
     history = client.get(
         "/api/v1/history", params={"channel_id": channel["id"], "conversation_kind": "private", "conversation_id": "7"}
@@ -1326,7 +1380,7 @@ def test_removing_a_source_revokes_mcp_and_blocks_pending_delivery(gateway):
         client,
         configured["agent_token"],
         "tools/call",
-        {"name": "read_conversation", "arguments": {"route_id": old["id"]}},
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": old["id"]}},
     )
     assert denied.json()["result"]["isError"]
     assert webhook(gateway, message_id=2).json()["state"] == "blocked"
@@ -1366,7 +1420,9 @@ def test_destination_change_starts_new_threads_and_revokes_old_host(gateway):
     )
     assert changed.status_code == 200, changed.text
     assert not children(client, configured)
-    listed = rpc(client, host["mcp_key"], "tools/call", {"name": "list_conversations", "arguments": {}})
+    listed = rpc(
+        client, host["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+    )
     assert old["id"] not in listed.text
     webhook(gateway, message_id=2)
     new = children(client, configured)[0]
@@ -1386,7 +1442,12 @@ def test_mcp_rule_materializes_observed_sources_and_enforces_scope(gateway):
         agent_id=None,
         reply_source="mcp",
     )
-    listed = rpc(client, configured["agent_token"], "tools/call", {"name": "list_conversations", "arguments": {}})
+    listed = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "discover", "arguments": {"resource": "conversations"}},
+    )
     assert not listed.json()["result"].get("isError"), listed.text
     rows = children(client, configured)
     assert {(row["conversation_kind"], row["conversation_id"]) for row in rows} == {("private", "7"), ("group", "123")}
@@ -1395,7 +1456,7 @@ def test_mcp_rule_materializes_observed_sources_and_enforces_scope(gateway):
         client,
         configured["agent_token"],
         "tools/call",
-        {"name": "read_conversation", "arguments": {"route_id": private["id"]}},
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": private["id"]}},
     )
     assert "Allowed history" in read.text and "Other history" not in read.text
     assert client.patch(f"/api/v1/routes/{configured['id']}", json={"enabled": False}).status_code == 200
@@ -1457,10 +1518,17 @@ def test_legacy_catchall_mcp_listing_respects_new_source_specificity(gateway):
     webhook(gateway, kind="private", text="Previously observed")
     broad = catchall(gateway)
     specific = create_rule(gateway, [source(channel["id"], conversation="7")])
-    listing = rpc(client, broad["agent_token"], "tools/call", {"name": "list_conversations", "arguments": {}})
+    listing = rpc(
+        client, broad["agent_token"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+    )
     assert not listing.json()["result"].get("isError"), listing.text
     assert not children(client, broad)
-    read = rpc(client, specific["agent_token"], "tools/call", {"name": "read_conversation", "arguments": {}})
+    read = rpc(
+        client,
+        specific["agent_token"],
+        "tools/call",
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}}},
+    )
     assert "Previously observed" in read.text
 
 
@@ -1473,7 +1541,12 @@ def test_single_source_dedicated_mcp_binding_is_inherited_and_unique(gateway):
     tick(gateway)
     child = children(client, configured)[0]
     assert child["mcp_connection_id"] == "conn_scope"
-    read = rpc(client, configured["agent_token"], "tools/call", {"name": "read_conversation", "arguments": {}})
+    read = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}}},
+    )
     assert "Hello" in read.text and not read.json()["result"].get("isError")
     response = client.post(
         "/api/v1/routes",
@@ -1526,13 +1599,13 @@ def test_channel_reads_do_not_expand_agent_triggers_or_reply_authority(gateway):
     assert webhook(gateway, kind="private", text="Trigger input").json()["state"] == "accepted"
     assert webhook(gateway, kind="private", user=8, message_id=2, text="Other private").json()["state"] == "blocked"
     assert webhook(gateway, kind="group", user=9, message_id=3, text="Group history").json()["state"] == "blocked"
-    listed = mcp_result(client, configured["agent_token"], "list_conversations")["conversations"]
+    listed = mcp_result(client, configured["agent_token"], "discover", resource="conversations")["conversations"]
     assert len(listed) == 3
     assert len(children(client, configured)) == 1
     group = next(row for row in listed if row["conversation_kind"] == "group")
     assert group["can_read"] and not group["can_reply"]
     assert "Group history" in str(
-        mcp_result(client, configured["agent_token"], "read_conversation", route_id=group["id"])
+        mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={}, route_id=group["id"])
     )
     denied = rpc(
         client,
@@ -1540,7 +1613,7 @@ def test_channel_reads_do_not_expand_agent_triggers_or_reply_authority(gateway):
         "tools/call",
         {
             "name": "send_message",
-            "arguments": {"route_id": group["id"], "text": "Unauthorized reply"},
+            "arguments": {"content": [{"type": "text", "text": "Unauthorized reply"}], "route_id": group["id"]},
         },
     )
     assert denied.json()["result"]["isError"]
@@ -1556,15 +1629,20 @@ def test_read_channels_can_exclude_the_source_and_include_another_account(gatewa
     webhook(other, kind="private", text="Readable account")
     unrelated = client.post("/api/v1/connections", json={"name": "Unrelated", "kind": "mcp"}).json()
     for token in (configured["agent_token"], host["mcp_key"]):
-        listed = mcp_result(client, token, "list_conversations")["conversations"]
+        listed = mcp_result(client, token, "discover", resource="conversations")["conversations"]
         own = next(row for row in listed if row["channel_id"] == channel["id"])
         external = next(row for row in listed if row["channel_id"] == other_channel["id"])
         assert not own["can_read"] and external["can_read"]
-        read = mcp_result(client, token, "read_conversation", route_id=external["id"])
+        read = mcp_result(client, token, "read", resource="messages", arguments={}, route_id=external["id"])
         assert "Readable account" in str(read) and "Source input" not in str(read)
-        denied = rpc(client, token, "tools/call", {"name": "read_conversation", "arguments": {"route_id": own["id"]}})
+        denied = rpc(
+            client,
+            token,
+            "tools/call",
+            {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": own["id"]}},
+        )
         assert denied.json()["result"]["isError"]
-    assert mcp_result(client, unrelated["mcp_key"], "list_conversations")["conversations"] == []
+    assert mcp_result(client, unrelated["mcp_key"], "discover", resource="conversations")["conversations"] == []
     assert len([event for event in client.get("/api/v1/events").json() if event["state"] == "queued"]) == 1
 
 
@@ -1573,17 +1651,19 @@ def test_read_grants_revoke_immediately_and_all_channels_include_future_accounts
     configured = create_rule(gateway, [source(channel["id"], conversation="7")], read_channel_ids=["*"])
     added = new_channel(client)
     webhook((client, app, upstream, added, host), kind="private", text="Future account")
-    listing = mcp_result(client, configured["agent_token"], "list_conversations")["conversations"]
+    listing = mcp_result(client, configured["agent_token"], "discover", resource="conversations")["conversations"]
     external = next(row for row in listing if row["channel_id"] == added["id"])
     assert "Future account" in str(
-        mcp_result(client, configured["agent_token"], "read_conversation", route_id=external["id"])
+        mcp_result(
+            client, configured["agent_token"], "read", resource="messages", arguments={}, route_id=external["id"]
+        )
     )
     assert client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": []}).status_code == 200
     denied = rpc(
         client,
         configured["agent_token"],
         "tools/call",
-        {"name": "read_conversation", "arguments": {"route_id": external["id"]}},
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": external["id"]}},
     )
     assert denied.json()["result"]["isError"]
     assert (
@@ -1592,14 +1672,16 @@ def test_read_grants_revoke_immediately_and_all_channels_include_future_accounts
     client.portal.call(app.state.store.close)
     client.portal.call(app.state.store.open)
     assert "Future account" in str(
-        mcp_result(client, configured["agent_token"], "read_conversation", route_id=external["id"])
+        mcp_result(
+            client, configured["agent_token"], "read", resource="messages", arguments={}, route_id=external["id"]
+        )
     )
     client.delete(f"/api/v1/connections/{added['id']}")
     denied = rpc(
         client,
         configured["agent_token"],
         "tools/call",
-        {"name": "read_conversation", "arguments": {"route_id": external["id"]}},
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": external["id"]}},
     )
     assert denied.json()["result"]["isError"]
     assert client.patch(f"/api/v1/routes/{configured['id']}", json={"enabled": False}).status_code == 200
@@ -1619,10 +1701,15 @@ def test_explicit_channel_reads_include_archived_history_and_all_senders(gateway
         read_channel_ids=[channel["id"]],
     )
     assert webhook(gateway, user=8, message_id=2, text="Other participant").json()["state"] == "blocked"
-    read = mcp_result(client, configured["agent_token"], "read_conversation")
+    read = mcp_result(client, configured["agent_token"], "read", resource="messages", arguments={})
     assert "Archived input" in str(read) and "Other participant" in str(read)
     assert client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": []}).status_code == 200
-    denied = rpc(client, configured["agent_token"], "tools/call", {"name": "read_conversation", "arguments": {}})
+    denied = rpc(
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "read", "arguments": {"resource": "messages", "arguments": {}}},
+    )
     assert denied.json()["result"]["isError"]
 
 

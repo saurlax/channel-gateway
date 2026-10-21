@@ -20,8 +20,15 @@ from .actions import execute_action, tool_message_allowed
 from .common import MAX_EVENT_BYTES, SendBlocked, identifier
 from .ingress import ProjectionError, ingest_event
 from .onebot import OneBotSession, ReceiveMessage
+from .platforms.common import PLATFORMS, PROFILES
+from .platforms.discord import DiscordClient, DiscordGateway
+from .platforms.discord import gateway_url as discord_gateway_url
+from .platforms.lark import LarkClient
+from .platforms.slack import SlackClient
 from .qq import QQClient, QQGateway, gateway_url
 from .weixin import WEIXIN_BASE, LoginRequired, WeixinClient, qr_image, weixin_message
+
+CLIENTS = {"slack": SlackClient, "lark": LarkClient, "discord": DiscordClient}
 
 
 class AccountSocket(connect):
@@ -38,6 +45,8 @@ def transport(connection: dict) -> str:
 
 
 def capabilities(connection: dict) -> dict:
+    if connection["kind"] in PROFILES:
+        return PROFILES[connection["kind"]].capabilities()
     return {
         "receive": not (connection["kind"] == "onebots" and transport(connection) == "http"),
         "send": connection["kind"] not in {"a13n", "mcp"},
@@ -78,6 +87,7 @@ class ChannelManager:
         self.sessions: dict[str, OneBotSession] = {}
         self.session_closers: dict[str, Callable[[], Awaitable[None]]] = {}
         self.qq_clients: dict[str, QQClient] = {}
+        self.platform_clients: dict[str, SlackClient | LarkClient | DiscordClient] = {}
         self.logins: dict[str, dict] = {}
         self.login_locks: dict[str, asyncio.Lock] = {}
 
@@ -111,6 +121,7 @@ class ChannelManager:
         if closer:
             await closer()
         self.qq_clients.pop(identifier, None)
+        self.platform_clients.pop(identifier, None)
 
     async def restart(self, connection: dict) -> None:
         identifier = connection["id"]
@@ -156,6 +167,8 @@ class ChannelManager:
             try:
                 if connection["kind"] == "weixin":
                     await self.poll_weixin(connection)
+                elif connection["kind"] == "discord":
+                    await self.connect_discord(connection)
                 elif connection["kind"] == "qq":
                     await self.connect_qq(connection)
                 else:
@@ -226,6 +239,36 @@ class ChannelManager:
             self.qq_clients[identifier] = QQClient(connection, self.http, self.media_http)
         return self.qq_clients[identifier]
 
+    def platform(self, connection: dict):
+        if connection["kind"] not in PLATFORMS or self.media_http is None:
+            raise SendBlocked("Platform adapter is unavailable")
+        if connection["id"] not in self.platform_clients:
+            self.platform_clients[connection["id"]] = CLIENTS[connection["kind"]](
+                connection, self.http, self.media_http
+            )
+        return self.platform_clients[connection["id"]]
+
+    async def connect_discord(self, connection: dict) -> None:
+        client = self.platform(connection)
+        state = await self.store.channel_state(connection["id"], "discord_gateway")
+        url = state.get("resume_url") if state.get("session_id") else None
+        if not url:
+            response = await client.request("GET", "/gateway/bot")
+            if not isinstance(response, dict):
+                raise AdapterError("Discord returned an invalid gateway response")
+            url = response["url"]
+        async with AccountSocket(
+            discord_gateway_url(url), proxy=None, open_timeout=15, max_size=MAX_EVENT_BYTES
+        ) as socket:
+            runtime = DiscordGateway(
+                client, self.store, self.ingest, lambda value: self.set_status(connection["id"], value)
+            )
+            try:
+                await runtime.run(socket)
+            finally:
+                if socket.close_code in {4003, 4005, 4007, 4009}:
+                    await self.store.set_channel_state(connection["id"], "discord_gateway", {})
+
     async def connect_qq(self, connection: dict) -> None:
         client = self.qq(connection)
         identity = await client.request("GET", "/users/@me")
@@ -295,6 +338,21 @@ class ChannelManager:
             await self.check_action_access(connection, route)
         if payload and not tool_message_allowed(route, connection):
             raise SendBlocked("This route no longer permits MCP actions")
+        if connection["kind"] in PLATFORMS:
+            if len(text) > PROFILES[connection["kind"]].max_text:
+                raise SendBlocked("Message exceeds the platform text limit")
+
+            async def check():
+                await self.check_action_access(connection, route)
+
+            async def effect(stage, reference):
+                await self.store.record_operation_effect(reply["id"], stage, reference)
+
+            await self.platform(connection).ensure_identity()
+            await check()
+            return await self.platform(connection).send(
+                route, payload.get("caption", text) if payload else text, payload or {}, check, effect
+            )
         if payload and payload["kind"] == "reaction":
             if connection["kind"] != "onebots":
                 raise SendBlocked("Message reactions are not supported by this channel")

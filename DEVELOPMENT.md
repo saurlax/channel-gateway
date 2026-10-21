@@ -19,7 +19,7 @@ runtime scope. These standards govern how components are implemented.
   independent routing rules.
 
 The bridge implements OneBot v11 HTTP/WebSocket and native QQ official media/guild
-adapters, a Weixin iLink text adapter, an a13n HTTP adapter, SQLite persistence, and generic MCP Hosts with official
+adapters, a Weixin iLink text adapter, Slack/Lark signed callbacks, a Discord Gateway adapter, an a13n HTTP adapter, SQLite persistence, and generic MCP Hosts with official
 MCP Streamable HTTP tools. `channels/` owns protocol parsing, connection tasks,
 pairing, capabilities, and native sending.
 `models.py` owns validated management inputs; `storage.py` owns short storage

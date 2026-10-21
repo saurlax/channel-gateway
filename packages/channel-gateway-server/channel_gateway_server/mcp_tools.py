@@ -1,5 +1,6 @@
 """Official MCP Streamable HTTP tools, scoped by revocable host or route capabilities."""
 
+import base64
 import hashlib
 import json
 from contextvars import ContextVar
@@ -15,6 +16,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from .bridge import Bridge
 from .channels.actions import MessageDelivery, message_delivery, proactive_authority, tool_message_allowed
 from .channels.manager import capabilities
+from .channels.platforms.common import CHANNEL_KINDS
+from .mcp_operations import Operations
 from .media import MAX_IMAGE_BASE64, MAX_MEDIA_BYTES, MediaReader, public_message
 from .models import ImageReplyInput
 from .storage import Store
@@ -32,8 +35,10 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
         # Bearer auth is enforced by the outer ASGI application. Cross-origin
         # browser requests are refused there; deployment domains need no wildcard.
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-        instructions="List authorized conversations, then pass their route_id to read or reply. A route credential can omit route_id. Replies to authorized conversations are queued for automatic sending. MCP reads do not wake or complete an agent run.",
+        instructions="Use discover to select an authorized route_id and inspect capabilities and operation schemas. Use read for history/assets/resources, send_message for content, execute_action for reactions and other mutations, and get_operation for durable results. Queued is not confirmed delivery. Reads never wake an Agent. A single-source route credential may omit route_id.",
     )
+
+    operations = Operations()
 
     async def authorized_routes() -> list[dict]:
         token = current_token.get()
@@ -72,7 +77,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
                 return routes[0]
         route = next((row for row in routes if row["id"] == route_id), None)
         if route is None:
-            raise ValueError("Choose an authorized route_id from list_conversations")
+            raise ValueError("Choose an authorized route_id from discover(resource='conversations')")
         return route
 
     async def readable_routes() -> list[dict]:
@@ -91,9 +96,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
                 if row["host_id"] == host["id"] and row["enabled"] and not row.get("parent_route_id")
             ]
         channel_ids = list({channel for row in configured for channel in row.get("read_channel_ids") or []})
-        connections = {
-            row["id"]: row for row in await store.connections() if row["kind"] in {"onebots", "qq", "weixin"}
-        }
+        connections = {row["id"]: row for row in await store.connections() if row["kind"] in CHANNEL_KINDS}
         channels = set(connections)
         views = {}
         for route in routes:
@@ -125,7 +128,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
             }
         return list(views.values())
 
-    @server.tool()
+    @operations.register
     async def list_conversations() -> dict:
         """List readable conversations and reply destinations, with can_read/can_reply flags."""
         conversations = []
@@ -164,7 +167,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
             route_id = (await authorized_route(None))["id"]
         route = next((row for row in await readable_routes() if row["id"] == route_id and row["can_read"]), None)
         if not route:
-            raise ValueError("Choose a readable route_id from list_conversations")
+            raise ValueError("Choose a readable route_id from discover(resource='conversations')")
         return route
 
     async def received_image(route: dict, source_message_id: str, image_index: int) -> dict:
@@ -178,18 +181,46 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
             raise ValueError("Choose an image from an authorized received message")
         return images[image_index]
 
-    @server.tool()
-    async def read_conversation(limit: int = 20, route_id: str | None = None) -> dict:
+    @operations.register
+    async def read_conversation(
+        limit: int = 20,
+        route_id: str | None = None,
+        cursor: Annotated[str, Field(max_length=2048)] | None = None,
+    ) -> dict:
         """Read incoming messages and confirmed bot sends in chronological order. Outgoing media descriptions are not received-media read handles."""
         route = await readable_route(route_id)
-        messages = await store.conversation_messages(route, limit=limit)
+        before = None
+        if cursor is not None:
+            try:
+                values = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+            except (ValueError, UnicodeError):
+                raise ValueError("Invalid history cursor") from None
+            if (
+                not isinstance(values, list)
+                or len(values) != 2
+                or any(not isinstance(value, str) or not 1 <= len(value) <= 128 for value in values)
+            ):
+                raise ValueError("Invalid history cursor")
+            before = (values[0], values[1])
+        limit = max(1, min(limit, 100))
+        messages = await store.conversation_messages(route, limit=limit, before=before)
+        next_cursor = (
+            base64.urlsafe_b64encode(
+                json.dumps([messages[0]["created_at"], messages[0]["history_id"]]).encode()
+            ).decode()
+            if len(messages) == limit
+            else None
+        )
         return {
+            "source": "gateway",
+            "coverage": {"incoming": "received_only", "outgoing": "confirmed_sends_only", "complete": False},
+            "next_cursor": next_cursor,
             "conversation_kind": route["conversation_kind"],
             "conversation_id": route["conversation_id"],
             "messages": [public_message(message) for message in messages],
         }
 
-    @server.tool()
+    @operations.register
     async def read_image(
         source_message_id: Annotated[str, Field(min_length=1, max_length=1024)],
         image_index: Annotated[int, Field(ge=0, le=3)] = 0,
@@ -198,7 +229,14 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
         """Read an authorized received image as native image content. Use source_message_id and image index from history."""
         route = await readable_route(route_id)
         image = await received_image(route, source_message_id, image_index)
-        data, media_type = await media.read(image["url"])
+        connection = await store.connection(route["channel_id"])
+        if connection and connection["kind"] in {"slack", "lark", "discord"} and bridge.channels:
+            await bridge.channels.platform(connection).ensure_identity()
+            data, media_type = await bridge.channels.platform(connection).read_asset(image, image=True)
+        else:
+            data, media_type = await media.read(image["url"])
+        if connection != await store.connection(route["channel_id"]):
+            raise ValueError("Channel credentials changed during download")
         current = await readable_route(route["id"])
         if await received_image(current, source_message_id, image_index) != image:
             raise ValueError("Image access changed during download")
@@ -211,7 +249,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
             raise ValueError("Channel is unavailable")
         return route, connection, message_delivery(route, connection, delivery)
 
-    @server.tool()
+    @operations.register
     async def send_image(
         image_base64: Annotated[str, Field(min_length=1, max_length=MAX_IMAGE_BASE64)],
         media_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp"],
@@ -232,9 +270,17 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
         bridge.wake.set()
         return {"reply_id": reply["id"], "state": reply["state"]}
 
-    from .mcp_platform import install_platform_tools
+    from .mcp_platform import install_platform_operations
 
-    install_platform_tools(server, store, bridge, media, authorized_route, readable_route)
+    install_platform_operations(operations, store, bridge, media, authorized_route, readable_route)
+
+    from .mcp_platform_adapters import install_adapter_operations
+
+    install_adapter_operations(operations, store, bridge, authorized_route)
+
+    from .mcp_surface import install_tools
+
+    install_tools(server, operations, store, authorized_route, readable_route)
 
     return server
 

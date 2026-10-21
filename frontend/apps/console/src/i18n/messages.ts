@@ -1,4 +1,31 @@
 export const chinese = {
+  Slack: "Slack",
+  Discord: "Discord",
+  "Feishu / Lark": "飞书 / Lark",
+  Feishu: "飞书",
+  "Bot token": "机器人令牌",
+  "Workspace ID": "工作区 ID",
+  "Verification token": "验证令牌",
+  "Encrypt key": "加密密钥",
+  "API region": "API 区域",
+  "New encrypt key (optional)": "新加密密钥（可选）",
+  "New verification token (optional)": "新验证令牌（可选）",
+  "Read native platform history": "读取平台原生历史记录",
+  "All channel conversations": "全部频道会话",
+  "All message threads": "全部消息线程",
+  "Channel {id}": "频道 {id}",
+  "Message thread {id}": "消息线程 {id}",
+  channel: "频道会话",
+  thread: "消息线程",
+  "Use a Slack bot token and signed Events API callbacks. Invite the bot to each channel.":
+    "使用 Slack 机器人令牌和签名事件回调，并将机器人加入所需频道。",
+  "Use a tenant bot with signed encrypted event callbacks. Select the application’s API region.":
+    "使用租户机器人和签名加密事件回调，选择应用对应的 API 区域。",
+  "Use a Discord bot token. Enable Message Content Intent in the Developer Portal.":
+    "使用 Discord 机器人令牌，并在开发者平台启用 Message Content Intent。",
+  "Action not confirmed; verify in the channel before repeating":
+    "动作结果未确认，重复执行前请在会话中核实",
+
   "Route or channel is unavailable": "路由或渠道不可用",
   "Route or channel changed before action delivery": "动作执行前路由或渠道已更改",
   "Action not confirmed; verify in QQ before repeating": "动作结果未确认，重复执行前请在 QQ 中核实",

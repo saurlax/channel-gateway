@@ -1,9 +1,7 @@
 import type { Snapshot } from "../api";
 
 export function dashboardSummary(snapshot: Snapshot) {
-  const channels = snapshot.connections.filter((item) =>
-    ["onebots", "qq", "weixin"].includes(item.kind),
-  );
+  const channels = snapshot.connections.filter((item) => !["a13n", "mcp"].includes(item.kind));
   const hosts = snapshot.connections.filter((item) => ["a13n", "mcp"].includes(item.kind));
   const routes = snapshot.routes.filter((route) => !route.parent_route_id);
   const count = (...states: string[]) =>

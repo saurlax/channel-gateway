@@ -28,7 +28,9 @@ export function routeSourceFromSearch(search: URLSearchParams): ConversationSour
   if (
     !channel_id ||
     !conversation_id ||
-    !["private", "group", "guild", "guild_dm"].includes(conversation_kind ?? "")
+    !["private", "group", "guild", "guild_dm", "channel", "thread"].includes(
+      conversation_kind ?? "",
+    )
   )
     return undefined;
   return { channel_id, conversation_id, conversation_kind: conversation_kind as ConversationKind };
@@ -49,7 +51,8 @@ export function conversationKey(source: ConversationSource) {
 
 export function sourceFromAddress(address: { account_id: string; conversation_id: string }) {
   const [kind, ...parts] = address.conversation_id.split(":");
-  if (!["private", "group", "guild", "guild_dm"].includes(kind)) return undefined;
+  if (!["private", "group", "guild", "guild_dm", "channel", "thread"].includes(kind))
+    return undefined;
   return {
     channel_id: address.account_id,
     conversation_kind: kind,

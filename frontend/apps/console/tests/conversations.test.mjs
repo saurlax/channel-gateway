@@ -164,3 +164,31 @@ test("guild channels and guild direct messages retain separate identities and ac
   );
   assert.ok(groups.every((group) => group.latest.direction === "action"));
 });
+
+test("channel and thread addresses preserve native timestamps and remain isolated", () => {
+  for (const source of [
+    { channel_id: "slack", conversation_kind: "thread", conversation_id: "C1:1792000000.000001" },
+    { channel_id: "lark", conversation_kind: "thread", conversation_id: "oc_chat:om_root" },
+    { channel_id: "discord", conversation_kind: "channel", conversation_id: "123456789012345678" },
+  ]) {
+    assert.deepEqual(
+      routeSourceFromSearch(new URL(newRoutePath(source), "https://gateway.example").searchParams),
+      source,
+    );
+  }
+  const groups = conversations({
+    connections: [],
+    routes: [],
+    replies: [],
+    events: [
+      received("channel", "slack", "channel:C1"),
+      received("thread", "slack", "thread:C1:1792000000.000001"),
+      received("other-thread", "slack", "thread:C1:1792000000.000002"),
+    ],
+  });
+  assert.equal(groups.length, 3);
+  assert.deepEqual(
+    new Set(groups.map((group) => group.source.conversation_id)),
+    new Set(["C1", "C1:1792000000.000001", "C1:1792000000.000002"]),
+  );
+});

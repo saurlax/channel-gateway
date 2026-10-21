@@ -12,12 +12,18 @@ from urllib.parse import quote
 
 import aiosqlite
 
+from .channels.platforms.common import CHANNEL_KINDS, CONVERSATION_KINDS, same_connection
 from .media import public_message
 from .models import route_allows_sender
 from .routing import RouteConflict, check_source_conflicts, route_sources, select_route
 from .thread_policy import thread_binding_key
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS operation_effects (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, operation_id TEXT NOT NULL,
+ stage TEXT NOT NULL, reference TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS operation_effect_parent ON operation_effects(operation_id);
 CREATE TABLE IF NOT EXISTS connections (id TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS host_keys (host_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS thread_bindings (
@@ -162,6 +168,29 @@ class Store:
     async def connections(self) -> list[dict]:
         return [json.loads(row["value"]) for row in await self.rows("SELECT value FROM connections ORDER BY id")]
 
+    async def prune_history_cache(self, connection_id: str) -> None:
+        async with self.transaction() as db:
+            await db.execute(
+                "DELETE FROM channel_state WHERE connection_id=? AND name LIKE 'history_%' AND json_extract(value,'$.expires') < ?",
+                (connection_id, time.time()),
+            )
+            await db.execute(
+                "DELETE FROM channel_state WHERE rowid IN (SELECT rowid FROM channel_state WHERE connection_id=? AND name LIKE 'history_%' ORDER BY rowid DESC LIMIT -1 OFFSET 5000)",
+                (connection_id,),
+            )
+
+    async def record_operation_effect(self, operation_id: str, stage: str, reference: str) -> None:
+        async with self.transaction() as db:
+            await db.execute(
+                "INSERT INTO operation_effects(operation_id,stage,reference) VALUES(?,?,?)",
+                (operation_id, stage, reference),
+            )
+
+    async def operation_effects(self, operation_id: str) -> list[dict]:
+        return await self.rows(
+            "SELECT stage,reference,created_at FROM operation_effects WHERE operation_id=? ORDER BY id", (operation_id,)
+        )
+
     async def connection(self, identifier: str) -> dict | None:
         rows = await self.rows("SELECT value FROM connections WHERE id=?", (identifier,))
         return json.loads(rows[0]["value"]) if rows else None
@@ -188,14 +217,20 @@ class Store:
         identifier = new_id("recv")
         mode = (
             connection.get("transport")
-            or {"qq": "websocket", "weixin": "polling", "onebots": "http_reverse"}[connection["kind"]]
+            or {
+                "qq": "websocket",
+                "weixin": "polling",
+                "onebots": "http_reverse",
+                "slack": "webhook",
+                "lark": "webhook",
+                "discord": "websocket",
+            }[connection["kind"]]
         )
         async with self.transaction() as db:
             async with db.execute("SELECT value FROM connections WHERE id=?", (connection["id"],)) as cursor:
                 row = await cursor.fetchone()
             current = json.loads(row[0]) if row else None
-            keys = ("kind", "transport", "api_url", "token", "webhook_secret", "app_id", "app_secret", "qq_intents")
-            if not current or any(current.get(key) != connection.get(key) for key in keys):
+            if not same_connection(current, connection):
                 return None
             await db.execute(
                 "INSERT INTO channel_events(id,channel_id,transport,payload) VALUES (?,?,?,?)",
@@ -298,14 +333,10 @@ class Store:
             return False
         return all(
             source["channel_id"] == "*"
-            or (
-                source["channel_id"] in connections
-                and connections[source["channel_id"]]["kind"] in {"onebots", "qq", "weixin"}
-            )
+            or (source["channel_id"] in connections and connections[source["channel_id"]]["kind"] in CHANNEL_KINDS)
             for source in route_sources(value)
         ) and all(
-            channel_id == "*"
-            or (channel_id in connections and connections[channel_id]["kind"] in {"onebots", "qq", "weixin"})
+            channel_id == "*" or (channel_id in connections and connections[channel_id]["kind"] in CHANNEL_KINDS)
             for channel_id in value.get("read_channel_ids") or []
         )
 
@@ -749,7 +780,13 @@ class Store:
           ORDER BY w.sequence LIMIT 100""")
 
     async def received_messages(
-        self, route: dict, *, limit: int = 20, source_message_id: str | None = None, history_metadata: bool = False
+        self,
+        route: dict,
+        *,
+        limit: int = 20,
+        source_message_id: str | None = None,
+        history_metadata: bool = False,
+        before: tuple[str, str] | None = None,
     ) -> list[dict]:
         """Read source history under current access, independently of past delivery."""
         params: tuple = (route["id"], route["channel_id"], f"{route['conversation_kind']}:{route['conversation_id']}")
@@ -760,6 +797,9 @@ class Store:
         if source_message_id is not None:
             sender_filter += " AND json_extract(message,'$.source_message_id')=?"
             params += (source_message_id,)
+        if before is not None:
+            sender_filter += " AND (created_at,id)<(?,?)"
+            params += before
         rows = await self.rows(
             """WITH received AS (
                 SELECT e.id,e.message,e.created_at,
@@ -809,14 +849,14 @@ class Store:
                 WHERE p.state='sent' AND COALESCE(json_extract(q.payload,'$.kind'),'message')!='reaction'
             ) SELECT DISTINCT channel_id,conversation_id FROM observed """
             "JOIN connections c ON c.id=observed.channel_id "
-            "WHERE json_extract(c.value,'$.kind') IN ('onebots','qq','weixin') "
+            "WHERE json_extract(c.value,'$.kind') IN ('onebots','qq','weixin','slack','lark','discord') "
             "AND (? OR channel_id IN (SELECT value FROM json_each(?))) ORDER BY channel_id,conversation_id",
             ("*" in channel_ids, json.dumps(channel_ids)),
         )
         return [
             {"channel_id": row["channel_id"], "conversation_kind": kind, "conversation_id": identity}
             for row in rows
-            if (kind := row["conversation_id"].split(":", 1)[0]) in {"private", "group", "guild", "guild_dm"}
+            if (kind := row["conversation_id"].split(":", 1)[0]) in CONVERSATION_KINDS
             and (identity := row["conversation_id"].split(":", 1)[1])
         ]
 
@@ -827,20 +867,25 @@ class Store:
         limit: int = 20,
         source_message_id: str | None = None,
         history_metadata: bool = False,
+        before: tuple[str, str] | None = None,
     ) -> list[dict]:
         """Read projected incoming text for an explicitly authorized account identity."""
         rows = await self.rows(
             self.received_history_sql() + "SELECT id,created_at,message,channel_id,conversation_id FROM received "
             "WHERE channel_id=? AND conversation_id=? "
             "AND (? IS NULL OR json_extract(message,'$.source_message_id')=?) "
+            "AND (? IS NULL OR (created_at,id)<(?,?)) "
             "AND EXISTS(SELECT 1 FROM connections c WHERE c.id=received.channel_id "
-            "AND json_extract(c.value,'$.kind') IN ('onebots','qq','weixin')) "
+            "AND json_extract(c.value,'$.kind') IN ('onebots','qq','weixin','slack','lark','discord')) "
             "ORDER BY created_at DESC,id DESC LIMIT ?",
             (
                 conversation["channel_id"],
                 f"{conversation['conversation_kind']}:{conversation['conversation_id']}",
                 source_message_id,
                 source_message_id,
+                before[0] if before else None,
+                before[0] if before else None,
+                before[1] if before else None,
                 max(1, min(limit, 100)),
             ),
         )
@@ -853,7 +898,7 @@ class Store:
             messages.append(message)
         return messages
 
-    async def sent_messages(self, route: dict, *, limit: int = 20) -> list[dict]:
+    async def sent_messages(self, route: dict, *, limit: int = 20, before: tuple[str, str] | None = None) -> list[dict]:
         """Read confirmed bot messages under the selected conversation's current read scope."""
         params: tuple = (route["channel_id"], route["conversation_kind"], route["conversation_id"])
         where = "r.channel_id=? AND r.kind=? AND r.conversation_id=?"
@@ -863,6 +908,9 @@ class Store:
             if route.get("sender_policy", "allowlist") != "any":
                 where += " AND (p.event_id IS NULL OR json_extract(e.message,'$.sender_id') IN (SELECT value FROM json_each(?)))"
                 params += (json.dumps(route["allowed_user_ids"]),)
+        if before is not None:
+            where += " AND (p.created_at,p.id)<(?,?)"
+            params += before
         rows = await self.rows(
             """WITH destinations AS (
                 SELECT id,channel_id,kind,conversation_id FROM routes
@@ -911,14 +959,16 @@ class Store:
             )
         return messages
 
-    async def conversation_messages(self, route: dict, *, limit: int = 20) -> list[dict]:
+    async def conversation_messages(
+        self, route: dict, *, limit: int = 20, before: tuple[str, str] | None = None
+    ) -> list[dict]:
         limit = max(1, min(limit, 100))
         incoming = (
-            await self.received_channel_messages(route, limit=limit, history_metadata=True)
+            await self.received_channel_messages(route, limit=limit, history_metadata=True, before=before)
             if route["channel_read"]
-            else await self.received_messages(route, limit=limit, history_metadata=True)
+            else await self.received_messages(route, limit=limit, history_metadata=True, before=before)
         )
-        outgoing = await self.sent_messages(route, limit=limit)
+        outgoing = await self.sent_messages(route, limit=limit, before=before)
         return sorted(incoming + outgoing, key=lambda message: (message["created_at"], message["history_id"]))[-limit:]
 
     async def conversation_history(

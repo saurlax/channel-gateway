@@ -340,9 +340,9 @@ can load earlier messages and refresh the latest page without duplicating entrie
 The conversation overview combines recent activity with enabled concrete routes,
 so older route histories remain accessible. Conversation history opens only from
 Messages, on the standalone `/events/conversation` page with exact source query
-parameters. Incoming entries align left and Agent replies align right. Headers
-show sender IDs without direction labels; replies use the configured Agent ID
-when available, otherwise the channel account ID or generic Host ID. Direct
+parameters. Incoming entries align left and Agent replies align right, with
+avatars aligned to the top. Incoming headers show sender IDs without direction
+labels; replies omit sender headers and repeated connection IDs. Direct
 links and reloads retain the exact account and conversation, including sources
 outside the overview's recent records. Loading earlier messages preserves scroll
 position; refresh follows new entries only when already near the bottom.

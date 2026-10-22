@@ -197,12 +197,6 @@ function ConversationMessages({
             <ol className="flex min-w-0 flex-col gap-6">
               {messages.map((entry) => {
                 const incoming = entry.direction === "incoming";
-                const route = snapshot.routes.find((item) => item.id === entry.route_id);
-                const sender = incoming
-                  ? entry.sender_id
-                  : (route?.agent_id ??
-                    snapshot.connections.find((item) => item.id === source.channel_id)?.self_id ??
-                    route?.host_id);
                 return (
                   <li key={entry.id}>
                     <Message align={incoming ? "start" : "end"}>
@@ -218,9 +212,11 @@ function ConversationMessages({
                         </Avatar>
                       </MessageAvatar>
                       <MessageContent>
-                        <MessageHeader className="gap-2 [overflow-wrap:anywhere]">
-                          {sender ?? "—"}
-                        </MessageHeader>
+                        {incoming && entry.sender_id && (
+                          <MessageHeader className="[overflow-wrap:anywhere]">
+                            {entry.sender_id}
+                          </MessageHeader>
+                        )}
                         <Bubble variant={incoming ? "secondary" : "tinted"}>
                           <BubbleContent className="whitespace-pre-wrap [overflow-wrap:anywhere]">
                             {entry.text}

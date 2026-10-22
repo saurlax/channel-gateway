@@ -31,7 +31,17 @@ def test_headless_service_exposes_health_status_and_openapi(tmp_path: Path) -> N
 
 @pytest.mark.parametrize(
     "path",
-    ["/", "/overview", "/channels", "/hosts", "/routes", "/routes/new", "/routes/route_example/edit", "/events"],
+    [
+        "/",
+        "/overview",
+        "/channels",
+        "/hosts",
+        "/routes",
+        "/routes/new",
+        "/routes/route_example/edit",
+        "/events",
+        "/events/conversation",
+    ],
 )
 def test_console_paths_serve_the_app_without_redirects(tmp_path: Path, path: str) -> None:
     (tmp_path / "index.html").write_text("<html>Channel Gateway</html>")

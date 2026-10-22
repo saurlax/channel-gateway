@@ -41,7 +41,8 @@ Only the platform proxy may reach the container listener; do not expose this
 configuration directly to untrusted clients. Public health checks use `/healthz`.
 
 The console uses `/overview`, `/channels`, `/hosts`, `/routes`, and `/events`,
-with `/routes/new` and `/routes/{id}/edit` for route configuration.
+with `/routes/new` and `/routes/{id}/edit` for route configuration and
+`/events/conversation` for directly linked conversation history.
 Forward these paths to the gateway along with `/`, `/assets/`, `/api/`, and
 `/mcp/`; the bundled server serves console pages directly, including on reload.
 No proxy rewrite or redirect is needed. `/` displays Overview. Replace old

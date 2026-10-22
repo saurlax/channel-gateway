@@ -133,3 +133,17 @@ test("route editor navigation supports direct paths and browser history", (t) =>
   assert.deepEqual(visited, [{ id: "route_example" }, { create: true }, { id: "route_example" }]);
   unsubscribe();
 });
+
+test("conversation navigation and browser Back stay in Messages and preserve source scope", (t) => {
+  const { window, entries } = browser(t, "https://gateway.example/events");
+  const href =
+    "https://gateway.example/events/conversation?channel_id=qq&conversation_kind=private&conversation_id=user1";
+  const event = click(href);
+  navigateLink(event);
+  assert.ok(event.defaultPrevented);
+  assert.equal(readPage(window.location.pathname), "events");
+  assert.equal(window.location.href, href);
+  window.location = new URL(entries[0]);
+  window.dispatchEvent(new Event("popstate"));
+  assert.equal(readPage(), "events");
+});

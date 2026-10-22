@@ -6,11 +6,9 @@ import {
   eventAddress,
   sourceFromAddress,
   newRoutePath,
-  type Conversation,
+  conversationPath,
 } from "@/conversations";
 import type { Snapshot } from "@/api";
-import type { Action } from "@/components/form-controls";
-import { ConversationDialog } from "@/components/conversation-history";
 import { ConsoleLink } from "@/components/console-link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,24 +24,15 @@ import {
 
 export function Events({
   snapshot,
-  csrfToken,
   newEventIds,
-  action,
   busy,
-  error,
-  clearError,
 }: {
   snapshot: Snapshot;
-  csrfToken: string;
   newEventIds: string[];
-  action: Action;
   busy: boolean;
-  error: string;
-  clearError: () => void;
 }) {
   const { t, message, date } = useLocale();
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Conversation | null>(null);
   const groups = conversations(snapshot);
   const newConversations = new Set(
     snapshot.events
@@ -66,7 +55,6 @@ export function Events({
       ...group.search,
     ]),
   );
-  const conversation = groups.find((group) => group.key === selected?.key) ?? selected;
   return (
     <div className="grid grid-cols-1 gap-4">
       <ListToolbar query={query} onQueryChange={setQuery} label={t("Search messages…")} />
@@ -112,15 +100,10 @@ export function Events({
                   <TableCell>{group.latest ? date(group.latest.created_at) : "—"}</TableCell>
                   <TableCell>
                     <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          clearError();
-                          setSelected(group);
-                        }}
-                      >
-                        {t("View conversation")}
+                      <Button variant="outline" size="sm" asChild>
+                        <ConsoleLink href={conversationPath(group.source)}>
+                          {t("View conversation")}
+                        </ConsoleLink>
                       </Button>
                       {!group.route &&
                         snapshot.connections.some((c) => c.id === group.source.channel_id) && (
@@ -148,24 +131,6 @@ export function Events({
           </TableBody>
         </Table>
       </TableFrame>
-      {conversation && (
-        <ConversationDialog
-          key={conversation.key}
-          open
-          onOpenChange={(open) => !open && setSelected(null)}
-          title={
-            conversation.route?.name ??
-            conversation.name ??
-            channelName(conversation.source.channel_id)
-          }
-          source={conversation.source}
-          snapshot={snapshot}
-          csrfToken={csrfToken}
-          action={action}
-          busy={busy}
-          error={error}
-        />
-      )}
     </div>
   );
 }

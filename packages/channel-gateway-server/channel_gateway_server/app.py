@@ -678,6 +678,7 @@ def create_app(
         @app.get("/routes/new", include_in_schema=False)
         @app.get("/routes/{route_id}/edit", include_in_schema=False)
         @app.get("/events", include_in_schema=False)
+        @app.get("/events/conversation", include_in_schema=False)
         async def console() -> FileResponse:
             return FileResponse(index)
 

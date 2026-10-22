@@ -100,7 +100,9 @@ items, and recent messages. Message and reply summaries cover the latest 100
 records of each type, not lifetime totals. Route counts exclude automatically
 created conversation children. It also provides separate channel and Agent Host
 panels, conversation routes, and conversation histories with received messages
-and Agent replies. Management pages use a search toolbar and table; Add and
+and Agent replies. Messages opens each conversation on a dedicated chat history
+page, with incoming messages on the left, Agent replies on the right, and earlier
+history available without a modal. Management pages use a search toolbar and table; Add and
 row actions open dialogs for channels and Agent Hosts. Route creation and editing
 use separate pages with Basic information, Routing, and Connections tabs.
 Routing shows Sources and Destination together. Sources support multiple

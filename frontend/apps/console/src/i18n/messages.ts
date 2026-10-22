@@ -329,6 +329,8 @@ export const chinese = {
   "Routes & access": "路由与权限",
   "Back to routes": "返回路由列表",
   Messages: "消息",
+  "Back to messages": "返回消息列表",
+  "Conversation not found.": "未找到会话。",
   Replies: "回复记录",
   Conversation: "会话",
   "Request failed.": "请求失败。",

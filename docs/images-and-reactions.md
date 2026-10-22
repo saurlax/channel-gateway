@@ -33,12 +33,12 @@ specific route token may omit `route_id`; a Host key or account-history handle
 requires it. History never exposes signed image URLs.
 
 Up to four images per message are projected. MCP downloads accept PNG, JPEG,
-GIF, and WebP, at most 4 MiB each, from `qpic.cn` and its subdomains,
-`multimedia.nt.qq.com`, `multimedia.nt.qq.com.cn`, and regional
-`*.cos.*.myqcloud.com` hosts. HTTP URLs on those hosts
-are upgraded to HTTPS. Other download hosts, local file paths, redirects,
-unsupported formats, and expired links are refused. These attachment sources
-remain in the private raw journal. a13n applies its own attachment limits.
+GIF, and WebP, at most 4 MiB each, from public HTTPS addresses without a domain
+allowlist. Received HTTP URLs are upgraded to HTTPS. Embedded credentials,
+fragments, nonstandard ports, local hostnames, non-global IP literals, local file
+paths, redirects, unsupported formats, and expired links are refused. These
+attachment sources remain in the private raw journal. a13n applies its own
+attachment limits.
 
 ## Send images
 

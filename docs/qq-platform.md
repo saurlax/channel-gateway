@@ -148,6 +148,11 @@ results become unreadable after their required grant is revoked.
 
 ## Received attachments, cards, and notifications
 
+Private video messages can arrive as file attachments with an `.mp4` filename,
+including on `grouptalk.c2c.qq.com`. Received media URLs have no domain allowlist;
+public HTTPS addresses are accepted under the shared URL and download limits.
+Attachment-only messages appear in Messages and activate matching routes.
+
 `read(resource="messages")` exposes image and attachment indices and sanitized card data.
 `read(resource="image")` returns image pixels; `read(resource="attachment",
 arguments={"source_message_id": "ID", "attachment_index": 0}, route_id=...)` returns native MCP audio or an embedded file

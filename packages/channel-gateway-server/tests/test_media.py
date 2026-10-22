@@ -473,28 +473,41 @@ def test_reactions_require_known_source_messages_and_platform_emoji_ids(service,
     [
         "http://127.0.0.1/image",
         "file:///etc/passwd",
-        "https://qpic.cn.evil.test/image",
+        "https://localhost/image",
+        "https://media.internal/image",
+        "https://192.168.1.1/image",
+        "https://[::1]/image",
+        "https://169.254.169.254/image",
         "https://user:password@gchat.qpic.cn/image",
         "https://multimedia.nt.qq.com:444/image",
         "https://gchat.qpic.cn/image#secret",
         "https://gchat.qpic.cn\\@127.0.0.1/image",
     ],
 )
-def test_only_channel_cdn_download_urls_are_accepted(url):
+def test_invalid_media_download_urls_are_rejected(url):
     assert image_url(url) is None
 
 
 @pytest.mark.parametrize(
     "url",
     [
-        "https://gzc-download.ftn.qq.com.attacker.test/file",
-        "https://fake-ftn.qq.com/file",
+        "https://grouptalk.c2c.qq.com:8443/file",
+        "https://user:secret@grouptalk.c2c.qq.com/file",
+        "https://@grouptalk.c2c.qq.com/file",
+        "https://grouptalk.c2c.qq.com/file#fragment",
+        "https://grouptalk.c2c.qq.com/file\n",
         "https://gzc-download.ftn.qq.com:8443/file",
         "https://user:secret@gzc-download.ftn.qq.com/file",
     ],
 )
-def test_qq_file_cdn_does_not_accept_lookalike_hosts_or_credentials(url):
+def test_media_urls_reject_credentials_fragments_and_nonstandard_ports(url):
     assert image_url(url) is None
+
+
+@pytest.mark.parametrize("host", ["grouptalk.c2c.qq.com", "media.example.test", "other.qq.com"])
+@pytest.mark.parametrize("scheme", ["https:", "http:", ""])
+def test_received_media_urls_accept_public_hosts_without_a_domain_allowlist(host, scheme):
+    assert image_url(f"{scheme}//{host}/file?key=private") == f"https://{host}/file?key=private"
 
 
 @pytest.mark.parametrize("problem", ["redirect", "oversize", "not_image", "wrong_signature"])

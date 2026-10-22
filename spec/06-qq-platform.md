@@ -24,9 +24,11 @@ in history. Native Host URL parts carry supported attachments; MCP can retrieve
 bounded attachment bytes separately. Private authentication fields are removed
 from structured projections. Unsupported packets remain in the private raw journal.
 Direct and quoted group files use the same attachment projection, including
-QQ's regional `*.ftn.qq.com` file CDN. An empty quoted text field must not discard
-its supported file attachment. The shared media URL validation and credential-free,
-bounded download rules still apply; this does not allow arbitrary `qq.com` hosts.
+QQ's regional `*.ftn.qq.com` file CDN. Private video files can arrive with
+`content_type: file` on `grouptalk.c2c.qq.com`. Media URLs are not restricted by
+provider domain; they follow the shared public-media URL validation and
+credential-free, bounded download rules. Empty direct or quoted text must not
+discard a supported attachment.
 Verified Host context includes each attachment's index, kind, media type, and
 filename. A Host can place video and documents in its sandbox for command-based
 parsing without passing their raw binary contents to the primary model. A generic

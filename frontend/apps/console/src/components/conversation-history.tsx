@@ -1,62 +1,82 @@
-import { useEffect, useRef, useState } from "react";
-import { Bot, MessageSquare } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowLeft, Bot, MessageSquare } from "lucide-react";
 import { useLocale } from "@/i18n";
 import { api, type HistoryMessage, type HistoryPage, type Snapshot } from "@/api";
-import { conversationKey, mergeHistory, type ConversationSource } from "@/conversations";
+import {
+  conversationKey,
+  conversations,
+  mergeHistory,
+  routeSourceFromSearch,
+  type ConversationSource,
+} from "@/conversations";
 import type { Action } from "@/components/form-controls";
-import { ManagementDialog } from "@/components/management";
+import { ConsoleLink } from "@/components/console-link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item";
+  Message,
+  MessageAvatar,
+  MessageContent,
+  MessageFooter,
+  MessageHeader,
+} from "@/components/ui/message";
 
-export function ConversationDialog({
-  open,
-  onOpenChange,
-  title,
-  source,
+export function ConversationPage({
+  url,
   snapshot,
   csrfToken,
   action,
   busy,
-  error = "",
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  title: string;
-  source: ConversationSource;
+  url: URL;
   snapshot: Snapshot;
   csrfToken: string;
   action: Action;
   busy: boolean;
-  error?: string;
 }) {
-  const { t } = useLocale();
+  const { t, message } = useLocale();
+  const source = routeSourceFromSearch(url.searchParams);
+  const group =
+    source && conversations(snapshot).find((item) => item.key === conversationKey(source));
+  const account = snapshot.connections.find((item) => item.id === source?.channel_id);
   return (
-    <ManagementDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title={title}
-      description={t("Received messages and agent replies in chronological order.")}
-      wide
-      error={error}
-    >
-      <ConversationMessages
-        key={conversationKey(source)}
-        source={source}
-        snapshot={snapshot}
-        csrfToken={csrfToken}
-        action={action}
-        busy={busy}
-      />
-    </ManagementDialog>
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b pb-4">
+        <Button variant="outline" size="sm" asChild>
+          <ConsoleLink href="/events">
+            <ArrowLeft />
+            {t("Back to messages")}
+          </ConsoleLink>
+        </Button>
+        {source && (
+          <div className="min-w-0 flex-1">
+            <h2 className="break-words text-sm font-medium">
+              {group?.route?.name ?? group?.name ?? account?.name ?? source.channel_id}
+            </h2>
+            <p className="break-all text-xs text-muted-foreground">
+              {account?.name ?? source.channel_id} / {message(source.conversation_kind)}:{" "}
+              {source.conversation_id}
+            </p>
+          </div>
+        )}
+      </div>
+      {source ? (
+        <ConversationMessages
+          key={conversationKey(source)}
+          source={source}
+          snapshot={snapshot}
+          csrfToken={csrfToken}
+          action={action}
+          busy={busy}
+        />
+      ) : (
+        <p role="alert" className="text-sm text-destructive">
+          {t("Conversation not found.")}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -82,11 +102,9 @@ function ConversationMessages({
   const loadedOlder = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const initialized = useRef(false);
-  const query = new URLSearchParams({
-    channel_id: source.channel_id,
-    conversation_kind: source.conversation_kind,
-    conversation_id: source.conversation_id,
-  }).toString();
+  const pinned = useRef(true);
+  const prepend = useRef<{ height: number; top: number } | null>(null);
+  const query = new URLSearchParams(source).toString();
   useEffect(() => {
     let active = true;
     void api<HistoryPage>(csrfToken, `history?${query}`)
@@ -102,15 +120,20 @@ function ConversationMessages({
       active = false;
     };
   }, [csrfToken, query, snapshot]);
-  useEffect(() => {
-    if (!loading && messages.length && !initialized.current && scroller.current) {
-      scroller.current.scrollTop = scroller.current.scrollHeight;
-      initialized.current = true;
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element || loading) return;
+    if (prepend.current) {
+      element.scrollTop = prepend.current.top + element.scrollHeight - prepend.current.height;
+      prepend.current = null;
+    } else if (!initialized.current || pinned.current) {
+      element.scrollTop = element.scrollHeight;
     }
+    initialized.current = true;
   }, [loading, messages]);
   async function loadOlder() {
     const oldest = messages[0];
-    if (!oldest) return;
+    if (!oldest || loadingOlder) return;
     setLoadingOlder(true);
     try {
       const cursor = new URLSearchParams({
@@ -119,6 +142,9 @@ function ConversationMessages({
       });
       const page = await api<HistoryPage>(csrfToken, `history?${query}&${cursor}`);
       loadedOlder.current = true;
+      const element = scroller.current;
+      if (element) prepend.current = { height: element.scrollHeight, top: element.scrollTop };
+      pinned.current = false;
       setMessages((existing) => mergeHistory(existing, page.messages));
       setHasMore(page.has_more);
       setError("");
@@ -129,77 +155,110 @@ function ConversationMessages({
     }
   }
   return (
-    <div className="grid min-w-0 gap-4">
-      <p className="break-all text-sm text-muted-foreground">
-        {message(source.conversation_kind)}: {source.conversation_id}
-      </p>
-      {error && <p role="alert">{message(error)}</p>}
+    <>
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {message(error)}
+        </p>
+      )}
       <div
         ref={scroller}
-        className="max-h-[60svh] overflow-y-auto"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:none]"
         tabIndex={0}
         role="region"
         aria-label={t("Conversation history")}
+        aria-busy={loading || loadingOlder}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+        }}
       >
-        {hasMore && (
-          <Button variant="outline" disabled={loadingOlder} onClick={() => void loadOlder()}>
-            {loadingOlder ? t("Loading…") : t("Load earlier messages")}
-          </Button>
-        )}
-        {loading ? (
-          <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
-        ) : messages.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {t("No messages in this conversation yet.")}
-          </p>
-        ) : (
-          <ItemGroup className="gap-4">
-            {messages.map((entry) => (
-              <Item
-                key={entry.id}
-                variant={entry.direction === "incoming" ? "outline" : "muted"}
-                role="listitem"
-              >
-                <ItemMedia variant="icon">
-                  {entry.direction === "incoming" ? <MessageSquare /> : <Bot />}
-                </ItemMedia>
-                <ItemContent className="min-w-0">
-                  <ItemTitle className="break-all">
-                    {entry.direction === "incoming"
-                      ? ["group", "guild"].includes(source.conversation_kind)
-                        ? `${t("Sender ID")}: ${entry.sender_id}`
-                        : t("Received message")
-                      : entry.direction === "action"
-                        ? t("Channel action")
-                        : t("Agent reply")}
-                  </ItemTitle>
-                  <ItemDescription>{date(entry.created_at)}</ItemDescription>
-                  <p className="whitespace-pre-wrap break-words text-sm">{entry.text}</p>
-                  {entry.error && <ItemDescription>{message(entry.error)}</ItemDescription>}
-                  {entry.error && entry.thread_id && (
-                    <ItemDescription className="break-all">
-                      {t("Agent thread")}: {entry.thread_id}
-                    </ItemDescription>
-                  )}
-                </ItemContent>
-                <ItemActions className="self-start">
-                  <Badge variant="secondary">{message(entry.state)}</Badge>
-                  {entry.direction === "incoming" && entry.state === "failed" && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => void action(`events/${entry.id}/retry`)}
-                    >
-                      {t("Retry")}
-                    </Button>
-                  )}
-                </ItemActions>
-              </Item>
-            ))}
-          </ItemGroup>
-        )}
+        <div className="mx-auto flex max-w-4xl flex-col gap-6 px-1 pb-6 sm:px-4">
+          {hasMore && (
+            <Button
+              className="self-center"
+              variant="outline"
+              size="sm"
+              disabled={loadingOlder}
+              onClick={() => void loadOlder()}
+            >
+              {loadingOlder ? t("Loading…") : t("Load earlier messages")}
+            </Button>
+          )}
+          {loading ? (
+            <p className="py-8 text-center text-sm text-muted-foreground" role="status">
+              {t("Loading…")}
+            </p>
+          ) : messages.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {t("No messages in this conversation yet.")}
+            </p>
+          ) : (
+            <ol className="flex min-w-0 flex-col gap-6">
+              {messages.map((entry) => {
+                const incoming = entry.direction === "incoming";
+                const route = snapshot.routes.find((item) => item.id === entry.route_id);
+                const sender = incoming
+                  ? entry.sender_id
+                  : (route?.agent_id ??
+                    snapshot.connections.find((item) => item.id === source.channel_id)?.self_id ??
+                    route?.host_id);
+                return (
+                  <li key={entry.id}>
+                    <Message align={incoming ? "start" : "end"}>
+                      <MessageAvatar>
+                        <Avatar>
+                          <AvatarFallback>
+                            {incoming ? (
+                              <MessageSquare className="size-4" aria-hidden="true" />
+                            ) : (
+                              <Bot className="size-4" aria-hidden="true" />
+                            )}
+                          </AvatarFallback>
+                        </Avatar>
+                      </MessageAvatar>
+                      <MessageContent>
+                        <MessageHeader className="gap-2 [overflow-wrap:anywhere]">
+                          {sender ?? "—"}
+                        </MessageHeader>
+                        <Bubble variant={incoming ? "secondary" : "tinted"}>
+                          <BubbleContent className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                            {entry.text}
+                          </BubbleContent>
+                        </Bubble>
+                        <MessageFooter className="flex-wrap gap-x-2 gap-y-1">
+                          <time dateTime={entry.created_at}>{date(entry.created_at)}</time>
+                          <Badge variant="secondary">{message(entry.state)}</Badge>
+                          {incoming && entry.state === "failed" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => void action(`events/${entry.id}/retry`)}
+                            >
+                              {t("Retry")}
+                            </Button>
+                          )}
+                        </MessageFooter>
+                        {entry.error && (
+                          <p className="max-w-full whitespace-pre-wrap break-words px-3 text-xs text-destructive [overflow-wrap:anywhere]">
+                            {message(entry.error)}
+                            {entry.thread_id && (
+                              <span className="mt-1 block">
+                                {t("Agent thread")}: {entry.thread_id}
+                              </span>
+                            )}
+                          </p>
+                        )}
+                      </MessageContent>
+                    </Message>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -90,7 +90,16 @@ confirm destructive actions and destination authorization.
 
 Use a search toolbar followed by a table for channels, hosts, routes, and message
 conversations. Incoming messages and Agent replies share the same chronological
-conversation history, opened only from the Messages panel. Route rows have one
+conversation history, opened only from the Messages panel on its own page at
+`/events/conversation` with exact source query parameters. Use the official shadcn
+Message and Bubble components, with received messages on the left and Agent
+replies on the right. Message headers show only the sender ID, using the configured
+Agent ID for replies when available, then the channel account ID or generic Host ID.
+Keep timestamps, delivery states, diagnostics, and retry
+actions with each entry. The history fills the available page height and scrolls
+independently; loading earlier messages preserves the reader's position. Refresh
+follows new messages only when the reader is already near the bottom.
+Route rows have one
 Edit action opening `/routes/{id}/edit`; thread reset, token rotation, enable/disable settings,
 and deletion are on that page. Channel and Agent Host management dialogs and route
 edit pages expose deletion using the shared red outline button and official Alert

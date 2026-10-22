@@ -50,8 +50,10 @@ direct official platform connections. See the
    route binding. Each conversation gets its own thread
    unless you select another [thread delivery policy](#thread-delivery).
 6. Send a text message as an authorized user. **Messages** lists conversations, including
-   those without a route. Select **View conversation** to see incoming text and
-   Agent replies in chronological order, with delivery states and diagnostics.
+   those without a route. Select **View conversation** to open its chat history
+   page. Received messages appear on the left and Agent replies on the right,
+   with timestamps, delivery states, and diagnostics. Use **Load earlier messages**
+   for older history and **Back to messages** to return to the conversation list.
    Authorized private and group replies are sent automatically without review.
 
 The signing secret must match OneBots' configuration. Start with a private test

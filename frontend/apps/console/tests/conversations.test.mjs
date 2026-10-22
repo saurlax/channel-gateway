@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { newRoutePath, routeSourceFromSearch } from "../src/conversations.ts";
+import { newRoutePath, conversationPath, routeSourceFromSearch } from "../src/conversations.ts";
+
+test("conversation page links preserve account, kind and native IDs across reloads", () => {
+  const source = {
+    channel_id: "conn_example",
+    conversation_kind: "thread",
+    conversation_id: "id:with spaces&?#",
+  };
+  const url = new URL(conversationPath(source), "https://gateway.example");
+  assert.equal(url.pathname, "/events/conversation");
+  assert.deepEqual(routeSourceFromSearch(url.searchParams), source);
+});
 
 test("route creation links preserve exact source identity across reloads", () => {
   const source = {

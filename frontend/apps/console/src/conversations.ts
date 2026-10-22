@@ -21,6 +21,10 @@ export function newRoutePath(source: ConversationSource) {
   return `/routes/new?${new URLSearchParams(source)}`;
 }
 
+export function conversationPath(source: ConversationSource) {
+  return `/events/conversation?${new URLSearchParams(source)}`;
+}
+
 export function routeSourceFromSearch(search: URLSearchParams): ConversationSource | undefined {
   const channel_id = search.get("channel_id");
   const conversation_id = search.get("conversation_id");

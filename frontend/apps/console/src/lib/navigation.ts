@@ -15,6 +15,7 @@ export function routeEditPath(id: string) {
 
 export function readPage(pathname = window.location.pathname): Page {
   if (routeEditor(pathname)) return "routes";
+  if (pathname === "/events/conversation") return "events";
   return pages.find((page) => pathname === `/${page}`) ?? "overview";
 }
 
@@ -53,7 +54,9 @@ export function navigateLink(event: MouseEvent<HTMLAnchorElement>) {
   const url = new URL(anchor.href);
   if (
     url.origin !== window.location.origin ||
-    (!pages.some((page) => url.pathname === `/${page}`) && !routeEditor(url.pathname))
+    (!pages.some((page) => url.pathname === `/${page}`) &&
+      url.pathname !== "/events/conversation" &&
+      !routeEditor(url.pathname))
   )
     return;
 

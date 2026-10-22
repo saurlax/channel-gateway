@@ -339,6 +339,13 @@ record of the current page; the cursor uses an exclusive comparison. The console
 can load earlier messages and refresh the latest page without duplicating entries.
 The conversation overview combines recent activity with enabled concrete routes,
 so older route histories remain accessible. Conversation history opens only from
-Messages; route rows expose one Edit action with token rotation and enable/disable
+Messages, on the standalone `/events/conversation` page with exact source query
+parameters. Incoming entries align left and Agent replies align right. Headers
+show sender IDs without direction labels; replies use the configured Agent ID
+when available, otherwise the channel account ID or generic Host ID. Direct
+links and reloads retain the exact account and conversation, including sources
+outside the overview's recent records. Loading earlier messages preserves scroll
+position; refresh follows new entries only when already near the bottom.
+Route rows expose one Edit action with token rotation and enable/disable
 settings on its dedicated edit page. Failed incoming deliveries retain their administrator
 retry action in conversation history.

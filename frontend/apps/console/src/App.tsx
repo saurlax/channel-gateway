@@ -38,6 +38,11 @@ const empty: Snapshot = { connections: [], routes: [], events: [], replies: [] }
 const RoutePage = lazy(() =>
   import("@/components/route-page").then((module) => ({ default: module.RoutePage })),
 );
+const ConversationPage = lazy(() =>
+  import("@/components/conversation-history").then((module) => ({
+    default: module.ConversationPage,
+  })),
+);
 export function App() {
   const { t, message, locale } = useLocale();
   useEffect(() => {
@@ -50,11 +55,14 @@ export function App() {
   const [url, setUrl] = useState(() => new URL(window.location.href));
   const page = readPage(url.pathname);
   const editor = routeEditor(url.pathname);
-  const title = editor
-    ? "create" in editor
-      ? "Add a route"
-      : "Route configuration"
-    : titles[page];
+  const conversation = url.pathname === "/events/conversation";
+  const title = conversation
+    ? "Conversation history"
+    : editor
+      ? "create" in editor
+        ? "Add a route"
+        : "Route configuration"
+      : titles[page];
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -198,7 +206,7 @@ export function App() {
   return (
     <SidebarProvider>
       <AppSidebar onLogout={() => void logout()} page={page} />
-      <SidebarInset className="min-w-0">
+      <SidebarInset className={conversation ? "h-svh min-w-0 overflow-hidden" : "min-w-0"}>
         {/* Header and content layout from the official sidebar-07 block. */}
         <header className="flex h-16 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
@@ -208,11 +216,13 @@ export function App() {
               <BreadcrumbList>
                 <BreadcrumbItem className="hidden md:block">Channel Gateway</BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
-                {editor && (
+                {(editor || conversation) && (
                   <>
                     <BreadcrumbItem>
                       <BreadcrumbLink asChild>
-                        <ConsoleLink href="/routes">{t("Routes & access")}</ConsoleLink>
+                        <ConsoleLink href={conversation ? "/events" : "/routes"}>
+                          {t(conversation ? "Messages" : "Routes & access")}
+                        </ConsoleLink>
                       </BreadcrumbLink>
                     </BreadcrumbItem>
                     <BreadcrumbSeparator />
@@ -225,8 +235,8 @@ export function App() {
             </Breadcrumb>
           </div>
         </header>
-        <div className="flex flex-1 flex-col gap-5 p-4 md:p-6">
-          <div className="flex items-center justify-between gap-4">
+        <div className={`flex flex-1 flex-col gap-5 p-4 md:p-6 ${conversation ? "min-h-0" : ""}`}>
+          <div className="flex shrink-0 items-center justify-between gap-4">
             <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold outline-none">
               {t(title)}
             </h1>
@@ -311,16 +321,19 @@ export function App() {
                   />
                 </Suspense>
               )}
-              {page === "events" && (
-                <Events
-                  snapshot={snapshot}
-                  csrfToken={csrfToken}
-                  newEventIds={activity.received}
-                  action={action}
-                  busy={busy}
-                  error={error}
-                  clearError={() => setError("")}
-                />
+              {conversation && (
+                <Suspense fallback={<Empty>{t("Loading…")}</Empty>}>
+                  <ConversationPage
+                    url={url}
+                    snapshot={snapshot}
+                    csrfToken={csrfToken}
+                    action={action}
+                    busy={busy}
+                  />
+                </Suspense>
+              )}
+              {page === "events" && !conversation && (
+                <Events snapshot={snapshot} newEventIds={activity.received} busy={busy} />
               )}
             </>
           )}

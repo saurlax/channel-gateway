@@ -93,8 +93,8 @@ conversations. Incoming messages and Agent replies share the same chronological
 conversation history, opened only from the Messages panel on its own page at
 `/events/conversation` with exact source query parameters. Use the official shadcn
 Message and Bubble components, with received messages on the left and Agent
-replies on the right. Message headers show only the sender ID, using the configured
-Agent ID for replies when available, then the channel account ID or generic Host ID.
+replies on the right. Message avatars align to the top. Incoming message headers
+show only the sender ID; replies have no sender header or repeated connection ID.
 Keep timestamps, delivery states, diagnostics, and retry
 actions with each entry. The history fills the available page height and scrolls
 independently; loading earlier messages preserves the reader's position. Refresh

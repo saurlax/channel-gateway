@@ -1,4 +1,4 @@
-"""Bounded channel image references and credential-free CDN downloads."""
+"""Bounded channel media references and credential-free public downloads."""
 
 import asyncio
 import base64
@@ -40,8 +40,8 @@ def public_media_url(value: str) -> str:
     if (
         parsed.scheme != "https"
         or not host
-        or parsed.username
-        or parsed.password
+        or parsed.username is not None
+        or parsed.password is not None
         or parsed.fragment
         or parsed.port not in {None, 443}
         or len(value) > 4096
@@ -75,32 +75,16 @@ def decode_media(encoded: str) -> bytes:
 
 
 def image_url(value: object) -> str | None:
-    """Accept only native QQ media CDNs, never arbitrary URLs or local paths."""
-    if not isinstance(value, str) or not value or len(value) > 4096:
+    """Normalize received public media URLs without a provider domain allowlist."""
+    if not isinstance(value, str) or not value or len(value) > 4096 or any(ord(char) < 33 for char in value):
         return None
     try:
         parsed = urlsplit("https:" + value if value.startswith("//") else value)
-        host = (parsed.hostname or "").lower()
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not (
-                host == "qpic.cn"
-                or host.endswith(".qpic.cn")
-                or host in {"multimedia.nt.qq.com", "multimedia.nt.qq.com.cn"}
-                or host.endswith(".ftn.qq.com")
-                or (".cos." in host and host.endswith(".myqcloud.com"))
-            )
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.fragment
-            or parsed.port not in {None, 443}
-            or any(ord(char) < 33 for char in value)
-            or "\\" in value
-        ):
+        if parsed.scheme not in {"http", "https"}:
             return None
+        return public_media_url(urlunsplit(("https", parsed.netloc, parsed.path, parsed.query, parsed.fragment)))
     except ValueError:
         return None
-    return urlunsplit(("https", parsed.netloc, parsed.path, parsed.query, ""))
 
 
 def image_attachments(urls: list[object]) -> tuple[ImageAttachment, ...]:
@@ -163,7 +147,7 @@ class MediaReader:
     ) -> tuple[bytes, str]:
         safe_url = image_url(url)
         if safe_url is None:
-            raise ValueError("Image download host is not supported")
+            raise ValueError("Use a public HTTPS media URL without credentials")
         try:
             async with asyncio.timeout(15):
                 request = self.client.build_request("GET", safe_url, headers={"Accept-Encoding": "identity"})

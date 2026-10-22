@@ -789,6 +789,46 @@ def test_qq_group_file_cdn_reaches_history_attachment_reads_and_host(platform, q
     assert context["attachments"] == history["attachments"]
 
 
+@pytest.mark.parametrize("cdn_host", ["grouptalk.c2c.qq.com", "media.example.test"])
+def test_qq_private_video_file_reaches_console_mcp_and_host_without_a_domain_allowlist(platform, cdn_host):
+    client, _, provider, channel, _ = platform
+    host = client.post(
+        "/api/v1/connections",
+        json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "host-token"},
+    ).json()
+    route = configure(platform, "private", host_id=host["id"], agent_id="agent1")
+    url = f"https://{cdn_host}/download?key=private-video-key"
+    provider.media_data = b"\x00\x00\x00\x20ftypisom"
+    provider.media_type = "application/octet-stream"
+    incoming(
+        platform,
+        "private",
+        content="",
+        attachments=[{"content_type": "file", "filename": "clip.mp4", "url": url, "size": 12}],
+    )
+    assert not provider.uploads
+    history = client.get(
+        "/api/v1/history",
+        params={"channel_id": channel["id"], "conversation_kind": "private", "conversation_id": "7"},
+    ).json()["messages"]
+    assert len(history) == 1 and history[0]["text"] == "[Attachment]"
+    history = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"]
+    assert history[0]["attachments"] == [{"index": 0, "kind": "file", "media_type": "file", "filename": "clip.mp4"}]
+    assert "private-video-key" not in str(history) + client.get("/api/v1/events").text
+    result = call(platform, route, "read", resource="attachment", arguments={"source_message_id": "source1"})
+    assert not result.get("isError"), result
+    resource = result["content"][0]["resource"]
+    assert resource["mimeType"] == "video/mp4"
+    assert base64.b64decode(resource["blob"]) == provider.media_data
+    assert str(provider.uploads[0].url) == url
+    tick(platform)
+    request = next(r for r in provider.requests if r.url.host == "host.test" and r.method == "POST")
+    body = json.loads(request.content)
+    assert body["payload"]["content"][1] == {"type": "url", "url": url}
+    context = json.loads(body["payload"]["content"][0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
+    assert context["attachments"] == history[0]["attachments"]
+
+
 def test_audio_video_files_cards_and_nested_quotes_are_projected_without_private_context(platform):
     route = configure(platform)
     packet = incoming(

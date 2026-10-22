@@ -18,12 +18,10 @@ unavailable images produce a tool error without losing the original message.
 ## Projection and Host delivery
 
 QQ projects image `attachments`; OneBot projects `image` segments from arrays or
-CQ strings. QQ CDN HTTP URLs are upgraded to HTTPS. Only HTTPS URLs on `qpic.cn`
-(including subdomains), `multimedia.nt.qq.com`, `multimedia.nt.qq.com.cn`,
-QQ file CDN subdomains of `ftn.qq.com`, or regional
-`*.cos.*.myqcloud.com` hosts, with no embedded credentials,
-fragment, or nonstandard port, become images. Local paths, base64 input segments,
-and other hosts are not downloadable attachments. Unsupported attachments remain
+CQ strings. Received HTTP URLs are upgraded to HTTPS. Public media URLs have no
+provider domain allowlist. Embedded credentials, fragments, nonstandard ports,
+local hostnames, and non-global IP literals are rejected. Local paths and base64
+input segments are not downloadable attachments. Unsupported attachments remain
 in the raw journal. More than four supported images invalidates projection rather
 than silently dropping content. Ordinary OneBot `face` segments project as
 `[face:ID]` text; sending faces and reacting to an existing message are distinct.
@@ -112,7 +110,7 @@ their stored receipt correlation is the target message ID, not a new message ID.
 ## Additional adapters
 
 The [Slack/Lark/Discord contract](01-channel-adapters.md#slack-lark-and-discord)
-owns their authenticated media retrieval and Host media handles. The QQ CDN
-allowlist and OneBot extension restrictions here remain specific to their owning
+owns their authenticated media retrieval and Host media handles. The public-media
+URL rules and OneBot extension restrictions here remain specific to their owning
 adapters. Typed reaction representations and new-adapter bounds follow the
 [Agent tool contract](04-agent-tools.md#adapter-extensions).

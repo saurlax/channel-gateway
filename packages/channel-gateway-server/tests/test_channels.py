@@ -224,7 +224,9 @@ def test_qq_archives_verified_events_without_a_route(native, variant):
     assert len(rows) == 1
     assert json.loads(rows[0]["payload"]) == event
     assert rows[0]["event_type"] == event["t"]
-    assert rows[0]["state"] == {"unmatched": "blocked", "invalid": "invalid"}.get(variant, "ignored")
+    assert rows[0]["state"] == {"unmatched": "blocked", "media": "blocked", "invalid": "invalid"}.get(
+        variant, "ignored"
+    )
     assert not client.portal.call(app.state.store.pending)
     assert "media.test" not in client.get("/api/v1/events").text
 

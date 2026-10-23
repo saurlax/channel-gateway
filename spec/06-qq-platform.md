@@ -36,6 +36,11 @@ CDN Content-Type must not replace a more specific authenticated attachment type
 in MCP reads. UTF-8 text attachments return text resources rather than binary
 model input; other attachments retain typed native resources.
 
+Explicit gateway image/attachment reads may request `representation: 'url'` to
+reuse the received temporary HTTPS source under current read authority, without
+CG downloading it. Ordinary history remains URL-free. Source expiry and bearer
+URL handling follow [images and reactions](05-images-and-reactions.md).
+
 Platform notifications have their own sanitized durable projection, independent
 of messages and Agent activation. Authorized event reads match the selected
 conversation or its verified guild. Account-wide notifications require a bot-wide

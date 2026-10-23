@@ -643,6 +643,56 @@ def test_qq_media_uploads_use_correct_types_and_passive_receipts(platform, media
     assert not platform[2].uploads  # QQ fetches the source; CG does not stage it.
 
 
+@pytest.mark.parametrize("kind", ["group", "guild", "private", "guild_dm"])
+@pytest.mark.parametrize(
+    "mentions,expected",
+    [
+        ([{"id": "bot-openid", "bot": True, "is_you": True}], True),
+        ([{"id": "another-bot", "bot": True, "is_you": False}], False),
+        ([{"id": "another-user"}], False),
+        ([{"is_you": False}, {"is_you": True}], True),
+        ([{"is_you": "true"}], False),
+        ([{"is_you": 1}], False),
+        ([None, "invalid"], False),
+        ({"is_you": True}, False),
+        (None, False),
+    ],
+)
+def test_qq_full_message_mentions_reach_history_and_host(platform, kind, mentions, expected):
+    route = configure(platform, kind=kind)
+    packet = incoming(
+        platform,
+        kind=kind,
+        content="<@bot-openid> Test AnyCap",
+        mentions=mentions,
+        msg_elements=[{"mentions": [{"is_you": True}]}],
+    )
+    # The guild fixture normally uses the dedicated @message event. Test the
+    # ordinary full-message event here, as observed on QQ group subscriptions.
+    if kind == "guild":
+        packet["t"] = "MESSAGE_CREATE"
+        packet["d"]["id"] = "guild-full-message"
+        hook(platform, packet)
+    message = qq_message(packet, {"id": "account", "kind": "qq"})
+    expected = expected if kind in {"group", "guild"} else None
+    assert message.bot_mentioned is expected
+    parts = host_body(message.model_dump(mode="json"), route)["payload"]["content"]
+    context = json.loads(parts[0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
+    assert context["bot_mentioned"] is expected
+    history = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"]
+    actual = next(item for item in history if item["source_message_id"] == packet["d"]["id"])
+    assert actual["bot_mentioned"] is expected
+
+
+@pytest.mark.parametrize("event_type", ["GROUP_AT_MESSAGE_CREATE", "AT_MESSAGE_CREATE"])
+def test_qq_dedicated_mention_event_remains_authoritative(platform, event_type):
+    kind = "group" if event_type == "GROUP_AT_MESSAGE_CREATE" else "guild"
+    configure(platform, kind=kind)
+    packet = incoming(platform, kind=kind, mentions=[{"is_you": False}])
+    packet["t"] = event_type
+    assert qq_message(packet, {"id": "account", "kind": "qq"}).bot_mentioned is True
+
+
 @pytest.mark.parametrize("mime", ["image/jpeg", "image/gif"])
 def test_qq_sticker_image_reaches_host_with_readable_label(platform, mime):
     route = configure(platform)
@@ -706,6 +756,50 @@ def test_qq_attachment_url_read_reuses_source_without_downloading(platform):
         resource="attachment",
         arguments={"source_message_id": "source1", "representation": "url"},
     ).get("isError")
+
+
+@pytest.mark.parametrize("kind", ["group", "private"])
+@pytest.mark.parametrize("media_kind,mime", [("audio", "audio/mpeg"), ("video", "video/mp4"), ("file", "text/plain")])
+def test_qq_media_caption_is_rejected_before_queue_or_upload(platform, kind, media_kind, mime):
+    route = configure(platform, kind=kind)
+    incoming(platform, kind=kind)
+    result = call(
+        platform,
+        route,
+        "send_message",
+        content=[
+            {"type": "text", "text": "Description that must not disappear"},
+            {"type": media_kind, "media_type": mime, "filename": "asset.bin", "url": "https://example.com/media"},
+        ],
+    )
+    assert result.get("isError") and "separate send_message calls" in str(result)
+    assert not platform[0].get("/api/v1/replies").json()
+    assert not platform[2].requests and not platform[2].uploads
+    description = decoded(call(platform, route, "discover", resource="capabilities"))
+    assert description["send"]["media_caption_types"] == ["image"]
+
+
+@pytest.mark.parametrize("media_kind,mime", [("audio", "audio/mpeg"), ("video", "video/mp4"), ("file", "text/plain")])
+def test_qq_text_and_media_can_be_sent_separately(platform, media_kind, mime):
+    route = configure(platform)
+    incoming(platform)
+    text = decoded(call(platform, route, "send_message", content=[{"type": "text", "text": "Description"}]))
+    media = decoded(
+        call(
+            platform,
+            route,
+            "send_message",
+            content=[
+                {"type": media_kind, "media_type": mime, "filename": "asset.bin", "url": "https://example.com/media"},
+            ],
+        )
+    )
+    tick(platform)
+    assert decoded(call(platform, route, "get_operation", operation_id=text["operation_id"]))["state"] == "sent"
+    assert decoded(call(platform, route, "get_operation", operation_id=media["operation_id"]))["state"] == "sent"
+    messages = [json.loads(r.content) for r in platform[2].requests if r.url.path.endswith("/messages")]
+    assert [m["msg_type"] for m in messages] == [0, 7]
+    assert messages[0]["content"] == "Description" and messages[1]["content"] == ""
 
 
 def test_sent_image_history_contains_no_payload_bytes_or_received_image_handle(platform):

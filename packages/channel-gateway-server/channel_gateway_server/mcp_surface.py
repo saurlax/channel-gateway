@@ -138,6 +138,11 @@ def install_tools(server, operations, store, authorized_route, readable_route):
                 },
                 "max_text_characters": adapter.get("max_text_characters", 16000),
                 "max_media_parts": 1,
+                "media_caption_types": ["image"]
+                if kind in {"qq", "onebots"}
+                else ["image", "audio", "video", "file"]
+                if platform
+                else [],
                 "max_media_bytes": adapter.get("max_media_bytes", MAX_MEDIA_BYTES if kind == "qq" else 4 * 1024 * 1024),
                 "native_options_schema": QQMessageOptions.model_json_schema() if kind == "qq" else None,
             },
@@ -239,7 +244,7 @@ def install_tools(server, operations, store, authorized_route, readable_route):
         stream: StreamOptions | None = None,
         native: dict | None = None,
     ) -> dict:
-        """Queue content: text plus at most one media part. Text parts have text/format; media parts have type, media_type, filename and exactly one of data_base64/url. QQ cards/keyboards use native={'qq': {...}}. Stream fragments use stream options. Poll get_operation; queued is not delivery. Reactions use execute_action."""
+        """Queue content: text plus at most one media part. QQ audio/video/file cannot include text: send text and media in separate calls; combinations fail before queuing/uploading. Text has text/format; media has type, media_type, filename and exactly one of data_base64/url. QQ cards/keyboards use native={'qq': {...}}. Poll get_operation; queued is not delivery."""
         check_json(native or {})
         if native is not None and (set(native) != {"qq"} or not isinstance(native["qq"], dict)):
             raise ValueError("Choose registered native options from discover(resource='capabilities')")

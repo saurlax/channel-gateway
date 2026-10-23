@@ -62,6 +62,12 @@ media item, with guild media restricted to images; OneBot supports inline images
 Weixin supports text only. Slack/Lark/Discord accept inline image/audio/video/file
 parts under their [declared restrictions](../docs/slack-lark-discord.md).
 Unsupported combinations fail before queuing anything.
+QQ audio/video/file parts must be sent without a nonempty text caption. A request
+combining them is rejected before queuing or uploading with guidance to make
+separate text and media calls. CG never silently drops the text or implicitly
+splits one request into two messages. `capabilities.send.media_caption_types`
+lists which media kinds accept accompanying text; existing QQ image behavior is
+unchanged.
 QQ/OneBot media cannot currently combine with Markdown, a quoted reply, native options, or
 a stream. This does not claim future adapters support these same combinations.
 QQ native options are `native: {'qq': {'keyboard': ..., 'embed': ..., 'ark': ...}}`;

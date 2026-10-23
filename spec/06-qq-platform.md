@@ -17,6 +17,14 @@ private/group addresses, source precedence, sender policies, and thread delivery
 semantics remain compatible. QQ Gateway intents cover the implemented guild,
 message, reaction, membership, interaction, forum, and audio event families.
 
+For group/guild messages, `bot_mentioned` is true for a native
+`GROUP_AT_MESSAGE_CREATE`/`AT_MESSAGE_CREATE` event or a top-level authenticated
+`mentions` entry with boolean `is_you: true`. Full-message subscriptions can
+deliver actual bot mentions as `GROUP_MESSAGE_CREATE`. Another bot's mention,
+mention-like text, quoted/nested mentions, and non-boolean flags do not assert a
+self mention. Private/DM messages retain `bot_mentioned: null`. This is a relevance
+hint, not additional route or reply authority.
+
 Messages project bounded text, images, audio, video, files, received cards, and
 quoted/nested message content. The verified outer author is authoritative.
 Attachments retain private source URLs and expose opaque indices and safe metadata
@@ -40,6 +48,12 @@ Explicit gateway image/attachment reads may request `representation: 'url'` to
 reuse the received temporary HTTPS source under current read authority, without
 CG downloading it. Ordinary history remains URL-free. Source expiry and bearer
 URL handling follow [images and reactions](05-images-and-reactions.md).
+
+Outgoing QQ audio/video/file requests reject nonempty text captions before queue
+admission or upload. The caller sends text and media separately and receives
+independent receipts; the gateway never drops the caption or creates implicit
+extra sends. QQ API media acceptance does not prove accompanying text was shown
+by clients. Existing image caption handling remains unchanged.
 
 Platform notifications have their own sanitized durable projection, independent
 of messages and Agent activation. Authorized event reads match the selected

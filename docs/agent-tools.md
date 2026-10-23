@@ -85,6 +85,10 @@ exactly one of `data_base64` or `url`. QQ allows public HTTPS sources and up to
 16 MiB inline data; guild conversations allow image sends. OneBot allows inline
 images up to 4 MiB. QQ images are PNG/JPEG; OneBot also allows GIF/WebP. Weixin is
 text-only. Unsupported combinations fail before anything is queued.
+QQ audio/video/file sends must contain only the media part. Send any description
+in a separate text call; combining it with media is rejected before upload or
+queue admission. Discovery's `send.media_caption_types` lists the allowed caption
+types. Each separate message has its own operation receipt.
 
 Text uses optional `format: "markdown"` on QQ and Slack. `reply_to` references a known
 source-authorized message. QQ options use `native: {"qq": {"keyboard": ...}}`,

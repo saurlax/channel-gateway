@@ -639,6 +639,73 @@ def test_qq_media_uploads_use_correct_types_and_passive_receipts(platform, media
     assert outgoing["media"] == [{"kind": media_kind, "media_type": mime, "filename": "asset.bin"}]
     assert outgoing["images"] == [] and outgoing["attachments"] == []
     assert "https://example.com/asset" not in str(outgoing) and "private-file-info" not in str(outgoing)
+    assert json.loads(upload.content)["url"] == "https://example.com/asset"
+    assert not platform[2].uploads  # QQ fetches the source; CG does not stage it.
+
+
+@pytest.mark.parametrize("mime", ["image/jpeg", "image/gif"])
+def test_qq_sticker_image_reaches_host_with_readable_label(platform, mime):
+    route = configure(platform)
+    packet = incoming(
+        platform,
+        content='<faceType=6,faceId="0",ext="eyJ0ZXh0IjoiIn0=">',
+        attachments=[{"content_type": mime, "filename": "sticker.jpg", "url": CDN}],
+    )
+    message = qq_message(packet, {"id": "account", "kind": "qq"})
+    assert message.text == "[QQ sticker]" and len(message.images) == 1
+    parts = host_body(message.model_dump(mode="json"), route)["payload"]["content"]
+    assert parts[1:] == [{"type": "url", "url": CDN}]
+    context = json.loads(parts[0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
+    assert context["image_count"] == 1 and "sticker artwork" in context["media_access"]["instruction"]
+    assert not platform[2].uploads
+
+
+def test_qq_face_labels_do_not_invent_images_and_preserve_quoted_stickers(platform):
+    configure(platform)
+    packet = incoming(platform, content='Hello<faceType=1,faceId="76",ext="eyJ0ZXh0IjoiU21pbGUifQ==">')
+    message = qq_message(packet, {"id": "account", "kind": "qq"})
+    assert message.text == "Hello[QQ emoji: Smile]" and not message.images
+    packet["d"]["content"] = '<faceType=1,faceId="76",ext="invalid">'
+    packet["d"]["msg_elements"] = [
+        {
+            "content": '<faceType=6,faceId="0",ext="eyJ0ZXh0IjoiIn0=">',
+            "attachments": [{"content_type": "image/gif", "url": CDN}],
+        }
+    ]
+    message = qq_message(packet, {"id": "account", "kind": "qq"})
+    assert message.text == "[QQ emoji: 76]\n[Quoted content]\n[QQ sticker]"
+    assert len(message.images) == 1
+
+
+def test_qq_attachment_url_read_reuses_source_without_downloading(platform):
+    route = configure(platform)
+    incoming(platform, attachments=[{"content_type": "video/mp4", "filename": "clip.mp4", "url": CDN}])
+    result = decoded(
+        call(
+            platform,
+            route,
+            "read",
+            resource="attachment",
+            arguments={"source_message_id": "source1", "attachment_index": 0, "representation": "url"},
+        )
+    )
+    assert result == {"kind": "video", "media_type": "video/mp4", "filename": "clip.mp4", "url": CDN, "temporary": True}
+    assert not platform[2].uploads
+    assert call(
+        platform,
+        route,
+        "read",
+        resource="attachment",
+        arguments={"source_message_id": "absent", "representation": "url"},
+    ).get("isError")
+    platform[0].patch(f"/api/v1/routes/{route['id']}", json={"read_channel_ids": []})
+    assert call(
+        platform,
+        route,
+        "read",
+        resource="attachment",
+        arguments={"source_message_id": "source1", "representation": "url"},
+    ).get("isError")
 
 
 def test_sent_image_history_contains_no_payload_bytes_or_received_image_handle(platform):

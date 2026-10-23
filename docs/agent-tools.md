@@ -57,6 +57,13 @@ video and documents in its sandbox for command-based parsing when the model
 cannot consume the native media type. No local path or arbitrary download URL is
 accepted by these reads. `resource: "events"` reads authorized sanitized QQ events.
 
+For gateway QQ images/attachments and OneBot images, add
+`"representation": "url"` to those read arguments to obtain the original
+temporary HTTPS source without downloading bytes. Use it directly with media
+tools; keep signed URLs private. The same current message read permissions apply.
+Default `"content"` reads return typed bytes as before. Other platforms and
+`source: "platform"` do not support URL mode.
+
 ## Send content
 
 ```json

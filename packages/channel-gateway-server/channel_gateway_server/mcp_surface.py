@@ -205,7 +205,7 @@ def install_tools(server, operations, store, authorized_route, readable_route):
         route_id: str | None = None,
         source: Literal["gateway", "platform"] | None = None,
     ):
-        """Read history, a received image/attachment, sanitized events, or a registered native resource. Discover argument schemas first. Image/audio/resource bytes retain native MCP content types; parse unsupported formats in the Host sandbox. Messages default to gateway history, never complete native history."""
+        """Read history, received media, sanitized events, or native resources. For gateway QQ images/attachments and OneBot images, arguments.representation='url' returns a temporary source URL without downloading; default 'content' returns typed bytes. Keep signed URLs private; reuse them directly with media tools. Discover schemas first. Messages default to incomplete gateway history."""
         if resource == "native":
             if source == "gateway":
                 raise ValueError("Native resources use source='platform'")

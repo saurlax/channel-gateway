@@ -18,7 +18,7 @@ from .channels.actions import MessageDelivery, message_delivery, proactive_autho
 from .channels.manager import capabilities
 from .channels.platforms.common import CHANNEL_KINDS
 from .mcp_operations import Operations
-from .media import MAX_IMAGE_BASE64, MAX_MEDIA_BYTES, MediaReader, public_message
+from .media import MAX_IMAGE_BASE64, MAX_MEDIA_BYTES, MediaReader, public_media_url, public_message
 from .models import ImageReplyInput
 from .storage import Store
 
@@ -223,11 +223,21 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
         source_message_id: Annotated[str, Field(min_length=1, max_length=1024)],
         image_index: Annotated[int, Field(ge=0, le=3)] = 0,
         route_id: str | None = None,
-    ) -> Image:
-        """Read an authorized received image as native image content. Use source_message_id and image index from history."""
+        representation: Literal["content", "url"] = "content",
+    ) -> Image | dict:
+        """Read a received image. representation='url' returns the original temporary QQ/OneBot URL without downloading; keep it private and pass it to media tools directly. Default content returns pixels."""
         route = await readable_route(route_id)
         image = await received_image(route, source_message_id, image_index)
         connection = await store.connection(route["channel_id"])
+        if representation == "url":
+            if not connection or connection["kind"] not in {"qq", "onebots"}:
+                raise ValueError("URL references are supported only for received QQ/OneBot media")
+            current = await readable_route(route["id"])
+            if await received_image(current, source_message_id, image_index) != image:
+                raise ValueError("Image access changed during lookup")
+            if connection != await store.connection(route["channel_id"]):
+                raise ValueError("Channel credentials changed during lookup")
+            return {"kind": "image", "url": public_media_url(image["url"]), "temporary": True}
         if connection and connection["kind"] in {"slack", "lark", "discord"} and bridge.channels:
             await bridge.channels.platform(connection).ensure_identity()
             data, media_type = await bridge.channels.platform(connection).read_asset(image, image=True)

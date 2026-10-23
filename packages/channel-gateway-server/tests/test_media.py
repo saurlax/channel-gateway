@@ -225,7 +225,8 @@ def test_mcp_image_lookup_is_not_limited_to_recent_history(service):
 @pytest.mark.parametrize(
     "mode", ["disabled", "read_revoked", "other_conversation", "other_sender", "deleted", "rotated"]
 )
-def test_image_access_is_scoped_and_revocable(service, mode):
+@pytest.mark.parametrize("representation", ["content", "url"])
+def test_image_access_is_scoped_and_revocable(service, mode, representation):
     client, _, provider = service
     channel, configured, _ = configure(service)
     ingest(
@@ -246,7 +247,13 @@ def test_image_access_is_scoped_and_revocable(service, mode):
         client,
         configured["agent_token"],
         "tools/call",
-        {"name": "read", "arguments": {"resource": "image", "arguments": {"source_message_id": "1"}}},
+        {
+            "name": "read",
+            "arguments": {
+                "resource": "image",
+                "arguments": {"source_message_id": "1", "representation": representation},
+            },
+        },
     )
     assert response.status_code == 401 or response.json()["result"].get("isError")
     assert not provider.downloads
@@ -265,6 +272,33 @@ def test_revoke_image_access_during_download(service):
     assert call(service, configured, "read", resource="image", arguments={"source_message_id": "1"}).get("isError")
     assert len(provider.downloads) == 1
     assert client.portal.call(app.state.store.route, configured["id"])["enabled"] is False
+
+
+@pytest.mark.parametrize("kind", ["onebots", "qq"])
+def test_received_image_url_read_is_scoped_and_does_not_download(service, kind):
+    client, _, provider = service
+    channel, configured, _ = configure(service, kind)
+    ingest(service, channel)
+    reference = result_json(
+        call(
+            service, configured, "read", resource="image", arguments={"source_message_id": "1", "representation": "url"}
+        )
+    )
+    assert reference == {"kind": "image", "url": CDN, "temporary": True}
+    assert not provider.downloads
+    assert call(
+        service,
+        configured,
+        "read",
+        resource="image",
+        arguments={"source_message_id": "absent", "representation": "url"},
+    ).get("isError")
+    assert "private-image-key" not in str(result_json(call(service, configured, "read", resource="messages")))
+    client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": []})
+    assert call(
+        service, configured, "read", resource="image", arguments={"source_message_id": "1", "representation": "url"}
+    ).get("isError")
+    assert not provider.downloads
 
 
 def test_account_image_read_grants_do_not_grant_actions(service):

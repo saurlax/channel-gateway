@@ -47,6 +47,13 @@ Cursors select records strictly before the oldest returned persistence time and
 ID; each page reapplies current access and remains chronological. A full page
 may return a cursor whose following page is empty. Invalid cursors fail.
 
+Gateway media reads additionally accept `representation: 'content' | 'url'`
+(default `content`). URL mode is limited to QQ images/attachments and OneBot
+images, with the same current source-message read checks. It returns a temporary
+original URL without fetching or staging bytes; ordinary history remains URL-free.
+Platform-source media reads do not support this option. See the private URL
+handling contract in [images and reactions](05-images-and-reactions.md).
+
 `send_message.content` is a typed array containing at most one text part and one
 media part. Text has `type: 'text'`, `text`, and optional `format` (`text` or
 `markdown`). Media has `type` (`image`, `audio`, `video`, `file`), `media_type`,

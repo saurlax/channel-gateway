@@ -77,7 +77,11 @@ uncertain delivery is `unknown`. Neither is automatically retried.
 
 A media content part has `type` (`image`, `audio`, `video`, or `file`),
 `media_type`, `filename`, and exactly one of `data_base64` or `url`. An accompanying
-plain-text part becomes its caption. Inline base64 is limited to 16 MiB decoded;
+plain-text part becomes its caption for images. Audio, video, and file messages
+require separate text and media calls: combining a nonempty caption with one of
+these types fails before queuing or uploading. CG does not silently discard text
+or automatically create two messages. Check `get_operation` for each separate
+send. Inline base64 is limited to 16 MiB decoded;
 larger than 4 MiB uses prepare/part/finish/merge internally. A public HTTPS URL
 delegates download to QQ under QQ's own size limits. CG accepts no local file path.
 Media cannot combine with Markdown, native options, quotes, or stream options;

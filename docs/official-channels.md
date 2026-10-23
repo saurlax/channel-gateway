@@ -106,6 +106,9 @@ For QQ, receiving every ordinary group message additionally requires enabling
 **receive all messages** in QQ's bot settings. CG already subscribes to the
 group/C2C intent and handles `GROUP_MESSAGE_CREATE`; it cannot collect messages
 QQ does not push or recover packets discarded before this journal was added.
+With full-message delivery, an actual @bot message can also arrive as
+`GROUP_MESSAGE_CREATE`; CG checks QQ's top-level `mentions[].is_you: true` as
+well as dedicated @message event types when setting the Host's `bot_mentioned`.
 The current route policy activates the Agent for every authorized incoming message, including media and verified button/menu input;
 reply selection is independent. Configure
 [quiet group participation](onebots-a13n.md#quiet-group-participation) so ordinary

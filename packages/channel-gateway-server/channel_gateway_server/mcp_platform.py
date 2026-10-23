@@ -110,6 +110,11 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
         route, connection, delivery = await message_route(route_id, delivery)
         if connection["kind"] != "qq":
             raise ValueError("This media operation requires official QQ")
+        if media_kind in {"audio", "video", "file"} and caption.strip():
+            raise ValueError(
+                "QQ audio/video/file captions are not supported. Nothing was queued or uploaded. "
+                "Send the text and media in separate send_message calls and check each operation."
+            )
         if bool(data_base64) == bool(url):
             raise ValueError("Choose exactly one media URL or base64 data")
         if any(c in filename for c in ("/", "\\", "\r", "\n", "\0")):

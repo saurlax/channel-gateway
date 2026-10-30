@@ -40,6 +40,20 @@ paths, redirects, unsupported formats, and expired links are refused. These
 attachment sources remain in the private raw journal. a13n applies its own
 attachment limits.
 
+QQ sticker images arrive through these same attachment parts, even when the text
+also contains a native emoji marker. CG renders that marker as `[QQ sticker]` or
+a readable emoji label. Check the received image count and inspect the attached
+image before describing a sticker; a text marker alone does not prove there is
+no image.
+
+To pass the original image directly to a media service, add
+`"representation": "url"` to the image read arguments above. QQ attachments
+support the same option with `resource: "attachment"` and `attachment_index`.
+This authorized lookup returns a temporary source URL without downloading it.
+Treat signed URLs as private: use them as tool inputs, not in channel text or
+public logs. Expiry and third-party fetchability are controlled by the source;
+CG cannot refresh an expired QQ URL. Default `content` reads still return bytes.
+
 ## Send images
 
 Enable CG's `send_message` tool through the shared Host MCP connection.

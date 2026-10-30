@@ -77,12 +77,56 @@ uncertain delivery is `unknown`. Neither is automatically retried.
 
 A media content part has `type` (`image`, `audio`, `video`, or `file`),
 `media_type`, `filename`, and exactly one of `data_base64` or `url`. An accompanying
-plain-text part becomes its caption. Inline base64 is limited to 16 MiB decoded;
+plain-text part becomes its caption for images. Audio, video, and file messages
+require separate text and media calls: combining a nonempty caption with one of
+these types fails before queuing or uploading. CG does not silently discard text
+or automatically create two messages. Check `get_operation` for each separate
+send. Inline base64 is limited to 16 MiB decoded;
 larger than 4 MiB uses prepare/part/finish/merge internally. A public HTTPS URL
 delegates download to QQ under QQ's own size limits. CG accepts no local file path.
 Media cannot combine with Markdown, native options, quotes, or stream options;
 unsupported combinations fail before queuing. Presigned part uploads carry no
 bot token or cookies. Upload tickets remain private.
+
+### Reuse generated-media links
+
+Prefer the generation service's original HTTPS artifact URL in `send_message`:
+
+```json
+{"route_id":"route_EXAMPLE","content":[{"type":"audio","media_type":"audio/mpeg","filename":"speech.mp3","url":"https://media.example.com/temporary-output.mp3?signature=EXAMPLE"}]}
+```
+
+Use `type: "audio"` for a native voice message, `type: "file"` with an audio
+filename/MIME type for a downloadable audio file, and `type: "video"` for a video.
+QQ C2C/group supports these upload categories; actual format, size, application
+permissions, and client playback remain QQ decisions. A queued receipt is not
+successful delivery: poll `get_operation` and report the confirmed state.
+
+CG passes URL sources directly to QQ and stores only a private queue reference;
+it neither downloads nor rehosts them. The URL must remain accessible without
+custom authentication headers until QQ finishes fetching it. QQ may also enforce
+its configured download-domain restrictions. Keep the entire signed query string
+and use a fresh link. On rejection, inspect the result before retrying; never
+regenerate paid media simply because its link expired. Inline base64 is a fallback
+for an existing file of at most 16 MiB when QQ cannot fetch its URL.
+
+AnyCap audio output documents `outputs[].url`; video `tasks get <task-id>` returns
+the task result, whose temporary output links can be refreshed by servers that
+support it. Save the original task ID and use the same completed task for link
+recovery. The CLI's generate/wait commands also download outputs automatically;
+a URL-based gateway send avoids reuploading that local copy but does not disable
+the CLI download. Verify the installed CLI/server response rather than inventing
+an artifact URL or a fixed expiry time.
+
+Inbound QQ media also reaches a13n as URL parts without a CG download. a13n may
+fetch the URL to supply model content or a sandbox file. For direct QQ → media
+service processing, use `read` for the original received image/attachment with
+`representation: "url"`, then pass that private source URL to the service. This
+does not guarantee that another service can fetch QQ's expiring CDN links.
+
+References: [AnyCap audio outputs](https://github.com/anycap-ai/anycap/blob/main/skills/anycap-cli/references/audio-generation.md),
+[AnyCap video tasks and links](https://github.com/anycap-ai/anycap/blob/main/skills/anycap-cli/references/video-generation.md),
+[Tencent voice examples](https://github.com/tencent-connect/openclaw-qqbot/blob/main/README.zh.md).
 
 The documented guild send endpoint provides image URL/multipart fields and
 Embed/ARK/Markdown; it does not document the C2C/group generic file-upload flow.

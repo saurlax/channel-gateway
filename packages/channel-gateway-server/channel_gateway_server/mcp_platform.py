@@ -110,6 +110,11 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
         route, connection, delivery = await message_route(route_id, delivery)
         if connection["kind"] != "qq":
             raise ValueError("This media operation requires official QQ")
+        if media_kind in {"audio", "video", "file"} and caption.strip():
+            raise ValueError(
+                "QQ audio/video/file captions are not supported. Nothing was queued or uploaded. "
+                "Send the text and media in separate send_message calls and check each operation."
+            )
         if bool(data_base64) == bool(url):
             raise ValueError("Choose exactly one media URL or base64 data")
         if any(c in filename for c in ("/", "\\", "\r", "\n", "\0")):
@@ -317,9 +322,12 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
 
     @operations.register
     async def read_attachment(
-        source_message_id: str, attachment_index: Annotated[int, Field(ge=0, le=15)] = 0, route_id: str | None = None
-    ) -> list[AudioContent | EmbeddedResource]:
-        """Read authorized received attachments (16 MiB max). UTF-8 text returns a text resource; other media returns typed native bytes. Clients whose model cannot accept a media type must parse the Host-delivered file in their sandbox instead. No arbitrary URL input."""
+        source_message_id: str,
+        attachment_index: Annotated[int, Field(ge=0, le=15)] = 0,
+        route_id: str | None = None,
+        representation: Literal["content", "url"] = "content",
+    ) -> list[AudioContent | EmbeddedResource] | dict:
+        """Read a received attachment (16 MiB max for content). representation='url' returns the original temporary QQ URL without downloading; keep it private and pass it to media tools directly. Default content returns typed bytes/text. No arbitrary URL input."""
         route = await readable_route(route_id)
 
         async def attachment(current):
@@ -335,6 +343,15 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
 
         item = await attachment(route)
         connection = await store.connection(route["channel_id"])
+        if representation == "url":
+            if not connection or connection["kind"] != "qq":
+                raise ValueError("URL references are supported only for received QQ attachments")
+            current = await readable_route(route["id"])
+            if await attachment(current) != item:
+                raise ValueError("Attachment access changed during lookup")
+            if connection != await store.connection(route["channel_id"]):
+                raise ValueError("Channel credentials changed during lookup")
+            return {**item, "url": public_media_url(item["url"]), "temporary": True}
         if connection and connection["kind"] in PLATFORMS and bridge.channels:
             await bridge.channels.platform(connection).ensure_identity()
             data, mime = await bridge.channels.platform(connection).read_asset(item, image=False)

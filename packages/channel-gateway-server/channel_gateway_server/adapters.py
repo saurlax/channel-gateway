@@ -137,6 +137,11 @@ def host_body(message: dict, route: dict, history: list[dict] | None = None) -> 
             "instruction": "Send every warranted channel answer, clarification or limitation through send_message with this route_id. Final output is private. If no reply is warranted, call no messaging tool.",
         },
     }
+    if direct_media and (context["image_count"] or context["attachments"]):
+        context["media_access"] = {
+            "tool": "read",
+            "instruction": "Images include sticker artwork when attached; inspect the image inputs before describing them. To reuse a temporary source URL with media tools, read the received image/attachment by source_message_id and index with representation='url'. Keep signed URLs private. The Host also receives URL attachment parts.",
+        }
     if not direct_media and (context["image_count"] or context["attachments"]):
         context["media_access"] = {
             "tool": "read",

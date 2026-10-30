@@ -13,7 +13,7 @@ from .media import MAX_IMAGE_BASE64, decode_image
 type Identifier = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:@-]+$")]
 type SenderIds = Annotated[list[Identifier], Field(max_length=256)]
 type ReadChannels = Annotated[list[Identifier | Literal["*"]], Field(max_length=100)]
-type ThreadPolicy = Literal["conversation", "sender", "fixed", "message"]
+type ThreadPolicy = Literal["conversation", "sender", "fixed", "message", "window"]
 type BusyPolicy = Literal["steer", "queue"]
 type ConversationKind = Literal["private", "group", "guild", "guild_dm", "channel", "thread"]
 type ActionGrant = Literal[
@@ -218,6 +218,7 @@ class RouteInput(Contract):
     sender_policy: Literal["allowlist", "any"] = "allowlist"
     agent_id: Identifier | None = None
     thread_policy: ThreadPolicy = "conversation"
+    history_limit: int = Field(default=30, ge=0, le=100, strict=True)
     busy_policy: BusyPolicy = "steer"
     fixed_thread_id: Identifier | None = None
     enabled: bool = True
@@ -272,6 +273,7 @@ class RouteUpdate(Contract):
     host_id: Identifier | None = None
     agent_id: Identifier | None = None
     thread_policy: ThreadPolicy | None = None
+    history_limit: int | None = Field(default=None, ge=0, le=100, strict=True)
     busy_policy: BusyPolicy | None = None
     fixed_thread_id: Identifier | None = None
     sender_policy: Literal["allowlist", "any"] | None = None

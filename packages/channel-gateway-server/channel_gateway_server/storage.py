@@ -158,6 +158,25 @@ class Store:
         await self.db.execute(
             "UPDATE stream_sessions SET state='unknown' WHERE id IN (SELECT json_extract(arguments,'$.stream_handle') FROM channel_actions WHERE state='unknown' AND operation='stream_message')"
         )
+        # Upgrade legacy default conversation routes without losing environment origins.
+        # Explicit sender/fixed/message policies and frozen requests stay intact.
+        async with self.transaction() as db:
+            async with db.execute("SELECT id,value FROM routes") as cursor:
+                legacy = await cursor.fetchall()
+            for row in legacy:
+                value = json.loads(row["value"])
+                if "history_limit" in value:
+                    continue
+                value["history_limit"] = 30
+                async with db.execute("SELECT value FROM connections WHERE id=?", (value["host_id"],)) as cursor:
+                    host = await cursor.fetchone()
+                if (
+                    host
+                    and json.loads(host[0])["kind"] == "a13n"
+                    and value.get("thread_policy", "conversation") == "conversation"
+                ):
+                    value["thread_policy"] = "window"
+                await db.execute("UPDATE routes SET value=? WHERE id=?", (json.dumps(value), row["id"]))
         # A request interrupted during delivery might already have taken effect.
         await self.db.execute(
             "UPDATE replies SET state='unknown', error='Delivery interrupted; verify in the channel' WHERE state='sending'"
@@ -303,6 +322,7 @@ class Store:
         value.setdefault("read_channel_ids", None)
         value.setdefault("action_grants", [])
         value.setdefault("thread_policy", "conversation")
+        value.setdefault("history_limit", 30)
         value.setdefault("busy_policy", "steer")
         value.setdefault("fixed_thread_id", None)
         return value
@@ -328,6 +348,7 @@ class Store:
                         "read_channel_ids",
                         "action_grants",
                         "thread_policy",
+                        "history_limit",
                         "busy_policy",
                         "fixed_thread_id",
                     ):
@@ -810,7 +831,13 @@ class Store:
                     thread = route.get("fixed_thread_id") or thread
                 elif route.get("thread_policy", "conversation") == "conversation":
                     thread = thread or route.get("thread_id")
-            scope = ("thread", route["host_id"], thread) if thread else ("binding", key or event["id"])
+            scope = (
+                ("binding", key)
+                if route.get("thread_policy") == "window"
+                else ("thread", route["host_id"], thread)
+                if thread
+                else ("binding", key or event["id"])
+            )
             scopes.setdefault(scope, []).append(event)
         queued, submitted = [], []
         for events in scopes.values():
@@ -824,6 +851,8 @@ class Store:
                 if head["frozen"]
                 else route.get("busy_policy", "steer")
             )
+            if route.get("thread_policy") == "window":
+                policy = "queue"
             if policy == "steer" or not any(
                 event["state"] == "submitted" and event["sequence"] < head["sequence"] for event in events
             ):
@@ -969,6 +998,9 @@ class Store:
             if route.get("sender_policy", "allowlist") != "any":
                 where += " AND (p.event_id IS NULL OR json_extract(e.message,'$.sender_id') IN (SELECT value FROM json_each(?)))"
                 params += (json.dumps(route["allowed_user_ids"]),)
+        if route.get("history_sender_id"):
+            where += " AND json_extract(e.message,'$.sender_id')=?"
+            params += (route["history_sender_id"],)
         if before is not None:
             where += " AND (p.created_at,p.id)<(?,?)"
             params += before
@@ -1031,6 +1063,45 @@ class Store:
         )
         outgoing = await self.sent_messages(route, limit=limit, before=before)
         return sorted(incoming + outgoing, key=lambda message: (message["created_at"], message["history_id"]))[-limit:]
+
+    async def environment_thread(self, route: dict, message: dict) -> str | None:
+        """Last accepted thread in this conversation, solely for reusing its mounts."""
+        key = thread_binding_key(route, message)
+        rows = await self.rows(
+            "SELECT e.thread_id FROM event_thread_bindings b JOIN events e ON e.id=b.event_id "
+            "WHERE b.binding_key=? AND e.thread_id IS NOT NULL ORDER BY e.rowid DESC LIMIT 1",
+            (key,),
+        )
+        return rows[0]["thread_id"] if rows else route.get("thread_id")
+
+    async def delivery_history(self, event: dict, route: dict) -> list[dict]:
+        """Snapshot prior chat content within the triggering conversation's read scope."""
+        limit = route.get("history_limit", 30)
+        if not limit:
+            return []
+        grants = route.get("read_channel_ids")
+        if grants is not None and "*" not in grants and route["channel_id"] not in grants:
+            return []
+        scope = {**route, "channel_read": grants is not None}
+        if route.get("thread_policy") == "sender":
+            sender = json.loads(event["message"])["sender_id"]
+            scope.update(
+                channel_read=False, sender_policy="allowlist", allowed_user_ids=[sender], history_sender_id=sender
+            )
+        messages = await self.conversation_messages(scope, limit=limit, before=(event["created_at"], event["id"]))
+        # Project only chat content and public media handles, never private payloads.
+        return [
+            {
+                "direction": item["direction"],
+                "source_message_id": item["source_message_id"],
+                "sender_id": item["sender_id"],
+                "created_at": item["created_at"],
+                "text": item["text"],
+                "image_count": len(item.get("images", [])),
+                "attachment_count": len(item.get("attachments", [])),
+            }
+            for item in messages
+        ]
 
     async def conversation_history(
         self,
@@ -1108,6 +1179,8 @@ class Store:
                 async with db.execute("SELECT thread_id FROM routes WHERE id=?", (route["id"],)) as cursor:
                     current = await cursor.fetchone()
                 thread_id = thread_id or (current[0] if current else None)
+            if policy == "window":
+                thread_id = None
             target = "/threads/" + quote(thread_id, safe="") + "/inbox" if thread_id else "/threads"
             await db.execute(
                 "INSERT INTO event_thread_bindings(event_id,binding_key,route_id) VALUES (?,?,?)",

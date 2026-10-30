@@ -75,12 +75,18 @@ flight.
 ## Thread delivery
 
 Choose **Conversation continuity** in **Routing → Destination**. Options are
-ordered by use: ongoing chats, personal assistance in groups, independent tasks,
-and cross-source collaboration. Each option includes a description; the selected
+include bounded history with shared environments, ongoing chats, personal
+assistance in groups, independent tasks, and cross-source collaboration. Each option includes a description; the selected
 option's description remains below the selector.
 
+- **Bounded history, shared environment** is the default. Each message gets a
+  fresh thread with the latest channel history, reusing the same conversation's
+  environment mounts. Files stay in the environment while model context starts
+  fresh. Messages execute in order within each conversation. The first message
+  follows the Agent's normal environment setup. Environment lookup or mount
+  failures stop delivery rather than silently creating an empty replacement.
 - **Continue each private chat or group** keeps one thread for each source channel
-  account and private/group conversation. This is the default for existing routes.
+  account and private/group conversation. This retains upstream model history.
 - **Keep each group member separate** keeps a thread for each sender inside a source
   conversation. The same person in another group or account uses another thread.
 - **Start fresh for every message** starts a fresh thread and session for every message.
@@ -94,7 +100,23 @@ option's description remains below the selector.
 
 Replies stay attached to their original source conversation under every policy.
 Wait for queued/submitted inputs to finish before changing the Agent or thread
-policy. Existing bound conversations remain unchanged until you change the policy.
+policy. On upgrade, existing default conversation routes switch to bounded
+history once, retaining their previous thread as the environment origin. Explicit
+sender, fixed, and per-message policies remain unchanged. Frozen deliveries keep
+their original request. No upstream thread or environment is deleted.
+
+Set **History message limit** in **Routing → Destination**. It defaults to **30**
+and accepts **0–100**. It counts previous incoming and confirmed sent messages
+combined, excluding the current message. **0** omits history. Only messages from
+the current conversation within the route's read permissions are attached; an
+empty readable-channel grant omits history. This is a message-count limit, not
+a token budget. Media appear as counts with source IDs for authorized tool reads.
+
+Continuous-thread choices keep upstream context regardless of the attached
+history limit. Current a13n Service automatically compacts at its configured token
+threshold (90% of the model context window by default). CG does not invoke a
+manual compaction API. Use bounded history when a strict channel-history count is
+required; use continuous threads when preserving model/tool state is preferred.
 
 To clear a route's Agent context, open **Routes → Edit → Reset conversations**
 and confirm. Wait for all of that route's pending inputs to finish first.
@@ -108,6 +130,9 @@ an existing thread, so resetting is for clearing history rather than publishing
 prompt changes.
 
 ### Messages during execution
+
+Bounded-history delivery always processes each conversation in order and hides
+this selector. The following options apply to the other thread policies.
 
 In **Routing → Destination → Messages during execution**, choose:
 

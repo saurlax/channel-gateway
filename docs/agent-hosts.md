@@ -12,8 +12,10 @@ is determined by that upstream key. On a route, select an Agent from the Host li
 permission to list published Agents and existing threads.
 
 CG submits inputs, uses the route's thread delivery policy, and tracks its runs.
-The default creates one thread per conversation; see [thread delivery](onebots-a13n.md#thread-delivery).
-**Messages during execution** defaults to joining the current run (`steer`);
+The default creates a fresh thread per input with up to 30 previous channel
+messages and reuses the same conversation's environments; see [thread delivery](onebots-a13n.md#thread-delivery).
+Bounded-history delivery queues each conversation's inputs. With continuous
+threads, **Messages during execution** defaults to joining the current run (`steer`);
 choose queue mode to wait for its completion. See the
 [busy-input setting](onebots-a13n.md#messages-during-execution) for scope, retries
 and shared-run reply behavior.

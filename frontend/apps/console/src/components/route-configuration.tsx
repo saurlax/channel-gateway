@@ -54,9 +54,8 @@ export function RouteConfiguration({
   );
   const [host, setHost] = useState(route?.host_id ?? hosts[0]?.id ?? "");
   const [agent, setAgent] = useState(route?.agent_id ?? "");
-  const [threadPolicy, setThreadPolicy] = useState<ThreadPolicy>(
-    route?.thread_policy ?? "conversation",
-  );
+  const [threadPolicy, setThreadPolicy] = useState<ThreadPolicy>(route?.thread_policy ?? "window");
+  const [historyLimit, setHistoryLimit] = useState(String(route?.history_limit ?? 30));
   const [busyPolicy, setBusyPolicy] = useState<BusyPolicy>(route?.busy_policy ?? "steer");
   const [fixedThread, setFixedThread] = useState(route?.fixed_thread_id ?? "");
   const [readChannels, setReadChannels] = useState<string[]>(() => {
@@ -123,6 +122,11 @@ export function RouteConfiguration({
       setValidation("Complete the agent destination.");
       return;
     }
+    if (!mcpOnly && (!/^\d+$/.test(historyLimit) || Number(historyLimit) > 100)) {
+      setTab("routing");
+      setValidation("Enter a history limit from 0 to 100.");
+      return;
+    }
     const body = {
       name: name.trim(),
       sources: sources.map(({ channel_id, conversation_kind, conversation_id }) => ({
@@ -133,6 +137,7 @@ export function RouteConfiguration({
       host_id: host,
       agent_id: mcpOnly ? null : agent.trim(),
       thread_policy: mcpOnly ? "conversation" : threadPolicy,
+      history_limit: Number(historyLimit),
       busy_policy: mcpOnly ? "steer" : busyPolicy,
       fixed_thread_id: !mcpOnly && threadPolicy === "fixed" ? fixedThread || null : null,
       read_channel_ids: readChannels,
@@ -228,6 +233,13 @@ export function RouteConfiguration({
                     disabled={busy}
                     items={[
                       [
+                        "window",
+                        t("Bounded history, shared environment"),
+                        t(
+                          "Start a new thread with recent messages and reuse this conversation's environments. Messages run in order.",
+                        ),
+                      ],
+                      [
                         "conversation",
                         t("Continue each private chat or group"),
                         t(
@@ -245,7 +257,7 @@ export function RouteConfiguration({
                         "message",
                         t("Start fresh for every message"),
                         t(
-                          "For independent questions and tasks. Each message starts a new thread without prior chat history; a new environment may also be created.",
+                          "Each message starts a fresh thread with bounded channel history; a new environment may also be created.",
                         ),
                       ],
                       [
@@ -258,31 +270,50 @@ export function RouteConfiguration({
                     ]}
                   />
                 </FormField>
-                <FormField id="busy-policy" label={t("Messages during execution")}>
-                  <Choice
-                    id="busy-policy"
-                    showSelectedDescription={false}
-                    value={busyPolicy}
-                    onChange={(value) => setBusyPolicy(value as BusyPolicy)}
+                <FormField id="history-limit" label={t("History message limit")}>
+                  <Input
+                    id="history-limit"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={historyLimit}
+                    onChange={(event) => setHistoryLimit(event.target.value)}
                     disabled={busy}
-                    items={[
-                      [
-                        "steer",
-                        t("Join current execution"),
-                        t(
-                          "Submit immediately. The Host incorporates the message at the next safe boundary.",
-                        ),
-                      ],
-                      [
-                        "queue",
-                        t("Queue for the next run"),
-                        t(
-                          "Wait for the current execution to finish, then process messages in order.",
-                        ),
-                      ],
-                    ]}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      "Previous incoming and sent messages. Default 30; 0 excludes history. Continuous threads retain upstream context.",
+                    )}
+                  </p>
                 </FormField>
+                {threadPolicy !== "window" && (
+                  <FormField id="busy-policy" label={t("Messages during execution")}>
+                    <Choice
+                      id="busy-policy"
+                      showSelectedDescription={false}
+                      value={busyPolicy}
+                      onChange={(value) => setBusyPolicy(value as BusyPolicy)}
+                      disabled={busy}
+                      items={[
+                        [
+                          "steer",
+                          t("Join current execution"),
+                          t(
+                            "Submit immediately. The Host incorporates the message at the next safe boundary.",
+                          ),
+                        ],
+                        [
+                          "queue",
+                          t("Queue for the next run"),
+                          t(
+                            "Wait for the current execution to finish, then process messages in order.",
+                          ),
+                        ],
+                      ]}
+                    />
+                  </FormField>
+                )}
                 {threadPolicy === "fixed" && (
                   <FormField id="fixed-thread" label={t("Shared thread")}>
                     <HostResourceSelect

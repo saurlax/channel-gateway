@@ -116,7 +116,11 @@ class Bridge:
             # Freeze target and payload BEFORE I/O. A lost receipt retries the exact
             # original command even after another receipt binds the route's thread.
             target = event["target"]
-            body = json.loads(event["body"]) if event["body"] else host_body(message, route)
+            body = (
+                json.loads(event["body"])
+                if event["body"]
+                else host_body(message, route, await self.store.delivery_history(event, route))
+            )
             if "connection_tools" in body.get("options", {}).get("overrides", {}):
                 # A frozen command may already have reached the Host. Retire it
                 # rather than replay a removed policy or change an idempotent body.
@@ -124,6 +128,11 @@ class Bridge:
                     event["id"], state="blocked", error="Legacy tool override retired; send a new message"
                 )
                 return
+            if not target and route.get("thread_policy") == "window":
+                previous = await self.store.environment_thread(route, message)
+                if previous:
+                    body["environments"] = await self.adapters.thread_environments(connection, previous)
+                body["delivery"] = "next_run"
             if not target:
                 target = await self.store.prepare_delivery(event, route, body)
             receipt = await self.adapters.host(connection, "POST", target, body=body, key=event["id"])

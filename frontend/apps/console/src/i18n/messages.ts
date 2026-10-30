@@ -87,6 +87,13 @@ export const chinese = {
   Channel: "渠道",
   "Route configuration": "路由配置",
   "Thread delivery": "Thread 投递",
+  "Bounded history, shared environment": "限定历史并复用环境",
+  "Start a new thread with recent messages and reuse this conversation's environments. Messages run in order.":
+    "新建 Thread 并携带最近消息，复用当前会话的环境。消息按顺序执行。",
+  "History message limit": "历史消息上限",
+  "Enter a history limit from 0 to 100.": "请输入 0 至 100 的历史消息上限。",
+  "Previous incoming and sent messages. Default 30; 0 excludes history. Continuous threads retain upstream context.":
+    "包含此前收到和已发送的消息。默认 30 条，0 表示不携带历史。连续线程仍会保留上游上下文。",
   "Conversation continuity": "上下文延续方式",
   "Continue each private chat or group": "按私聊或群聊延续",
   "Keep each group member separate": "群内每人单独延续",
@@ -97,8 +104,8 @@ export const chinese = {
     "日常对话。同一机器人账号下，每个私聊或群聊分别保留上下文；群内成员共用。",
   "For personal assistance in groups. Each member keeps separate history within that group, without sharing across groups or bot accounts.":
     "群内个人助手。每人分别保留上下文，不跨群聊或机器人账号共享。",
-  "For independent questions and tasks. Each message starts a new thread without prior chat history; a new environment may also be created.":
-    "独立问答或任务。每条消息新建 Thread，不延续上文；也可能新建运行环境。",
+  "Each message starts a fresh thread with bounded channel history; a new environment may also be created.":
+    "每条消息新建 Thread，并携带限定条数的聊天历史；也可能新建运行环境。",
   "For cross-source collaboration. All private chats and groups selected by this route share one thread and its history.":
     "跨来源协作。此路由选中的全部私聊和群聊共用一个 Thread 和上下文。",
   Agent: "Agent",

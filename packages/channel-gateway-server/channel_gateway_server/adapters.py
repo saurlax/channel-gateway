@@ -110,7 +110,7 @@ def event_key(message: Message) -> str:
     return "evt_" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:32]
 
 
-def host_body(message: dict, route: dict) -> dict:
+def host_body(message: dict, route: dict, history: list[dict] | None = None) -> dict:
     platform = message["address"]["channel"]
     proactive = platform in {"qq", "slack", "lark", "discord"} and "message.proactive" in route.get("action_grants", [])
     direct_media = platform in {"qq", "onebots"}
@@ -130,6 +130,7 @@ def host_body(message: dict, route: dict) -> dict:
         ],
         "default_delivery": "proactive" if proactive else "passive",
         "can_send_proactively": proactive,
+        "history_limit": route.get("history_limit", 30),
         "channel_output": {
             "tool": "send_message",
             "final_output_delivered": False,
@@ -158,6 +159,7 @@ def host_body(message: dict, route: dict) -> dict:
             + ([{"type": "url", "url": image["url"]} for image in message.get("images", [])] if direct_media else [])
             + ([{"type": "url", "url": item["url"]} for item in message.get("attachments", [])] if direct_media else [])
             + ([{"type": "json", "value": message["structured"]}] if message.get("structured") else [])
+            + ([{"type": "json", "value": {"channel_history": history}}] if history is not None else [])
         },
     }
     return body
@@ -166,6 +168,26 @@ def host_body(message: dict, route: dict) -> dict:
 class HttpAdapters:
     def __init__(self, client: httpx.AsyncClient):
         self.client = client
+
+    async def thread_environments(self, connection: dict, thread_id: str) -> list[dict]:
+        """Use public desired mounts; never silently replace an unavailable environment."""
+        page = await self.host(connection, "GET", resource_path("threads", thread_id) + "/environments")
+        items = page.get("items")
+        if not isinstance(items, list) or len(items) > 32 or page.get("next_cursor"):
+            raise AdapterError("Invalid Host environment list")
+        mounts = []
+        for item in items:
+            if not isinstance(item, dict) or not all(
+                isinstance(item.get(key), str) for key in ("name", "environment_id")
+            ):
+                raise AdapterError("Invalid Host environment mount")
+            directory = item.get("working_directory")
+            if directory is not None and not isinstance(directory, str):
+                raise AdapterError("Invalid Host environment directory")
+            mounts.append(
+                {"name": item["name"], "environment_id": item["environment_id"], "working_directory": directory}
+            )
+        return mounts
 
     async def choices(self, connection: dict, resource: str, cursor: str | None = None) -> dict:
         params = {"limit": "50"}

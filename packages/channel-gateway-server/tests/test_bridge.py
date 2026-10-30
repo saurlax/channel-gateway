@@ -41,6 +41,14 @@ class Upstreams:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
+        if request.method == "GET" and path.endswith("/environments"):
+            return httpx.Response(
+                200,
+                json={
+                    "items": [{"name": "workspace", "environment_id": "env_1", "working_directory": "/workspace"}],
+                    "next_cursor": None,
+                },
+            )
         if request.method == "GET" and path.endswith("/agents"):
             return httpx.Response(200, json=self.agent_page)
         if request.method == "GET" and path.endswith("/threads"):
@@ -122,6 +130,7 @@ def route(gateway, *, kind="group", source="output", conversation="123"):
         "/api/v1/routes",
         json={
             "name": "Test conversation",
+            "thread_policy": "conversation",
             "channel_id": channel["id"],
             "host_id": host["id"],
             "conversation_kind": kind,
@@ -1125,6 +1134,7 @@ def catchall(gateway, *, kind="private", host=None):
         "/api/v1/routes",
         json={
             "name": "Personal assistant",
+            "thread_policy": "conversation",
             "channel_id": channel["id"],
             "host_id": (host or configured_host)["id"],
             "conversation_kind": kind,
@@ -1310,6 +1320,7 @@ def create_rule(gateway, sources, **overrides):
         "/api/v1/routes",
         json={
             "name": "Sources",
+            "thread_policy": "conversation",
             "sources": sources,
             "host_id": host["id"],
             "agent_id": "agt_example",

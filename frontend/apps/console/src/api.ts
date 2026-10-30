@@ -19,7 +19,7 @@ export type RouteSource = {
   conversation_id: string;
 };
 export type BusyPolicy = "steer" | "queue";
-export type ThreadPolicy = "conversation" | "sender" | "fixed" | "message";
+export type ThreadPolicy = "conversation" | "sender" | "fixed" | "message" | "window";
 export type Route = {
   id: string;
   name: string;
@@ -35,6 +35,7 @@ export type Route = {
   parent_route_id: string | null;
   agent_id: string | null;
   thread_policy?: ThreadPolicy;
+  history_limit?: number;
   busy_policy?: BusyPolicy;
   fixed_thread_id?: string | null;
   enabled: boolean;

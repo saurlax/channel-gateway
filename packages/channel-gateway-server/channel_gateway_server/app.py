@@ -346,6 +346,9 @@ def create_app(
 
     @app.post("/api/v1/routes", status_code=201)
     async def add_route(body: RouteInput, _admin: None = Depends(admin)) -> dict:
+        host = await store.connection(body.host_id)
+        if host and host["kind"] == "a13n" and "thread_policy" not in body.model_fields_set:
+            body.thread_policy = "window"
         await validate_route_resources(body)
         if body.mcp_connection_id and any(
             route["host_id"] == body.host_id and route.get("mcp_connection_id") == body.mcp_connection_id

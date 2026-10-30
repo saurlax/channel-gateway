@@ -15,6 +15,16 @@ PNG, JPEG, GIF, and WebP are readable through MCP, bounded to 4 MiB per image. A
 not eagerly downloaded during ingestion. Expired, oversized, unsupported, or
 unavailable images produce a tool error without losing the original message.
 
+An explicit authorized `read` may request `representation: 'url'` for received
+QQ images/attachments and OneBot images. It returns the original public HTTPS
+source and `temporary: true` without downloading or checking its availability.
+The same current message/index read authority applies, including account grants
+and sender exclusions; no arbitrary URL or outgoing-media handle is accepted.
+Other channels retain their credentialed content reads and reject URL mode.
+Signed URLs are private bearer capabilities: keep them out of channel text and
+ordinary history. Gateway revocation blocks new lookups but cannot revoke a URL
+already returned; expiry is controlled by the channel and no renewal is promised.
+
 ## Projection and Host delivery
 
 QQ projects image `attachments`; OneBot projects `image` segments from arrays or
@@ -25,6 +35,10 @@ input segments are not downloadable attachments. Unsupported attachments remain
 in the raw journal. More than four supported images invalidates projection rather
 than silently dropping content. Ordinary OneBot `face` segments project as
 `[face:ID]` text; sending faces and reacting to an existing message are distinct.
+QQ `faceType` markers render as readable emoji/sticker labels, including in quoted
+content. They never suppress accompanying image attachments or invent pixels for
+an emoji that has no attachment. JPEG and GIF sticker attachments use the same
+image projection and Host URL parts as ordinary pictures.
 
 An a13n submission includes the verified channel context, source message ID,
 image count, and text, followed by native `type: url` content parts. The authorized

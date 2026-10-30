@@ -31,6 +31,25 @@ QQ_INTENTS = sum(1 << bit for bit in (0, 10, 12, 25, 26, 27, 30))
 QQ_ALL_INTENTS = sum(1 << bit for bit in (0, 1, 9, 10, 12, 18, 19, 25, 26, 27, 28, 29, 30))
 
 
+def face_text(text: str) -> str:
+    """Render face markers as text; their accompanying image attachments remain authoritative."""
+
+    def replace(match):
+        if match[1] == "6":
+            return "[QQ sticker]"
+        label = ""
+        if len(match[3]) <= 4096:
+            try:
+                value = json.loads(base64.b64decode(match[3], validate=True))
+                if isinstance(value, dict) and isinstance(value.get("text"), str):
+                    label = value["text"][:256]
+            except (ValueError, UnicodeError):
+                pass
+        return f"[QQ emoji: {label or match[2]}]"
+
+    return re.sub(r'<faceType=(\d+),faceId="(\d+)",ext="([^"]*)">', replace, text)
+
+
 def signing_key(secret: str) -> Ed25519PrivateKey:
     seed = secret.encode("ascii")
     if not seed:
@@ -124,7 +143,7 @@ def qq_message(event: dict, connection: dict) -> Message | None:
     text = data.get("content") or ""
     if not isinstance(text, str):
         raise ValueError("Invalid QQ message text")
-    text = re.sub(r"<@!?" + re.escape(str(connection.get("self_id") or "")) + r">", "", text).strip()
+    text = face_text(re.sub(r"<@!?" + re.escape(str(connection.get("self_id") or "")) + r">", "", text)).strip()
     raw_attachments = list(data.get("attachments") or [])
     structured = {}
     if isinstance(data.get("ark_data"), dict):
@@ -138,7 +157,7 @@ def qq_message(event: dict, connection: dict) -> Message | None:
             if not isinstance(item, dict):
                 continue
             if isinstance(item.get("content"), str):
-                output.append(item["content"])
+                output.append(face_text(item["content"]))
             raw_attachments.extend(item.get("attachments") or [])
             if item.get("msg_elements"):
                 output.extend(nested(item["msg_elements"], depth + 1))
@@ -189,6 +208,11 @@ def qq_message(event: dict, connection: dict) -> Message | None:
         if kind == "guild_dm"
         else None
     )
+    mentions = data.get("mentions")
+    bot_mentioned = event_name in {"GROUP_AT_MESSAGE_CREATE", "AT_MESSAGE_CREATE"} or (
+        isinstance(mentions, list)
+        and any(isinstance(mention, dict) and mention.get("is_you") is True for mention in mentions)
+    )
     return Message(
         address=ChannelAddress(channel="qq", account_id=connection["id"], conversation_id=f"{kind}:{conversation}"),
         source_message_id=identifier(data["id"], max_length=1024),
@@ -199,9 +223,7 @@ def qq_message(event: dict, connection: dict) -> Message | None:
         structured=structured,
         guild_id=identifier(guild_id) if guild_id else None,
         native_reference_id=reference_id,
-        bot_mentioned=event_name in {"GROUP_AT_MESSAGE_CREATE", "AT_MESSAGE_CREATE"}
-        if kind in {"group", "guild"}
-        else None,
+        bot_mentioned=bot_mentioned if kind in {"group", "guild"} else None,
         occurred_at=datetime.fromisoformat(data["timestamp"]),
     )
 

@@ -47,6 +47,13 @@ Cursors select records strictly before the oldest returned persistence time and
 ID; each page reapplies current access and remains chronological. A full page
 may return a cursor whose following page is empty. Invalid cursors fail.
 
+Gateway media reads additionally accept `representation: 'content' | 'url'`
+(default `content`). URL mode is limited to QQ images/attachments and OneBot
+images, with the same current source-message read checks. It returns a temporary
+original URL without fetching or staging bytes; ordinary history remains URL-free.
+Platform-source media reads do not support this option. See the private URL
+handling contract in [images and reactions](05-images-and-reactions.md).
+
 `send_message.content` is a typed array containing at most one text part and one
 media part. Text has `type: 'text'`, `text`, and optional `format` (`text` or
 `markdown`). Media has `type` (`image`, `audio`, `video`, `file`), `media_type`,
@@ -55,6 +62,12 @@ media item, with guild media restricted to images; OneBot supports inline images
 Weixin supports text only. Slack/Lark/Discord accept inline image/audio/video/file
 parts under their [declared restrictions](../docs/slack-lark-discord.md).
 Unsupported combinations fail before queuing anything.
+QQ audio/video/file parts must be sent without a nonempty text caption. A request
+combining them is rejected before queuing or uploading with guidance to make
+separate text and media calls. CG never silently drops the text or implicitly
+splits one request into two messages. `capabilities.send.media_caption_types`
+lists which media kinds accept accompanying text; existing QQ image behavior is
+unchanged.
 QQ/OneBot media cannot currently combine with Markdown, a quoted reply, native options, or
 a stream. This does not claim future adapters support these same combinations.
 QQ native options are `native: {'qq': {'keyboard': ..., 'embed': ..., 'ark': ...}}`;

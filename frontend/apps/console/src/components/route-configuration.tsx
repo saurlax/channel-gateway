@@ -236,7 +236,7 @@ export function RouteConfiguration({
                         "window",
                         t("Bounded history, shared environment"),
                         t(
-                          "Start a new thread with recent messages and reuse this conversation's environments. Messages run in order.",
+                          "Join the active run. When idle, start a fresh thread with recent history and reuse this conversation's environments.",
                         ),
                       ],
                       [

@@ -88,8 +88,8 @@ export const chinese = {
   "Route configuration": "路由配置",
   "Thread delivery": "Thread 投递",
   "Bounded history, shared environment": "限定历史并复用环境",
-  "Start a new thread with recent messages and reuse this conversation's environments. Messages run in order.":
-    "新建 Thread 并携带最近消息，复用当前会话的环境。消息按顺序执行。",
+  "Join the active run. When idle, start a fresh thread with recent history and reuse this conversation's environments.":
+    "运行中注入新消息；空闲时新建 Thread，携带最近历史并复用当前会话的环境。",
   "History message limit": "历史消息上限",
   "Enter a history limit from 0 to 100.": "请输入 0 至 100 的历史消息上限。",
   "Previous incoming and sent messages. Default 30; 0 excludes history. Continuous threads retain upstream context.":

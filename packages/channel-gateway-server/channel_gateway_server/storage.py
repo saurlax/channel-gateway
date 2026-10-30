@@ -852,7 +852,7 @@ class Store:
                 else route.get("busy_policy", "steer")
             )
             if route.get("thread_policy") == "window":
-                policy = "queue"
+                policy = "steer"
             if policy == "steer" or not any(
                 event["state"] == "submitted" and event["sequence"] < head["sequence"] for event in events
             ):
@@ -1156,7 +1156,9 @@ class Store:
                 (*fields.values(), identifier),
             )
 
-    async def prepare_delivery(self, event: dict, route: dict, body: dict) -> str:
+    async def prepare_delivery(
+        self, event: dict, route: dict, body: dict, *, active_thread_id: str | None = None
+    ) -> str:
         """Freeze a target, payload and binding scope before any external request."""
         key = thread_binding_key(route, json.loads(event["message"]))
         owner = route.get("parent_route_id") or route["id"]
@@ -1180,7 +1182,7 @@ class Store:
                     current = await cursor.fetchone()
                 thread_id = thread_id or (current[0] if current else None)
             if policy == "window":
-                thread_id = None
+                thread_id = active_thread_id
             target = "/threads/" + quote(thread_id, safe="") + "/inbox" if thread_id else "/threads"
             await db.execute(
                 "INSERT INTO event_thread_bindings(event_id,binding_key,route_id) VALUES (?,?,?)",

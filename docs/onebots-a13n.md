@@ -79,10 +79,11 @@ include bounded history with shared environments, ongoing chats, personal
 assistance in groups, independent tasks, and cross-source collaboration. Each option includes a description; the selected
 option's description remains below the selector.
 
-- **Bounded history, shared environment** is the default. Each message gets a
+- **Bounded history, shared environment** is the default. When idle, a message gets a
   fresh thread with the latest channel history, reusing the same conversation's
-  environment mounts. Files stay in the environment while model context starts
-  fresh. Messages execute in order within each conversation. The first message
+  environment mounts. While a Thread has an active run, new messages join it
+  through `steer`; the history window is not attached again. Files stay in the
+  environment while model context starts fresh on each idle-to-active transition. The first message
   follows the Agent's normal environment setup. Environment lookup or mount
   failures stop delivery rather than silently creating an empty replacement.
 - **Continue each private chat or group** keeps one thread for each source channel
@@ -131,8 +132,8 @@ prompt changes.
 
 ### Messages during execution
 
-Bounded-history delivery always processes each conversation in order and hides
-this selector. The following options apply to the other thread policies.
+Bounded-history delivery always steers into the active Thread and hides
+this selector. When idle it starts a fresh Thread with the history window. The following options apply to the other thread policies.
 
 In **Routing → Destination → Messages during execution**, choose:
 

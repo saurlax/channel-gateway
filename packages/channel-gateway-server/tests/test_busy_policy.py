@@ -74,6 +74,16 @@ class BusyHost:
                 self.fail_after_accept = False
                 raise httpx.ReadTimeout("Lost acceptance receipt")
             return httpx.Response(201, json=receipt)
+        if (
+            request.method == "GET"
+            and "/threads/" in path
+            and "/inbox" not in path
+            and not path.endswith("/environments")
+        ):
+            thread = path.rsplit("/", 1)[-1]
+            return httpx.Response(
+                200, json={"id": thread, "current_run_id": self.active.get(thread), "archived_at": None}
+            )
         if "/inbox/" in path:
             if self.fail_entry_read:
                 raise httpx.ReadTimeout("Entry assignment unavailable")
@@ -410,3 +420,56 @@ def test_many_steers_are_submitted_fifo_without_waiting_for_run_end(busy):
     tick(gateway)
     replies = gateway[0].get("/api/v1/replies").json()
     assert replies == []
+
+
+@pytest.mark.parametrize("stored_policy", ["steer", "queue"])
+def test_window_joins_active_run_without_repeating_history_then_rotates_when_idle(busy, stored_policy):
+    gateway, host, _ = busy
+    configure_sources(busy, thread="window", policy=stored_policy)
+    first = emit(busy, 101, text="First")
+    tick(gateway)
+    second = emit(busy, 102, text="New input")
+    tick(gateway)
+    assert len(host.posts) == 2
+    assert host.posts[-1].url.path == "/api/v1/threads/busy_thread_1/inbox"
+    body = json.loads(host.posts[-1].content)
+    assert body["delivery"] == "steer"
+    assert "environments" not in body
+    assert [part["type"] for part in body["payload"]["content"]] == ["text"]
+    assert "First" not in body["payload"]["content"][0]["text"]
+    host.incorporate()
+    tick(gateway)
+    rows = {row["id"]: row for row in gateway[0].get("/api/v1/events").json()}
+    assert rows[first]["run_id"] == rows[second]["run_id"] == "busy_run_1"
+    host.complete("busy_run_1")
+    # Local submitted states can lag behind the Host; inspect the live Thread.
+    emit(busy, 103, text="Idle input")
+    tick(gateway)
+    assert host.posts[-1].url.path == "/api/v1/threads"
+    body = json.loads(host.posts[-1].content)
+    assert body["delivery"] == "next_run"
+    assert body["environments"][0]["environment_id"] == "env_1"
+    history = body["payload"]["content"][-1]["value"]["channel_history"]
+    assert [item["text"] for item in history] == ["First", "New input"]
+
+
+def test_window_lost_steer_receipt_retries_frozen_inbox_after_run_finishes(busy):
+    gateway, host, _ = busy
+    configure_sources(busy, thread="window")
+    emit(busy, 201)
+    tick(gateway)
+    host.fail_after_accept = True
+    emit(busy, 202)
+    tick(gateway)
+    frozen = host.posts[-1]
+    assert frozen.url.path.endswith("/busy_thread_1/inbox")
+    host.incorporate()
+    host.complete("busy_run_1")
+    client, app, *_ = gateway
+    client.portal.call(app.state.store.close)
+    client.portal.call(app.state.store.open)
+    tick(gateway)
+    retried = host.posts[-1]
+    assert retried.url == frozen.url
+    assert retried.content == frozen.content
+    assert retried.headers["Idempotency-Key"] == frozen.headers["Idempotency-Key"]

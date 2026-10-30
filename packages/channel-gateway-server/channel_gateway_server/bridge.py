@@ -116,10 +116,20 @@ class Bridge:
             # Freeze target and payload BEFORE I/O. A lost receipt retries the exact
             # original command even after another receipt binds the route's thread.
             target = event["target"]
+            active_thread = None
+            previous = None
+            if not target and route.get("thread_policy") == "window":
+                previous = await self.store.environment_thread(route, message)
+                if previous:
+                    thread = await self.adapters.host(connection, "GET", resource_path("threads", previous))
+                    if thread.get("current_run_id"):
+                        active_thread = previous
             body = (
                 json.loads(event["body"])
                 if event["body"]
-                else host_body(message, route, await self.store.delivery_history(event, route))
+                else host_body(
+                    message, route, None if active_thread else await self.store.delivery_history(event, route)
+                )
             )
             if "connection_tools" in body.get("options", {}).get("overrides", {}):
                 # A frozen command may already have reached the Host. Retire it
@@ -129,12 +139,14 @@ class Bridge:
                 )
                 return
             if not target and route.get("thread_policy") == "window":
-                previous = await self.store.environment_thread(route, message)
-                if previous:
-                    body["environments"] = await self.adapters.thread_environments(connection, previous)
-                body["delivery"] = "next_run"
+                if active_thread:
+                    body["delivery"] = "steer"
+                else:
+                    if previous:
+                        body["environments"] = await self.adapters.thread_environments(connection, previous)
+                    body["delivery"] = "next_run"
             if not target:
-                target = await self.store.prepare_delivery(event, route, body)
+                target = await self.store.prepare_delivery(event, route, body, active_thread_id=active_thread)
             receipt = await self.adapters.host(connection, "POST", target, body=body, key=event["id"])
             await self.store.submitted(event["id"], route["id"], receipt)
             self.wake.set()

@@ -15,7 +15,14 @@ gateway = gateway_fixture
 def context(request):
     text = json.loads(request.content)["payload"]["content"][0]["text"]
     value = json.loads(text.split("\n", 1)[1].split("\n\nMessage:\n", 1)[0])
-    value["history"] = json.loads(request.content)["payload"]["content"][-1]["value"]["channel_history"]
+    value["history"] = next(
+        (
+            part["value"]["channel_history"]
+            for part in json.loads(request.content)["payload"]["content"]
+            if part["type"] == "json" and "channel_history" in part["value"]
+        ),
+        [],
+    )
     return value
 
 
@@ -137,7 +144,7 @@ def test_legacy_upgrade_is_once_and_preserves_frozen_requests(gateway):
     assert client.portal.call(partial(app.state.store.route, configured["id"]))["thread_policy"] == "sender"
 
 
-def test_window_waits_for_active_work_and_keeps_conversation_environments_separate(gateway):
+def test_window_steers_active_work_without_repeating_history_and_keeps_conversations_separate(gateway):
     _, _, upstream, channel, _ = gateway
     from .test_bridge import create_rule, source
 
@@ -149,16 +156,21 @@ def test_window_waits_for_active_work_and_keeps_conversation_environments_separa
     webhook(gateway, message_id=2)
     webhook(gateway, conversation=124, message_id=3)
     tick(gateway)
-    assert len(submissions(gateway)) == 2
-    # Another group can start while the first group's second input waits.
-    assert [context(r)["conversation_id"] for r in submissions(gateway)] == ["123", "124"]
+    requests = submissions(gateway)
+    assert len(requests) == 3
+    assert requests[1].url.path == "/api/v1/threads/thread_1/inbox"
+    assert json.loads(requests[1].content)["delivery"] == "steer"
+    assert all(part["type"] != "json" for part in json.loads(requests[1].content)["payload"]["content"])
+    assert requests[2].url.path == "/api/v1/threads"
     upstream.run_status = "completed"
     tick(gateway)
+    webhook(gateway, message_id=4)
     tick(gateway)
-    assert len(submissions(gateway)) == 3
+    assert submissions(gateway)[-1].url.path == "/api/v1/threads"
     lookups = [r.url.path for r in upstream.requests if r.url.path.endswith("/environments")]
     assert lookups == ["/api/v1/threads/thread_1/environments"]
     assert context(submissions(gateway)[-1])["conversation_id"] == "123"
+    assert len(context(submissions(gateway)[-1])["history"]) == 2
 
 
 def test_failed_environment_lookup_does_not_submit_a_replacement_thread(gateway):

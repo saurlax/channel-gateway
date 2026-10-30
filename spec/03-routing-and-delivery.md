@@ -52,7 +52,7 @@ For an `a13n` Host, `thread_policy` chooses delivery context:
 
 | Policy | Thread scope |
 | --- | --- |
-| `window` (default for new a13n routes) | A fresh thread per input, with bounded channel history and the previous thread's environments mounted in the same concrete conversation |
+| `window` (default for new a13n routes) | Steer new messages into the active Thread; when idle, start a fresh thread with bounded channel history and the same conversation's environment mounts |
 | `conversation` | One thread for each concrete channel account/kind/conversation |
 | `sender` | One thread per verified sender within each concrete conversation; the same sender in another group or account is independent |
 | `fixed` | All sources of the configured route share one thread; select `fixed_thread_id` or create it on the first submitted message |
@@ -102,7 +102,8 @@ per-message routes already start fresh for every input.
 ## Bounded input history and environment reuse
 
 `history_limit` is an integer from 0 to 100, default 30, editable on routes.
-Each newly prepared a13n input carries up to that many previous incoming and
+Each newly prepared a13n input, except active-window steers, carries up to that
+many previous incoming and
 confirmed sent messages in chronological order as a `channel_history` JSON
 content part. The current message is separate and does not count toward the
 limit. The snapshot ends before the current event's `(created_at, id)` cursor;
@@ -116,8 +117,13 @@ text, direction, source IDs, timestamps and media counts, never raw provider
 payloads, credentials or private reply context. A separate JSON part avoids the
 Host's per-text-part size limit. This bounds message count, not token usage.
 
-`window` always creates a thread with `POST /threads`, without prior Host model
-history. Before freezing a new request, CG reads the previous accepted thread's
+`window` reads the latest accepted Thread with `GET /threads/{id}` before
+preparing an input. A non-null `current_run_id` selects that Thread's inbox with
+`delivery: steer`. This input contains only the new message/context/media, without
+a repeated `channel_history` part or environment mounts. The Host owns safe-boundary
+incorporation and a race where its run ends between lookup and inbox acceptance.
+When `current_run_id` is null, `window` creates a thread with `POST /threads`,
+without prior Host model history. Before freezing a new request, CG reads the previous accepted thread's
 public `GET /threads/{id}/environments` mounts and supplies `environments` with
 name, environment ID and working directory to the new thread. This preserves
 workspace files and environment identity; it does not preserve thread-local
@@ -126,13 +132,13 @@ applies. Subsequent environment lookup/mount failures are delivery failures,
 never a silent fallback to creating a replacement environment. No environments
 are shared across concrete conversations. Reset detaches the environment origin.
 
-Window inputs execute FIFO within each concrete conversation, waiting for earlier
-submitted work to finish even if `busy_policy` is `steer`. This prevents overlapping
-CG runs on its shared environments. Confirmed replies preceding the current
-event are eligible for its history snapshot. Other conversations remain independent. Snapshot and mount selection
-are frozen with the Host request and reused on every retry. Frozen requests made
-before upgrade may continue using their original threads. Existing upstream
-threads/environments and gateway history are not deleted.
+Window submissions retain FIFO admission and never overtake an unconfirmed
+submission in their conversation. Accepted work does not block newer steers.
+Other conversations remain independent. Snapshot, active/idle destination and
+mount selection are frozen with the Host request and reused on every retry,
+even if the run completes before a lost receipt is retried. Frozen requests made
+before this change retain their original bodies and destinations. Existing
+upstream threads/environments and gateway history are not deleted.
 
 The other thread policies remain explicit choices. Their `history_limit` bounds
 only attached channel history; continuing Host threads retain their own model
@@ -141,7 +147,8 @@ a manual compaction endpoint or claim that compaction enforces a message count.
 
 ## Messages during execution
 
-`busy_policy` applies to a13n Hosts outside `window`, which always queues:
+`busy_policy` applies to a13n Hosts outside `window`, which always steers into
+an active Thread and starts fresh when idle:
 
 | Policy | Submission behavior |
 | --- | --- |

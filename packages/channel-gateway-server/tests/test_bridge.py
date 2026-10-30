@@ -59,7 +59,11 @@ class Upstreams:
                 return httpx.Response(404, json={"detail": "Private upstream error"})
             return httpx.Response(
                 200,
-                json={"id": identifier, "archived_at": "2026-01-01" if identifier in self.archived_threads else None},
+                json={
+                    "id": identifier,
+                    "archived_at": "2026-01-01" if identifier in self.archived_threads else None,
+                    "current_run_id": "run_active" if self.run_status in {"accepted", "running", "waiting"} else None,
+                },
             )
         if path.endswith("send_msg"):
             if self.fail_send:

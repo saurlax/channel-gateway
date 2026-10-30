@@ -115,8 +115,8 @@ readable bot accounts independently, granting reads across their received
 conversations. Agent tools are configured in the Agent Host interface and
 CG always preserves that configuration. Select Agents from the Host list. Thread
 delivery defaults to fresh threads with the latest 30 channel-history messages,
-reusing environments within each source conversation and processing its messages
-in order. The history limit is configurable from 0 to 100. Continuous conversation,
+reusing environments within each source conversation. Messages arriving during
+an active run join that Thread with `steer`, without repeating the history window. The history limit is configurable from 0 to 100. Continuous conversation,
 per-sender, fixed, and independent per-message choices remain available. For
 continuous-thread a13n routes, new messages join the
 current run at a safe boundary by default, with a queue-until-finished option under

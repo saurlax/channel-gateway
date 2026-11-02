@@ -20,6 +20,7 @@ def test_headless_service_exposes_health_status_and_openapi(tmp_path: Path) -> N
             "slack",
             "lark",
             "discord",
+            "github",
             "a13n",
             "mcp",
         }

@@ -242,3 +242,7 @@ filters stay within the exact route; arbitrary native destinations are refused.
 A cached native message can become an action target only while its history grant
 and provenance remain valid. Output grants are also rechecked when reading
 operation results and intermediate upload effects.
+
+## GitHub authorization
+
+GitHub adds a channel-level, default-deny caller/repository/action policy before Host activation, independent of source routes and upstream token scopes. The [GitHub contract](08-github.md) owns its numeric IDs, owner-only mode, revalidation and secret isolation.

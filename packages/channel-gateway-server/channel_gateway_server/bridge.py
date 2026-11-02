@@ -106,6 +106,18 @@ class Bridge:
         if not route or not route_allows_sender(route, message["sender_id"]):
             await self.store.update_event(event["id"], state="blocked", error="Route permission revoked")
             return
+        channel = await self.store.connection(route["channel_id"])
+        if channel and channel["kind"] == "github":
+            from .channels.github import authorize
+
+            try:
+                github = message["structured"]["github"]
+                authorize(channel, message["sender_id"], github["repository_id"], "invoke")
+                if github.get("requested_action") == "review":
+                    authorize(channel, message["sender_id"], github["repository_id"], "review")
+            except (SendBlocked, KeyError):
+                await self.store.update_event(event["id"], state="blocked", error="GitHub invocation authority revoked")
+                return
         connection = await self.store.connection(route["host_id"])
         if not connection:
             raise AdapterError("Host connection is missing")

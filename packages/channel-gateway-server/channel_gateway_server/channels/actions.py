@@ -80,8 +80,26 @@ def reaction_authority(route: dict, connection_kind: str) -> str:
     raise SendBlocked("This route does not authorize message.react")
 
 
-async def action_value(manager, route: dict, connection: dict, operation: str, args: dict):
+async def action_value(manager, route: dict, connection: dict, operation: str, args: dict, action_id: str = ""):
     store = manager.store
+    if operation == "github.create_pr":
+        from .github import authorized_context
+
+        if connection["kind"] != "github":
+            raise SendBlocked("GitHub action requires a GitHub channel")
+        context = await authorized_context(store, connection, route, "create_pr")
+        if args["context"] != context:
+            raise SendBlocked("GitHub invocation changed after action admission")
+
+        async def check():
+            await manager.check_action_access(connection, route)
+            if await authorized_context(store, connection, route, "create_pr") != context:
+                raise SendBlocked("GitHub invocation changed before PR creation")
+
+        async def effect(stage, reference):
+            await store.record_operation_effect(action_id, stage, reference)
+
+        return await manager.github(connection).create_pr(context, args, check, effect)
     if operation.startswith("resource:"):
         return await execute_operation(
             store, manager.qq(connection), route, OPERATIONS[operation.removeprefix("resource:")], args
@@ -229,7 +247,7 @@ async def execute_action(manager, action: dict) -> None:
         else:
             require_grant(route, grant)
         await manager.check_action_access(connection, route)
-        result = await action_value(manager, route, connection, action["operation"], args)
+        result = await action_value(manager, route, connection, action["operation"], args, action["id"])
     except SendBlocked as error:
         await store.finish_channel_action(action["id"], "blocked", error=str(error))
     except OperationRejected as error:

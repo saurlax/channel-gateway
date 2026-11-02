@@ -1,4 +1,5 @@
 export const chinese = {
+  "New private key (optional)": "新私钥（可选）",
   "Reset conversations": "重置会话",
   "Reset this route's conversations?": "重置此路由的全部会话？",
   "Confirm reset": "确认重置",

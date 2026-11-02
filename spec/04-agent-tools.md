@@ -243,3 +243,7 @@ receipt remains unknown, with known partial effects retained for inspection;
 there are no automatic write retries. Existing queued work and old identifiers
 are preserved. Unsupported native options, search and streams for the new
 adapters fail before any publication is queued.
+
+## GitHub native operations
+
+The [GitHub contract](08-github.md) adds finite native PR reads, comment/review message options and draft PR actions under the same five tools. Channel actions and current caller context are checked independently; discovery never grants authority. Agent final output remains private.

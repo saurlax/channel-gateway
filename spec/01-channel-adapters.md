@@ -7,7 +7,7 @@ contract and per-platform evidence for additional adapters are linked from
 [Multi-platform channel integration](07-channel-integration.md).
 
 A channel connection represents one bot account. Its `kind` is `onebots`, `qq`,
-`weixin`, `slack`, `lark`, or `discord`; `a13n` and `mcp` connections are Agent Hosts. There is no instance discovery,
+`weixin`, `slack`, `lark`, `discord`, or `github`; `a13n` and `mcp` connections are Agent Hosts. There is no instance discovery,
 bot multi-selection, or implicit aggregation. Several connections can target the
 same OneBots instance, each with an independent account binding.
 
@@ -307,3 +307,7 @@ streams, cards, thread inheritance, Slack Socket Mode, Lark WebSocket workers
 and Discord interaction callbacks remain unimplemented. The integration design
 continues to own those targets. Simulated protocol/failure checks are not live
 installation or application-permission acceptance.
+
+## GitHub
+
+The [GitHub contract](08-github.md) owns App installation callbacks and machine-user notification polling, shared projection, caller/repository checks and native publication. GitHub setup is API-only; the console has no GitHub creation form.

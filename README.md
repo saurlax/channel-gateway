@@ -40,6 +40,12 @@ resumable Gateway. Their protocol tests use simulated endpoints; live installati
 acceptance is still required. Search, cards and streams for these adapters remain
 unimplemented.
 
+[GitHub integration](docs/github.md) is available through the management API:
+App installation webhooks or machine-user classic-PAT notification polling,
+with numeric caller/repository policies, explicit comments/reviews and draft PR
+publication. It reuses the existing Host execution backend. GitHub protocol tests
+use simulated APIs; real-account installation acceptance has not been performed.
+
 ## How it fits together
 
 The implemented bridge separates channel ingestion, host execution, and

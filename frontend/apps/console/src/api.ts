@@ -2,9 +2,10 @@ export type ConversationKind = "private" | "group" | "guild" | "guild_dm" | "cha
 export type Connection = {
   id: string;
   name: string;
-  kind: "onebots" | "qq" | "weixin" | "slack" | "lark" | "discord" | "a13n" | "mcp";
+  kind: "onebots" | "qq" | "weixin" | "slack" | "lark" | "discord" | "github" | "a13n" | "mcp";
   transport?: string;
   app_id?: string | null;
+  github?: { mode: "app" | "machine_user" } | null;
   qq_intents?: number | null;
   discord_intents?: number | null;
   state?: string;

@@ -400,3 +400,7 @@ position; refresh follows new entries only when already near the bottom.
 Route rows expose one Edit action with token rotation and enable/disable
 settings on its dedicated edit page. Failed incoming deliveries retain their administrator
 retry action in conversation history.
+
+## GitHub conversations
+
+GitHub uses `thread:REPOSITORY_ID:NUMBER` and the existing Host workflow and durable ledgers. The [GitHub contract](08-github.md) owns callback/notification deduplication, invocation snapshots, review freshness and partial PR publication effects.

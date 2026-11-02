@@ -12,7 +12,7 @@ cross-channel route reads. The contracts below describe that supported baseline.
 claim a complete RBAC system or access outside assigned routes.
 QQ includes guild/DM routing, media, structured messages, streaming, and scoped
 platform resource actions. OneBot supports images and optional message reactions.
-Weixin is text-only. Application permissions remain separate from gateway support.
+Weixin is text-only. The API-configured [GitHub adapter](08-github.md) adds App callbacks and machine-user notifications, scoped comments/reviews and draft PR publication; live GitHub acceptance remains unverified. Application permissions remain separate from gateway support.
 
 The [multi-platform integration design](07-channel-integration.md) specifies the
 target contract for additional adapters. Its implementation-progress section identifies the current adapter slice; all

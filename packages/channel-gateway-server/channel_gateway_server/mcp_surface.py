@@ -10,6 +10,7 @@ from .channels.actions import proactive_authority, tool_message_allowed
 from .channels.manager import capabilities
 from .channels.platforms.common import PLATFORMS
 from .channels.qq_operations import OPERATIONS, applicable, check_json
+from .mcp_github import GitHubMessage
 from .media import MAX_MEDIA_BYTES
 
 READS = {
@@ -103,6 +104,19 @@ def install_tools(server, operations, store, authorized_route, readable_route):
             except ValueError:
                 pass
         can_send = writable and tool_message_allowed(route, connection)
+        github_authority = {}
+        if kind == "github":
+            from .channels.common import SendBlocked
+            from .channels.github import authorized_context
+
+            for action in ("read", "comment", "review", "create_pr"):
+                try:
+                    await authorized_context(store, connection, route, action)
+                    github_authority[action] = writable
+                except SendBlocked:
+                    github_authority[action] = False
+            github_authority["review"] = github_authority["review"] and github_authority["read"]
+            can_send = can_send and (github_authority["comment"] or github_authority["review"])
         return {
             "route_id": route["id"],
             "platform": kind,
@@ -144,7 +158,11 @@ def install_tools(server, operations, store, authorized_route, readable_route):
                 if platform
                 else [],
                 "max_media_bytes": adapter.get("max_media_bytes", MAX_MEDIA_BYTES if kind == "qq" else 4 * 1024 * 1024),
-                "native_options_schema": QQMessageOptions.model_json_schema() if kind == "qq" else None,
+                "native_options_schema": QQMessageOptions.model_json_schema()
+                if kind == "qq"
+                else GitHubMessage.model_json_schema()
+                if kind == "github"
+                else None,
             },
             "actions": {
                 "reaction": {
@@ -165,6 +183,7 @@ def install_tools(server, operations, store, authorized_route, readable_route):
                     "authorized": can_send,
                 },
             },
+            "native_authority": github_authority,
             "upstream_permissions": "not_verified; platform permissions, reply windows and rate limits still apply",
         }
 
@@ -183,6 +202,20 @@ def install_tools(server, operations, store, authorized_route, readable_route):
         if resource == "capabilities":
             return description
         native = []
+        if description["platform"] == "github" and not route["id"].startswith("read_"):
+            native = [
+                {
+                    "name": "github.pull_request",
+                    "kind": "read",
+                    "schema": operations.schema("read_github_pull_request"),
+                },
+                {
+                    "name": "github.create_pr",
+                    "kind": "action",
+                    "schema": operations.schema("create_github_pull_request"),
+                },
+                {"name": "github.message", "kind": "message", "schema": operations.schema("send_github_message")},
+            ]
         if description["platform"] == "qq" and not route["id"].startswith("read_"):
             native = [
                 {**item.describe(route), "name": "qq." + item.name}
@@ -211,6 +244,10 @@ def install_tools(server, operations, store, authorized_route, readable_route):
         source: Literal["gateway", "platform"] | None = None,
     ):
         """Read history, received media, sanitized events, or native resources. For gateway QQ images/attachments and OneBot images, arguments.representation='url' returns a temporary source URL without downloading; default 'content' returns typed bytes. Keep signed URLs private; reuse them directly with media tools. Discover schemas first. Messages default to incomplete gateway history."""
+        if resource == "native" and (arguments or {}).get("operation") == "github.pull_request":
+            if source == "gateway" or set(arguments or {}) - {"operation", "parameters"}:
+                raise ValueError("Use the registered GitHub platform read")
+            return await operations.call("read_github_pull_request", (arguments or {}).get("parameters"), route_id)
         if resource == "native":
             if source == "gateway":
                 raise ValueError("Native resources use source='platform'")
@@ -246,6 +283,27 @@ def install_tools(server, operations, store, authorized_route, readable_route):
     ) -> dict:
         """Queue content: text plus at most one media part. QQ audio/video/file cannot include text: send text and media in separate calls; combinations fail before queuing/uploading. Text has text/format; media has type, media_type, filename and exactly one of data_base64/url. QQ cards/keyboards use native={'qq': {...}}. Poll get_operation; queued is not delivery."""
         check_json(native or {})
+        github_route = await authorized_route(route_id)
+        github_connection = await store.connection(github_route["channel_id"])
+        if github_connection and github_connection["kind"] == "github":
+            if (
+                delivery is not None
+                or reply_to is not None
+                or stream is not None
+                or len(content) != 1
+                or not isinstance(content[0], TextPart)
+            ):
+                raise ValueError("GitHub accepts one text part and native GitHub options")
+            if native is not None and set(native) != {"github"}:
+                raise ValueError("Use native.github options")
+            return receipt(
+                await operations.call(
+                    "send_github_message",
+                    {"text": content[0].text, "options": (native or {}).get("github", {})},
+                    route_id,
+                ),
+                "message",
+            )
         if native is not None and (set(native) != {"qq"} or not isinstance(native["qq"], dict)):
             raise ValueError("Choose registered native options from discover(resource='capabilities')")
         options = QQMessageOptions.model_validate((native or {}).get("qq", {})).model_dump()
@@ -343,6 +401,13 @@ def install_tools(server, operations, store, authorized_route, readable_route):
         route_id: str | None = None,
     ) -> dict:
         """Queue a non-message action under its own grants. Use discover(resource='operations') for exact schemas. Native actions use {'operation':'qq.<name>','parameters':{...}}; arbitrary HTTP paths and destinations are refused."""
+        if action == "native" and (arguments or {}).get("operation") == "github.create_pr":
+            if set(arguments or {}) - {"operation", "parameters"}:
+                raise ValueError("Use registered GitHub action parameters")
+            return receipt(
+                await operations.call("create_github_pull_request", (arguments or {}).get("parameters"), route_id),
+                "action",
+            )
         result = await operations.call(
             "perform_channel_action" if action == "native" else ACTIONS[action],
             native_arguments(arguments) if action == "native" else arguments,

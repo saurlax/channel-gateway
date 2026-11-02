@@ -1,6 +1,13 @@
 import type { MouseEvent } from "react";
 
-export const pages = ["overview", "channels", "hosts", "routes", "events"] as const;
+export const pages = [
+  "overview",
+  "channels",
+  "hosts",
+  "model-providers",
+  "routes",
+  "events",
+] as const;
 export type Page = (typeof pages)[number];
 
 export function routeEditor(pathname: string): { id: string } | { create: true } | null {

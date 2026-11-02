@@ -13,6 +13,7 @@ from .channels.actions import tool_message_allowed
 from .channels.common import OperationRejected, SendBlocked
 from .channels.manager import ChannelManager
 from .channels.platforms.common import same_connection
+from .model_providers import ModelError, should_process
 from .models import route_allows_sender
 from .routing import select_route
 from .storage import Store
@@ -29,6 +30,25 @@ class Bridge:
         self.poll_interval = poll_interval
         self.wake = asyncio.Event()
         self.channels = channels
+        self._wake_jobs: dict[str, tuple[dict, asyncio.Task[tuple[bool, str | None]]]] = {}
+
+    async def close(self) -> None:
+        jobs = [task for _, task in self._wake_jobs.values()]
+        for task in jobs:
+            task.cancel()
+        await asyncio.gather(*jobs, return_exceptions=True)
+        self._wake_jobs.clear()
+
+    async def _classify(
+        self, provider: dict | None, message: dict, history: list[dict], active: bool
+    ) -> tuple[bool, str | None]:
+        try:
+            if provider is None:
+                raise ModelError("Model provider is unavailable")
+            return await should_process(self.adapters.client, provider, message, history, active=active), None
+        except ModelError as failure:
+            # Classification is an optimization, never a message-loss boundary.
+            return True, str(failure)
 
     async def ingest(self, connection: dict, message: Message | None, context: dict | None = None) -> dict:
         if message is None:
@@ -79,6 +99,12 @@ class Bridge:
                 pass
 
     async def tick(self) -> None:
+        for identifier in list(self._wake_jobs):
+            current = await self.store.event(identifier)
+            if not current or current["state"] != "queued":
+                _, job = self._wake_jobs.pop(identifier)
+                job.cancel()
+                await asyncio.gather(job, return_exceptions=True)
         for event in await self.store.pending():
             try:
                 await self.advance(event)
@@ -128,14 +154,55 @@ class Bridge:
             # Freeze target and payload BEFORE I/O. A lost receipt retries the exact
             # original command even after another receipt binds the route's thread.
             target = event["target"]
+            pending_decision = self._wake_jobs.get(event["id"])
+            if pending_decision and pending_decision[0] == route and not pending_decision[1].done():
+                return
             active_thread = None
             previous = None
             if not target and route.get("thread_policy") == "window":
+                from .host_context import active_work
+
                 previous = await self.store.environment_thread(route, message)
                 if previous:
                     thread = await self.adapters.host(connection, "GET", resource_path("threads", previous))
-                    if thread.get("current_run_id"):
+                    if await active_work(
+                        self.adapters, connection, thread, children=route.get("coordinate_tasks", False)
+                    ):
                         active_thread = previous
+            if not target and route.get("wake_provider_id"):
+                decision = await self.store.wake_decision(event["id"])
+                if decision is None:
+                    job = self._wake_jobs.get(event["id"])
+                    if job and job[0] != route:
+                        job[1].cancel()
+                        await asyncio.gather(job[1], return_exceptions=True)
+                        self._wake_jobs.pop(event["id"])
+                        job = None
+                    if job is None:
+                        if len(self._wake_jobs) >= 8:
+                            return
+                        task = asyncio.create_task(
+                            self._classify(
+                                await self.store.model_provider(route["wake_provider_id"]),
+                                message,
+                                await self.store.delivery_history(event, {**route, "history_limit": 8}),
+                                bool(active_thread),
+                            )
+                        )
+                        task.add_done_callback(lambda _: self.wake.set())
+                        self._wake_jobs[event["id"]] = (route, task)
+                        return
+                    if not job[1].done():
+                        return
+                    self._wake_jobs.pop(event["id"])
+                    process, error = job[1].result()
+                    if await self.store.route(route["id"]) != route:
+                        return
+                    await self.store.save_wake_decision(event["id"], route["wake_provider_id"], process, error)
+                    decision = await self.store.wake_decision(event["id"])
+                if decision and not decision["process"]:
+                    await self.store.update_event(event["id"], state="filtered", error=None)
+                    return
             body = (
                 json.loads(event["body"])
                 if event["body"]
@@ -157,6 +224,21 @@ class Bridge:
                     if previous:
                         body["environments"] = await self.adapters.thread_environments(connection, previous)
                     body["delivery"] = "next_run"
+            if not target and not active_thread and route.get("conversation_memory"):
+                # An existing inbox retains its settled session selection.
+                from .host_context import memory_space
+
+                if route.get("thread_policy") in {"window", "message"} or not route.get("thread_id"):
+                    space_id = await memory_space(self.store, self.adapters, connection, route, message)
+                    body["session"] = {
+                        "memory": {
+                            "enabled": True,
+                            "spaces": [{"name": "conversation", "space_id": space_id, "access": "write"}],
+                        }
+                    }
+            # Recheck authorization after all external reads, before freezing a submission.
+            if not target and await self.store.route(route["id"]) != route:
+                return
             if not target:
                 target = await self.store.prepare_delivery(event, route, body, active_thread_id=active_thread)
             receipt = await self.adapters.host(connection, "POST", target, body=body, key=event["id"])

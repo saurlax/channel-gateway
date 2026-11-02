@@ -46,6 +46,7 @@ export function AppSidebar({ onLogout, page }: { onLogout: () => void; page: str
                 { title: t("Overview"), url: "/overview", icon: LayoutDashboard },
                 { title: t("Channels"), url: "/channels", icon: Cable },
                 { title: t("Agent hosts"), url: "/hosts", icon: Bot },
+                { title: t("Model providers"), url: "/model-providers", icon: Bot },
                 { title: t("Routes & access"), url: "/routes", icon: Route },
               ],
             },

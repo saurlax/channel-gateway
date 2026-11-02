@@ -1,5 +1,17 @@
 # Identity and access
 
+## Decision model credentials
+
+Only authenticated administrators manage model providers or test saved models.
+API keys are accepted as secret fields, stored in the private state database and
+never returned; public views expose only credential presence. Blank/omitted edit
+credentials retain the previous key. Validation and upstream diagnostics exclude
+submitted secrets and response bodies. Selecting a wake provider explicitly
+allows the bounded triggering message and authorized same-source context to be
+sent to that provider; it grants no channel or Agent authority. Provider calls
+never follow redirects. Providers are administrator-defined HTTP(S) API origins,
+not message-controlled destinations.
+
 ## Authority model
 
 The baseline has one administrator role, verified platform sender allowlists,

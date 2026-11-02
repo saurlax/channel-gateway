@@ -1,4 +1,49 @@
 export const chinese = {
+  Model: "模型",
+  "API key": "API 密钥",
+  Save: "保存",
+  "Model providers": "模型提供方",
+  "Search model providers…": "搜索模型提供方…",
+  "Add model provider": "添加模型提供方",
+  "Edit model provider": "编辑模型提供方",
+  "Text model": "文本模型",
+  "Decision model": "决策模型",
+  "No model providers configured.": "暂无模型提供方",
+  "Use text model": "使用文本模型",
+  "OpenAI-compatible API. Keys are stored on the server and never returned. Routes explicitly select their decision provider.":
+    "兼容 OpenAI 的 API。密钥仅保存在服务端，不会返回。决策提供方由路由选择。",
+  "Test saved models": "测试已保存模型",
+  "Model connection verified": "模型连接已验证",
+  "Delete provider": "删除提供方",
+  "Delete this provider?": "删除此提供方？",
+  "Remove the provider and its saved key. Assigned routes must be updated first.":
+    "删除提供方及其密钥。请先更新引用它的路由。",
+  "New API key (optional)": "新 API 密钥（可选）",
+  "Optional. Uses the text model when omitted.": "可选，留空时使用文本模型。",
+  "Wake decision model": "唤醒决策模型",
+  "Process every message": "处理每条消息",
+  "Filters unrelated messages before Host delivery, including during execution. Model failures retain normal delivery.":
+    "投递前筛选无关消息，执行期间同样生效。模型失败时保持正常投递。",
+  "The provider receives this message and up to eight recent authorized messages.":
+    "提供方会收到当前消息及最多八条近期已授权消息。",
+  "Conversation memory": "会话记忆",
+  "Use a separate a13n Memory Space for each source conversation. Reuse it across fresh threads. Requires Host memory-space support.":
+    "每个来源会话使用独立的 a13n 记忆空间，新建会话时复用。需要宿主支持记忆空间。",
+  "Coordinate long tasks": "协调长任务",
+  "Ask the Agent to delegate long work and keep the coordinator available. Requires configured asynchronous subagents; their tools and environment policy are preserved.":
+    "要求 Agent 委派长任务并保持协调入口可响应。需要已配置异步子智能体，保留其工具与环境策略。",
+  "Model provider is unavailable": "模型提供方不可用",
+  "Model request failed; check the provider and model configuration":
+    "模型请求失败，请检查提供方和模型配置",
+  "Model response exceeds the size limit": "模型响应超过大小限制",
+  "Model provider not found": "未找到模型提供方",
+  "Enter a model API key": "请输入模型 API 密钥",
+  "This provider is assigned to a route": "此提供方已被路由引用",
+  "Choose an existing model provider": "请选择已有模型提供方",
+  "Model decisions and conversation context require an a13n Host":
+    "模型决策和会话上下文需要 a13n 宿主",
+  "Conversation memory requires bounded-history delivery": "会话记忆需要有界历史投递策略",
+  filtered: "已筛选",
   "New private key (optional)": "新私钥（可选）",
   "Reset conversations": "重置会话",
   "Reset this route's conversations?": "重置此路由的全部会话？",

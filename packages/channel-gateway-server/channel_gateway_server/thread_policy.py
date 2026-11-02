@@ -10,6 +10,8 @@ def thread_binding_key(route: dict, message: dict) -> str | None:
         return None
     owner = route.get("parent_route_id") or route["id"]
     identity = [owner, route["host_id"], route["agent_id"], policy, route.get("fixed_thread_id")]
+    if route.get("conversation_memory"):
+        identity.append("conversation-memory")
     if policy != "fixed":
         identity.append(route["id"])
     if policy == "sender":

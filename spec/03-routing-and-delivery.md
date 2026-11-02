@@ -1,5 +1,44 @@
 # Routing and delivery
 
+## Optional wake decisions and scoped context
+
+An a13n route may select `wake_provider_id`, referencing an administrator-managed
+OpenAI-compatible provider. Null (the default) retains existing delivery. After
+route and sender authorization, CG classifies the current event and at most eight
+authorized source-history messages. Current text is bounded to 8000 characters,
+each history text to 800. Verified bot mentions always process. Other candidates
+receive a strict boolean decision; malformed decisions or provider failure
+process normally. Disabling a provider also falls back to normal delivery.
+
+Decisions persist by event ID before submission. Negative decisions set the event
+to `filtered`, retain history, create no Host input and cannot be manually retried
+as a failed delivery. A frozen Host request is never reclassified. Classification
+uses at most eight process-owned tasks, each with a 20-second request timeout,
+without blocking polling or sends. Shutdown cancels and joins those tasks; queued
+events survive. Authority is rechecked before freezing a new Host submission.
+
+`conversation_memory` defaults false and requires window delivery. Its stable
+binding includes route, Host, Agent and concrete source identity. CG creates a
+Memory Space through the Host's public API and persists its ID. A scope label
+recovers an uncertain creation before retrying. New threads explicitly select
+that Space in `session.memory`; active-thread inbox submissions keep the settled
+selection. Enabling memory uses a new binding scope rather than steering into an
+old globally selected session. Resetting threads retains the Space; removing a
+route does not delete Host memory. Host failure never falls back to shared memory.
+This selection replaces default Spaces, not separately authored standalone memory
+mounts or child defaults, and grants no additional channel access.
+
+`coordinate_tasks` defaults false and adds coordinator/delegation guidance to
+verified input context. It changes no published Agent configuration, tool roster,
+subagent mode or environment edge. Under window delivery, active work includes
+the root Run, active descendant Threads in its Session and pending/assigned root
+inbox entries. Incomplete child observation fails instead of declaring idleness.
+Once these are idle, a fresh window reuses the conversation's desired environment
+mounts, including their permission ceilings. Arbitrary external job completion is
+not inferred. These options are rejected for generic MCP Hosts.
+
+See [model setup](../docs/model-providers.md) for configuration and limitations.
+
 ## Conversation routes
 
 A configured route binds a nonempty `sources` list to one Agent Host. Each source
@@ -122,10 +161,11 @@ preparing an input. A non-null `current_run_id` selects that Thread's inbox with
 `delivery: steer`. This input contains only the new message/context/media, without
 a repeated `channel_history` part or environment mounts. The Host owns safe-boundary
 incorporation and a race where its run ends between lookup and inbox acceptance.
-When `current_run_id` is null, `window` creates a thread with `POST /threads`,
+When `current_run_id` is null and the optional coordinator observation above
+finds no active descendant or queued root input, `window` creates a thread with `POST /threads`,
 without prior Host model history. Before freezing a new request, CG reads the previous accepted thread's
 public `GET /threads/{id}/environments` mounts and supplies `environments` with
-name, environment ID and working directory to the new thread. This preserves
+name, environment ID, working directory and any permission ceiling to the new thread. This preserves
 workspace files and environment identity; it does not preserve thread-local
 model/tool state. On the first message the Agent's normal environment policy
 applies. Subsequent environment lookup/mount failures are delivery failures,

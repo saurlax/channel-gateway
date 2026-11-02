@@ -21,6 +21,15 @@ export type RouteSource = {
 };
 export type BusyPolicy = "steer" | "queue";
 export type ThreadPolicy = "conversation" | "sender" | "fixed" | "message" | "window";
+export type ModelProvider = {
+  id: string;
+  name: string;
+  base_url: string;
+  text_model: string;
+  decision_model: string | null;
+  enabled: boolean;
+  has_api_key: boolean;
+};
 export type Route = {
   id: string;
   name: string;
@@ -38,6 +47,9 @@ export type Route = {
   thread_policy?: ThreadPolicy;
   history_limit?: number;
   busy_policy?: BusyPolicy;
+  wake_provider_id?: string | null;
+  conversation_memory?: boolean;
+  coordinate_tasks?: boolean;
   fixed_thread_id?: string | null;
   enabled: boolean;
   mcp_connection_id: string | null;
@@ -74,6 +86,7 @@ export type Snapshot = {
   events: ChannelEvent[];
   replies: Reply[];
   actions?: (Reply & { operation: string })[];
+  model_providers?: ModelProvider[];
 };
 
 export type AdminSession = { username: string; csrf_token: string };

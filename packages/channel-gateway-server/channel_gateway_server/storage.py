@@ -19,6 +19,13 @@ from .routing import RouteConflict, check_source_conflicts, route_sources, selec
 from .thread_policy import thread_binding_key
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS model_providers (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS wake_decisions (
+ event_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, process INTEGER NOT NULL, error TEXT
+);
+CREATE TABLE IF NOT EXISTS conversation_memories (
+ scope TEXT PRIMARY KEY, space_id TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS operation_effects (
  id INTEGER PRIMARY KEY AUTOINCREMENT, operation_id TEXT NOT NULL,
  stage TEXT NOT NULL, reference TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -207,6 +214,54 @@ class Store:
     async def connections(self) -> list[dict]:
         return [json.loads(row["value"]) for row in await self.rows("SELECT value FROM connections ORDER BY id")]
 
+    async def model_providers(self) -> list[dict]:
+        return [json.loads(row["value"]) for row in await self.rows("SELECT value FROM model_providers ORDER BY id")]
+
+    async def model_provider(self, identifier: str) -> dict | None:
+        rows = await self.rows("SELECT value FROM model_providers WHERE id=?", (identifier,))
+        return json.loads(rows[0]["value"]) if rows else None
+
+    async def save_model_provider(self, value: dict, previous: dict | None = None) -> bool:
+        async with self.transaction() as db:
+            if previous is None:
+                await db.execute("INSERT INTO model_providers VALUES (?,?)", (value["id"], json.dumps(value)))
+                return True
+            result = await db.execute(
+                "UPDATE model_providers SET value=? WHERE id=? AND value=?",
+                (json.dumps(value), value["id"], json.dumps(previous)),
+            )
+            return result.rowcount == 1
+
+    async def delete_model_provider(self, identifier: str) -> bool:
+        async with self.transaction() as db:
+            async with db.execute(
+                "SELECT 1 FROM routes WHERE json_extract(value,'$.wake_provider_id')=? "
+                "AND json_extract(value,'$.parent_route_id') IS NULL LIMIT 1",
+                (identifier,),
+            ) as cursor:
+                if await cursor.fetchone():
+                    raise RouteConflict("This provider is assigned to a route")
+            result = await db.execute("DELETE FROM model_providers WHERE id=?", (identifier,))
+            return result.rowcount == 1
+
+    async def wake_decision(self, event_id: str) -> dict | None:
+        rows = await self.rows("SELECT * FROM wake_decisions WHERE event_id=?", (event_id,))
+        return rows[0] if rows else None
+
+    async def save_wake_decision(self, event_id: str, provider_id: str, process: bool, error: str | None) -> None:
+        async with self.transaction() as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO wake_decisions VALUES (?,?,?,?)", (event_id, provider_id, int(process), error)
+            )
+
+    async def conversation_memory(self, scope: str) -> str | None:
+        rows = await self.rows("SELECT space_id FROM conversation_memories WHERE scope=?", (scope,))
+        return rows[0]["space_id"] if rows else None
+
+    async def remember_conversation_memory(self, scope: str, space_id: str) -> None:
+        async with self.transaction() as db:
+            await db.execute("INSERT OR IGNORE INTO conversation_memories VALUES (?,?)", (scope, space_id))
+
     async def prune_history_cache(self, connection_id: str) -> None:
         async with self.transaction() as db:
             await db.execute(
@@ -325,6 +380,9 @@ class Store:
         value.setdefault("history_limit", 30)
         value.setdefault("busy_policy", "steer")
         value.setdefault("fixed_thread_id", None)
+        value.setdefault("wake_provider_id", None)
+        value.setdefault("conversation_memory", False)
+        value.setdefault("coordinate_tasks", False)
         return value
 
     async def routes(self) -> list[dict]:
@@ -351,6 +409,9 @@ class Store:
                         "history_limit",
                         "busy_policy",
                         "fixed_thread_id",
+                        "wake_provider_id",
+                        "conversation_memory",
+                        "coordinate_tasks",
                     ):
                         row[key] = parent[key]
                     selected = select_route(routes, row["channel_id"], row["conversation_kind"], row["conversation_id"])
@@ -374,6 +435,10 @@ class Store:
         host = connections.get(value["host_id"])
         if not host or host["kind"] not in {"a13n", "mcp"}:
             return False
+        if value.get("wake_provider_id"):
+            async with db.execute("SELECT 1 FROM model_providers WHERE id=?", (value["wake_provider_id"],)) as cursor:
+                if not await cursor.fetchone():
+                    return False
         return all(
             source["channel_id"] == "*"
             or (source["channel_id"] in connections and connections[source["channel_id"]]["kind"] in CHANNEL_KINDS)
@@ -779,7 +844,9 @@ class Store:
         rows = await self.rows(
             "SELECT e.*,COALESCE(r.channel_id,a.channel_id) AS source_channel,"
             "COALESCE(r.kind,a.kind) AS source_kind,COALESCE(r.conversation_id,a.conversation_id) AS source_conversation,"
-            "json_extract(COALESCE(r.value,a.value),'$.name') AS route_name FROM events e "
+            "json_extract(COALESCE(r.value,a.value),'$.name') AS route_name,"
+            "w.provider_id AS wake_provider_id,w.process AS wake_process,w.error AS wake_error FROM events e "
+            "LEFT JOIN wake_decisions w ON w.event_id=e.id "
             "LEFT JOIN routes r ON r.id=e.route_id LEFT JOIN archived_routes a ON a.id=e.route_id"
             + where
             + " ORDER BY e.rowid DESC LIMIT ?",
@@ -1072,7 +1139,7 @@ class Store:
             "WHERE b.binding_key=? AND e.thread_id IS NOT NULL ORDER BY e.rowid DESC LIMIT 1",
             (key,),
         )
-        return rows[0]["thread_id"] if rows else route.get("thread_id")
+        return rows[0]["thread_id"] if rows else None if route.get("conversation_memory") else route.get("thread_id")
 
     async def delivery_history(self, event: dict, route: dict) -> list[dict]:
         """Snapshot prior chat content within the triggering conversation's read scope."""
@@ -1184,6 +1251,8 @@ class Store:
             if policy == "window":
                 thread_id = active_thread_id
             target = "/threads/" + quote(thread_id, safe="") + "/inbox" if thread_id else "/threads"
+            if thread_id:
+                body.pop("session", None)
             await db.execute(
                 "INSERT INTO event_thread_bindings(event_id,binding_key,route_id) VALUES (?,?,?)",
                 (event["id"], key, owner),

@@ -24,6 +24,7 @@ import { Events } from "@/components/events";
 import { ManagementDialog } from "@/components/management";
 import { Empty, FormField } from "@/components/form-controls";
 import { Dashboard } from "@/components/dashboard";
+import { ModelProviders } from "@/components/model-providers";
 import { useMessageActivity } from "@/hooks/use-message-activity";
 import { readPage, routeEditor, subscribeNavigation, type Page } from "@/lib/navigation";
 
@@ -31,6 +32,7 @@ const titles: Record<Page, MessageKey> = {
   overview: "Overview",
   channels: "Channels",
   hosts: "Agent hosts",
+  "model-providers": "Model providers",
   routes: "Routes & access",
   events: "Messages",
 };
@@ -75,14 +77,15 @@ export function App() {
   const [capability, setCapability] = useState("");
   const [capabilityLabel, setCapabilityLabel] = useState("");
   const refresh = useCallback(async () => {
-    const [connections, routes, events, replies, actions] = await Promise.all([
+    const [connections, routes, events, replies, actions, model_providers] = await Promise.all([
       api<Snapshot["connections"]>(csrfToken, "connections"),
       api<Snapshot["routes"]>(csrfToken, "routes"),
       api<Snapshot["events"]>(csrfToken, "events"),
       api<Snapshot["replies"]>(csrfToken, "replies"),
       api<NonNullable<Snapshot["actions"]>>(csrfToken, "actions"),
+      api<NonNullable<Snapshot["model_providers"]>>(csrfToken, "model-providers"),
     ]);
-    setSnapshot({ connections, routes, events, replies, actions });
+    setSnapshot({ connections, routes, events, replies, actions, model_providers });
     setUpdatedAt(new Date().toISOString());
     setLoaded(true);
   }, [csrfToken]);
@@ -308,6 +311,15 @@ export function App() {
                 />
               )}
               {page === "routes" && !editor && <Routes snapshot={snapshot} busy={busy} />}
+              {page === "model-providers" && (
+                <ModelProviders
+                  providers={snapshot.model_providers ?? []}
+                  action={action}
+                  busy={busy}
+                  error={error}
+                  clearError={() => setError("")}
+                />
+              )}
               {editor && (
                 <Suspense fallback={<Empty>{t("Loading…")}</Empty>}>
                   <RoutePage

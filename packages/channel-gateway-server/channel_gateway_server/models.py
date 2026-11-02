@@ -263,12 +263,17 @@ class RouteInput(Contract):
     thread_policy: ThreadPolicy = "conversation"
     history_limit: int = Field(default=30, ge=0, le=100, strict=True)
     busy_policy: BusyPolicy = "steer"
+    wake_provider_id: Identifier | None = None
+    conversation_memory: bool = False
+    coordinate_tasks: bool = False
     fixed_thread_id: Identifier | None = None
     enabled: bool = True
     mcp_connection_id: Identifier | None = None
 
     @model_validator(mode="after")
     def reply_policy(self) -> "RouteInput":
+        if self.conversation_memory and self.thread_policy != "window":
+            raise ValueError("Conversation memory requires bounded-history delivery")
         if len(set(self.action_grants)) != len(self.action_grants):
             raise ValueError("Choose distinct action grants")
         if self.fixed_thread_id and self.thread_policy != "fixed":
@@ -318,6 +323,9 @@ class RouteUpdate(Contract):
     thread_policy: ThreadPolicy | None = None
     history_limit: int | None = Field(default=None, ge=0, le=100, strict=True)
     busy_policy: BusyPolicy | None = None
+    wake_provider_id: Identifier | None = None
+    conversation_memory: bool | None = None
+    coordinate_tasks: bool | None = None
     fixed_thread_id: Identifier | None = None
     sender_policy: Literal["allowlist", "any"] | None = None
     enabled: bool | None = None

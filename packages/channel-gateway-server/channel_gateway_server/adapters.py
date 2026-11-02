@@ -137,6 +137,15 @@ def host_body(message: dict, route: dict, history: list[dict] | None = None) -> 
             "instruction": "Send every warranted channel answer, clarification or limitation through send_message with this route_id. Final output is private. If no reply is warranted, call no messaging tool.",
         },
     }
+    if route.get("coordinate_tasks"):
+        context["coordination"] = {
+            "instruction": "Act as the responsive conversation coordinator. Proactively delegate coding, media generation, research and other long work to configured asynchronous subagents. Keep the main thread available for new messages; send only relevant corrections or follow-ups to the responsible child. Reuse the current shared environment when the configured subagent edge supports it; use separate work directories to avoid conflicts. Track child results and blockers, and do not claim completion until the work and deliverables are verified. Do not treat a main-turn end as child completion. Tool permissions and the Agent's configured subagent roster remain authoritative.",
+        }
+    if route.get("conversation_memory"):
+        context["memory_scope"] = {
+            "name": "conversation",
+            "instruction": "Use the conversation Memory Space for this source. Read its index and save confirmed agreements, decisions, deliverable references and unfinished work in global/MEMORY.md before ending. In this Space, global is scoped to this channel conversation, not all sources. Do not copy other conversations' private information into it.",
+        }
     if direct_media and (context["image_count"] or context["attachments"]):
         context["media_access"] = {
             "tool": "read",
@@ -192,6 +201,10 @@ class HttpAdapters:
             mounts.append(
                 {"name": item["name"], "environment_id": item["environment_id"], "working_directory": directory}
             )
+            if "permission_ceiling" in item:
+                if not isinstance(item["permission_ceiling"], dict):
+                    raise AdapterError("Invalid Host environment permissions")
+                mounts[-1]["permission_ceiling"] = item["permission_ceiling"]
         return mounts
 
     async def choices(self, connection: dict, resource: str, cursor: str | None = None) -> dict:

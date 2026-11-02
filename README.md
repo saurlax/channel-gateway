@@ -85,6 +85,12 @@ delivery was disabled. Platform permissions still determine which messages reach
 
 ## Run from source
 
+Optional [model providers and wake decisions](docs/model-providers.md) let routes
+filter unrelated messages before a13n delivery, select conversation-specific
+Memory Spaces across fresh sessions, and supply long-task coordinator guidance.
+These controls preserve the Host's configured tools, asynchronous subagents and
+environment policy; they do not edit Agent revisions.
+
 You need **Python 3.13**, [**uv**](https://docs.astral.sh/uv/), **Make**, **Node.js 24
 or later**, and **pnpm 10.34.5** for the console. Python packages are not published
 yet. Linux AMD64 container images are available from

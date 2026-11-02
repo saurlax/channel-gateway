@@ -57,6 +57,9 @@ export function RouteConfiguration({
   const [threadPolicy, setThreadPolicy] = useState<ThreadPolicy>(route?.thread_policy ?? "window");
   const [historyLimit, setHistoryLimit] = useState(String(route?.history_limit ?? 30));
   const [busyPolicy, setBusyPolicy] = useState<BusyPolicy>(route?.busy_policy ?? "steer");
+  const [wakeProvider, setWakeProvider] = useState(route?.wake_provider_id ?? "none");
+  const [conversationMemory, setConversationMemory] = useState(route?.conversation_memory ?? false);
+  const [coordinateTasks, setCoordinateTasks] = useState(route?.coordinate_tasks ?? false);
   const [fixedThread, setFixedThread] = useState(route?.fixed_thread_id ?? "");
   const [readChannels, setReadChannels] = useState<string[]>(() => {
     if (route?.read_channel_ids != null) return route.read_channel_ids;
@@ -139,6 +142,9 @@ export function RouteConfiguration({
       thread_policy: mcpOnly ? "conversation" : threadPolicy,
       history_limit: Number(historyLimit),
       busy_policy: mcpOnly ? "steer" : busyPolicy,
+      wake_provider_id: mcpOnly || wakeProvider === "none" ? null : wakeProvider,
+      conversation_memory: !mcpOnly && threadPolicy === "window" && conversationMemory,
+      coordinate_tasks: !mcpOnly && coordinateTasks,
       fixed_thread_id: !mcpOnly && threadPolicy === "fixed" ? fixedThread || null : null,
       read_channel_ids: readChannels,
       action_grants: actionGrants,
@@ -284,6 +290,57 @@ export function RouteConfiguration({
                   <p className="text-xs text-muted-foreground">
                     {t(
                       "Previous incoming and sent messages. Default 30; 0 excludes history. Continuous threads retain upstream context.",
+                    )}
+                  </p>
+                </FormField>
+                <FormField id="wake-provider" label={t("Wake decision model")}>
+                  <Choice
+                    id="wake-provider"
+                    value={wakeProvider}
+                    onChange={setWakeProvider}
+                    disabled={busy}
+                    items={[
+                      ["none", t("Process every message")],
+                      ...(snapshot.model_providers ?? []).map((provider): [string, string] => [
+                        provider.id,
+                        provider.name,
+                      ]),
+                    ]}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      "Filters unrelated messages before Host delivery, including during execution. Model failures retain normal delivery.",
+                    )}{" "}
+                    {t(
+                      "The provider receives this message and up to eight recent authorized messages.",
+                    )}
+                  </p>
+                </FormField>
+                {threadPolicy === "window" && (
+                  <FormField id="conversation-memory" label={t("Conversation memory")}>
+                    <Switch
+                      id="conversation-memory"
+                      checked={conversationMemory}
+                      onCheckedChange={setConversationMemory}
+                      disabled={busy}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        "Use a separate a13n Memory Space for each source conversation. Reuse it across fresh threads. Requires Host memory-space support.",
+                      )}
+                    </p>
+                  </FormField>
+                )}
+                <FormField id="coordinate-tasks" label={t("Coordinate long tasks")}>
+                  <Switch
+                    id="coordinate-tasks"
+                    checked={coordinateTasks}
+                    onCheckedChange={setCoordinateTasks}
+                    disabled={busy}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      "Ask the Agent to delegate long work and keep the coordinator available. Requires configured asynchronous subagents; their tools and environment policy are preserved.",
                     )}
                   </p>
                 </FormField>

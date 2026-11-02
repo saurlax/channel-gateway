@@ -16,7 +16,7 @@ from ...media import IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_MEDIA_BYTES, image_type
 from ..common import OperationRejected
 
 PLATFORMS = frozenset({"slack", "lark", "discord"})
-CHANNEL_KINDS = frozenset({"onebots", "qq", "weixin", *PLATFORMS})
+CHANNEL_KINDS = frozenset({"onebots", "qq", "weixin", "github", *PLATFORMS})
 CONVERSATION_KINDS = frozenset({"private", "group", "guild", "guild_dm", "channel", "thread"})
 # Every field that can change account identity or authentication invalidates ingress.
 CONNECTION_KEYS = (
@@ -31,6 +31,8 @@ CONNECTION_KEYS = (
     "qq_intents",
     "discord_intents",
     "encrypt_key",
+    "github",
+    "private_key",
 )
 
 

@@ -297,6 +297,7 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
             "state": row["state"],
             "error": row["error"],
             "result": json.loads(row["result"]) if allowed and row["result"] else None,
+            "effects": await store.operation_effects(row["id"]) if allowed else [],
         }
 
     @operations.register

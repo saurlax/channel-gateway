@@ -193,6 +193,7 @@ def create_app(
                         ("slack", "Slack", "Signed Events API callbacks and bot Web API."),
                         ("lark", "Feishu / Lark", "Signed encrypted callbacks and tenant bot API."),
                         ("discord", "Discord", "Resumable bot Gateway and REST API."),
+                        ("github", "GitHub", "App callbacks or machine-user notifications. API configuration."),
                     )
                 ],
                 {
@@ -255,7 +256,7 @@ def create_app(
         expected = row.copy()
         values = body.model_dump(exclude_none=True)
         for key, value in values.items():
-            row[key] = value if key in {"qq_intents", "discord_intents"} else value.get_secret_value()
+            row[key] = value if key in {"qq_intents", "discord_intents", "github"} else value.get_secret_value()
         try:
             ConnectionInput.model_validate({key: value for key, value in row.items() if key != "id"})
         except ValueError:
@@ -514,6 +515,27 @@ def create_app(
             )
         except ProjectionError:
             raise HTTPException(422, "Invalid OneBot text event") from None
+
+    @app.post("/api/v1/hooks/github/{connection_id}")
+    async def receive_github(connection_id: str, request: Request) -> dict:
+        from .channels.github import project, verify
+
+        connection = await channel_connection(connection_id, "github")
+        if connection["transport"] != "webhook":
+            raise HTTPException(409, "Machine users use notification polling")
+        raw = await event_bytes(request)
+        if not verify(connection, raw, request.headers.get("x-hub-signature-256", "")):
+            raise HTTPException(401, "Invalid GitHub callback signature")
+        try:
+            return await ingest_event(
+                store,
+                connection,
+                {"event": request.headers.get("x-github-event", ""), "payload": event_object(raw)},
+                bridge.ingest,
+                lambda p: project(p, connection),
+            )
+        except (ProjectionError, ValueError, KeyError, TypeError):
+            raise HTTPException(422, "Invalid GitHub event") from None
 
     @app.post("/api/v1/hooks/slack/{connection_id}")
     async def receive_slack(connection_id: str, request: Request) -> dict:

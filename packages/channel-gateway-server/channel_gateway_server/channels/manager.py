@@ -18,6 +18,7 @@ from ..models import route_allows_sender, weixin_url
 from ..storage import Store
 from .actions import execute_action, tool_message_allowed
 from .common import MAX_EVENT_BYTES, SendBlocked, identifier
+from .github import GitHubClient, authorized_context, poll_notifications
 from .ingress import ProjectionError, ingest_event
 from .onebot import OneBotSession, ReceiveMessage
 from .platforms.common import PLATFORMS, PROFILES
@@ -45,6 +46,18 @@ def transport(connection: dict) -> str:
 
 
 def capabilities(connection: dict) -> dict:
+    if connection["kind"] == "github":
+        return {
+            "receive": True,
+            "send": True,
+            "conversations": ["thread"],
+            "content": ["text"],
+            "image_read_types": [],
+            "image_send_types": [],
+            "message_reactions": "unsupported",
+            "resource_operations": False,
+            "max_text_characters": 16000,
+        }
     if connection["kind"] in PROFILES:
         return PROFILES[connection["kind"]].capabilities()
     return {
@@ -88,6 +101,7 @@ class ChannelManager:
         self.session_closers: dict[str, Callable[[], Awaitable[None]]] = {}
         self.qq_clients: dict[str, QQClient] = {}
         self.platform_clients: dict[str, SlackClient | LarkClient | DiscordClient] = {}
+        self.github_clients: dict[str, GitHubClient] = {}
         self.logins: dict[str, dict] = {}
         self.login_locks: dict[str, asyncio.Lock] = {}
 
@@ -120,6 +134,7 @@ class ChannelManager:
         closer = self.session_closers.pop(identifier, None)
         if closer:
             await closer()
+        self.github_clients.pop(identifier, None)
         self.qq_clients.pop(identifier, None)
         self.platform_clients.pop(identifier, None)
 
@@ -165,7 +180,9 @@ class ChannelManager:
         delay = 1
         while True:
             try:
-                if connection["kind"] == "weixin":
+                if connection["kind"] == "github":
+                    await poll_notifications(self, connection)
+                elif connection["kind"] == "weixin":
                     await self.poll_weixin(connection)
                 elif connection["kind"] == "discord":
                     await self.connect_discord(connection)
@@ -232,6 +249,11 @@ class ChannelManager:
                 self.set_status(
                     identifier, "awaiting_connection" if transport(connection) == "ws_reverse" else "reconnecting"
                 )
+
+    def github(self, connection: dict) -> GitHubClient:
+        if connection["id"] not in self.github_clients:
+            self.github_clients[connection["id"]] = GitHubClient(connection, self.http)
+        return self.github_clients[connection["id"]]
 
     def qq(self, connection: dict) -> QQClient:
         identifier = connection["id"]
@@ -338,6 +360,34 @@ class ChannelManager:
             await self.check_action_access(connection, route)
         if payload and not tool_message_allowed(route, connection):
             raise SendBlocked("This route no longer permits MCP actions")
+        if connection["kind"] == "github":
+            context = await authorized_context(
+                self.store,
+                connection,
+                route,
+                "review" if payload and payload.get("options", {}).get("mode") == "review" else "comment",
+            )
+            if payload and payload.get("context") != context:
+                raise SendBlocked("GitHub invocation changed after message admission")
+            if not text or len(text) > 16000:
+                raise SendBlocked("Invalid GitHub message length")
+
+            async def github_check():
+                await self.check_action_access(connection, route)
+                if (
+                    await authorized_context(
+                        self.store,
+                        connection,
+                        route,
+                        "review" if payload and payload.get("options", {}).get("mode") == "review" else "comment",
+                    )
+                    != context
+                ):
+                    raise SendBlocked("GitHub invocation changed before publication")
+
+            return await self.github(connection).publish(
+                context, text, payload.get("options", {}) if payload else {}, github_check
+            )
         if connection["kind"] in PLATFORMS:
             if len(text) > PROFILES[connection["kind"]].max_text:
                 raise SendBlocked("Message exceeds the platform text limit")

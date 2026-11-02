@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { DialogFooter } from "@/components/ui/dialog";
 import { DeleteResource } from "@/components/delete-resource";
@@ -63,7 +64,7 @@ export function Connections({
       connection.app_id,
       connection.state,
       channelType(connection) && t(channelType(connection)!.label),
-      isHost(connection) ? connection.kind : undefined,
+      connection.kind,
     ]),
   );
   const connection = records.find((record) => record.id === selected);
@@ -116,7 +117,9 @@ export function Connections({
                   </TableCell>
                   <TableCell className="whitespace-normal">
                     {isChannel
-                      ? t(channelType(record)!.label)
+                      ? record.kind === "github"
+                        ? "GitHub"
+                        : t(channelType(record)!.label)
                       : record.kind === "a13n"
                         ? t("a13n API + MCP")
                         : t("Generic MCP")}
@@ -535,8 +538,9 @@ function ConnectionDetails({
     connection.kind === "onebots" &&
     (!connection.transport || connection.transport === "http_reverse");
   const qq = connection.kind === "qq";
+  const githubApp = connection.kind === "github" && connection.github?.mode === "app";
   const appSecret = qq || connection.kind === "lark";
-  const signedCallback = reverseHTTP || ["slack", "lark"].includes(connection.kind);
+  const signedCallback = reverseHTTP || githubApp || ["slack", "lark"].includes(connection.kind);
   const type = channelType(connection);
   return (
     <div className="grid gap-4">
@@ -591,7 +595,9 @@ function ConnectionDetails({
               await action(
                 `connections/${connection.id}`,
                 {
-                  ...(value ? { [appSecret ? "app_secret" : "token"]: value } : {}),
+                  ...(value
+                    ? { [githubApp ? "private_key" : appSecret ? "app_secret" : "token"]: value }
+                    : {}),
                   ...(secret ? { webhook_secret: secret } : {}),
                   ...(field(data, "encrypt_key")
                     ? { encrypt_key: field(data, "encrypt_key") }
@@ -608,9 +614,19 @@ function ConnectionDetails({
         >
           <FormField
             id="new-token"
-            label={appSecret ? t("New AppSecret (optional)") : t("New API token (optional)")}
+            label={
+              githubApp
+                ? t("New private key (optional)")
+                : appSecret
+                  ? t("New AppSecret (optional)")
+                  : t("New API token (optional)")
+            }
           >
-            <Input id="new-token" name="token" type="password" autoComplete="off" />
+            {githubApp ? (
+              <Textarea id="new-token" name="token" autoComplete="off" />
+            ) : (
+              <Input id="new-token" name="token" type="password" autoComplete="off" />
+            )}
           </FormField>
           {qq && (
             <FormField id="update-qq-intents" label={t("QQ Gateway intents")}>

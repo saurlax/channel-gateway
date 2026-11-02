@@ -59,9 +59,27 @@ class AdministratorLogin(Contract):
     password: SecretStr = Field(min_length=1, max_length=4096)
 
 
+class GitHubPolicy(Contract):
+    mode: Literal["app", "machine_user"]
+    login: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9\-]*(?:\[bot\])?$", max_length=100)
+    installation_id: int | None = Field(default=None, ge=1)
+    owner_user_id: str = Field(pattern=r"^[1-9][0-9]*$", max_length=20)
+    owner_only: bool = True
+    allowed_user_ids: list[Annotated[str, Field(pattern=r"^[1-9][0-9]*$")]] = Field(
+        default_factory=list, max_length=256
+    )
+    repository_ids: list[Annotated[str, Field(pattern=r"^[1-9][0-9]*$")]] = Field(min_length=1, max_length=100)
+    actions: list[Literal["invoke", "read", "comment", "review", "create_pr"]] = Field(
+        default_factory=list, max_length=5
+    )
+    poll_seconds: int = Field(default=60, ge=60, le=3600)
+
+
 class ConnectionInput(Contract):
+    github: GitHubPolicy | None = None
+    private_key: SecretStr | None = Field(default=None, max_length=16384)
     name: str = Field(min_length=1, max_length=80)
-    kind: Literal["onebots", "qq", "weixin", "slack", "lark", "discord", "a13n", "mcp"]
+    kind: Literal["onebots", "qq", "weixin", "slack", "lark", "discord", "github", "a13n", "mcp"]
     transport: Literal["http", "http_reverse", "ws", "ws_reverse", "websocket", "webhook", "polling"] | None = None
     api_url: str | None = Field(default=None, max_length=2048)
     token: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
@@ -100,6 +118,7 @@ class ConnectionInput(Contract):
             "slack": "webhook",
             "lark": "webhook",
             "discord": "websocket",
+            "github": "webhook" if self.github and self.github.mode == "app" else "polling",
             "a13n": None,
             "mcp": None,
         }
@@ -126,6 +145,28 @@ class ConnectionInput(Contract):
             self.api_url = self.api_url or "https://api.sgroup.qq.com"
             if self.api_url != "https://api.sgroup.qq.com" or self.token or self.self_id or self.webhook_secret:
                 raise ValueError("QQ uses official endpoints and its application credentials")
+        elif self.kind == "github":
+            if not self.github or not self.self_id or not self.self_id.isdecimal() or self.api_url or self.app_secret:
+                raise ValueError("GitHub requires policy, numeric account ID and official endpoints")
+            if self.github.mode == "app":
+                if (
+                    not self.app_id
+                    or not self.private_key
+                    or not self.webhook_secret
+                    or not self.github.installation_id
+                    or self.token
+                    or self.transport != "webhook"
+                ):
+                    raise ValueError("GitHub App requires App ID, private key, installation ID and webhook secret")
+            elif (
+                not self.token
+                or self.app_id
+                or self.private_key
+                or self.webhook_secret
+                or self.github.installation_id
+                or self.transport != "polling"
+            ):
+                raise ValueError("Machine user requires a classic PAT and polling")
         elif self.kind == "slack":
             if (
                 self.transport != "webhook"
@@ -175,7 +216,7 @@ class ConnectionInput(Contract):
             raise ValueError("a13n requires an HTTP API URL and workspace API key")
         elif urlsplit(self.api_url).scheme not in {"http", "https"}:
             raise ValueError("a13n requires an HTTP API URL")
-        if self.kind not in {"qq", "slack", "lark"} and (self.app_id or self.app_secret):
+        if self.kind not in {"qq", "slack", "lark", "github"} and (self.app_id or self.app_secret):
             raise ValueError("Application credentials do not match this channel")
         if self.kind != "qq" and self.qq_intents is not None:
             raise ValueError("Only QQ uses QQ intents")
@@ -183,11 +224,13 @@ class ConnectionInput(Contract):
             raise ValueError("Only Discord uses Discord intents")
         if self.kind != "lark" and self.encrypt_key:
             raise ValueError("Only Lark uses an encrypt key")
+        if self.kind != "github" and (self.github or self.private_key):
+            raise ValueError("GitHub settings require a GitHub channel")
         return self
 
     def stored(self) -> dict:
         value = self.model_dump(mode="json")
-        for name in ("token", "webhook_secret", "app_secret", "encrypt_key"):
+        for name in ("token", "webhook_secret", "app_secret", "encrypt_key", "private_key"):
             secret = getattr(self, name)
             value[name] = secret.get_secret_value() if secret else None
         return value
@@ -283,6 +326,8 @@ class RouteUpdate(Contract):
 
 
 class ConnectionSecrets(Contract):
+    github: GitHubPolicy | None = None
+    private_key: SecretStr | None = Field(default=None, max_length=16384)
     encrypt_key: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
     discord_intents: int | None = Field(default=None, ge=1, le=2147483647)
     qq_intents: int | None = Field(default=None, ge=1, le=2147483647)
@@ -336,5 +381,7 @@ class ReactionInput(Contract):
 
 def public_connection(row: dict) -> dict:
     return {
-        key: value for key, value in row.items() if key not in {"token", "webhook_secret", "app_secret", "encrypt_key"}
+        key: value
+        for key, value in row.items()
+        if key not in {"token", "webhook_secret", "app_secret", "encrypt_key", "private_key"}
     }

@@ -939,7 +939,7 @@ class Store:
                 WHERE p.state='sent' AND COALESCE(json_extract(q.payload,'$.kind'),'message')!='reaction'
             ) SELECT DISTINCT channel_id,conversation_id FROM observed """
             "JOIN connections c ON c.id=observed.channel_id "
-            "WHERE json_extract(c.value,'$.kind') IN ('onebots','qq','weixin','slack','lark','discord') "
+            "WHERE json_extract(c.value,'$.kind') IN ('onebots','qq','weixin','slack','lark','discord','github') "
             "AND (? OR channel_id IN (SELECT value FROM json_each(?))) ORDER BY channel_id,conversation_id",
             ("*" in channel_ids, json.dumps(channel_ids)),
         )
@@ -966,7 +966,7 @@ class Store:
             "AND (? IS NULL OR json_extract(message,'$.source_message_id')=?) "
             "AND (? IS NULL OR (created_at,id)<(?,?)) "
             "AND EXISTS(SELECT 1 FROM connections c WHERE c.id=received.channel_id "
-            "AND json_extract(c.value,'$.kind') IN ('onebots','qq','weixin','slack','lark','discord')) "
+            "AND json_extract(c.value,'$.kind') IN ('onebots','qq','weixin','slack','lark','discord','github')) "
             "ORDER BY created_at DESC,id DESC LIMIT ?",
             (
                 conversation["channel_id"],

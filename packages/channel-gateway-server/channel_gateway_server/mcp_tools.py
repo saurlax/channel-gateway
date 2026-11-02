@@ -278,6 +278,10 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
         bridge.wake.set()
         return {"reply_id": reply["id"], "state": reply["state"]}
 
+    from .mcp_github import install_github_operations
+
+    install_github_operations(operations, store, bridge, authorized_route)
+
     from .mcp_platform import install_platform_operations
 
     install_platform_operations(operations, store, bridge, media, authorized_route, readable_route)

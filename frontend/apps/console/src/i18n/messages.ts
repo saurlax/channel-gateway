@@ -34,8 +34,8 @@ export const chinese = {
   "Host did not return the Agent subagent configuration": "宿主未返回 Agent 的子智能体配置",
   "Existing threads require indefinite retention and their current memory and environment selection.":
     "已有会话需要持续保留，并使用原记忆与环境选择。",
-  "Host memory selection applies, including its write permissions.":
-    "使用宿主的记忆选择及其写入权限。",
+  "Use the Agent's memory configuration. Conversations sharing a Space can search across chats. Its write permissions apply.":
+    "使用 Agent 的记忆配置及其写入权限。共用同一空间的聊天可以跨会话检索记忆。",
   "Session idle timeout (minutes)": "会话空闲超时（分钟）",
   "Default 60. Empty retains the session indefinitely; 0 starts fresh when idle. Active work keeps its session.":
     "默认 60 分钟。留空持续保留；0 表示空闲后新建。活动任务保留原会话。",
@@ -76,9 +76,9 @@ export const chinese = {
   "Process every message": "处理每条消息",
   "Optional. This Agent decides whether to wake the destination Agent. Decision failures process normally.":
     "可选。由此 Agent 判断是否唤醒目标 Agent；决策失败时正常唤醒。",
-  "Conversation memory": "会话记忆",
-  "Use a separate a13n Memory Space for each source conversation. Reuse it across fresh threads. Requires Host memory-space support.":
-    "每个来源会话使用独立的 a13n 记忆空间，新建会话时复用。需要宿主支持记忆空间。",
+  "Isolate conversation memory": "隔离会话记忆",
+  "Use a separate Memory Space for each conversation scope. Reuse it across new sessions.":
+    "按会话作用域使用独立记忆空间，新建运行会话时复用。",
   "Agent decisions and conversation context require an a13n Host":
     "Agent 决策和会话上下文需要 a13n 宿主",
   "Decision Agent unavailable; processing normally": "决策 Agent 不可用，正常处理消息",

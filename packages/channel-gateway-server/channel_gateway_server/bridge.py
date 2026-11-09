@@ -227,34 +227,21 @@ class Bridge:
                 body = json.loads(event["body"])
             else:
                 history = await self.store.delivery_history(event, route, active_thread)
-                body = host_body(message, route, history)
+                import secrets
+
+                handle = secrets.token_urlsafe(32)
+                body = host_body(
+                    message,
+                    route,
+                    history,
+                    origin_context=handle,
+                    history_complete=not (active_thread and len(history) == 100),
+                )
                 if route.get("conversation_memory"):
                     from .host_context import memory_safe_revision
 
                     body["agent_revision_id"] = await memory_safe_revision(self.adapters, connection, route["agent_id"])
-                import secrets
-
-                handle = secrets.token_urlsafe(32)
-                context_part = {
-                    "origin_context": handle,
-                    "instruction": "Pass origin_context to send_message for verified initiating context. Never disclose this handle.",
-                }
-                body["payload"]["content"].append({"type": "json", "value": context_part})
                 body["_context_handle"] = handle
-                if active_thread and len(history) == 100:
-                    body["payload"]["content"].append(
-                        {
-                            "type": "json",
-                            "value": {
-                                "history_coverage": {
-                                    "complete": False,
-                                    "route_id": route["id"],
-                                    "read": {"resource": "messages", "arguments": {"limit": 100}},
-                                    "instruction": "Earlier context may be missing. Read this route's gateway messages from the latest page and follow next_cursor as needed; creation order can differ from send-confirmation order.",
-                                }
-                            },
-                        }
-                    )
             if "connection_tools" in body.get("options", {}).get("overrides", {}):
                 # A frozen command may already have reached the Host. Retire it
                 # rather than replay a removed policy or change an idempotent body.

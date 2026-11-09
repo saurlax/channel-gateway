@@ -821,10 +821,10 @@ def test_host_delivery_uses_media_handles_and_tool_reply(platform_gateway):
     tick(platform_gateway)
     assert len(host_requests) == 1
     content = json.loads(host_requests[0].content)["payload"]["content"]
-    assert [part["type"] for part in content] == ["text", "json", "json"]
-    assert "origin_context" in content[-1]["value"]
-    assert content[1]["value"] == {"channel_history": []}
+    assert [part["type"] for part in content] == ["text"]
     context = json.loads(content[0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
+    assert context["origin_context"]
+    assert context["channel_history"] == []
     assert context["source_message_id"] == MID[kind] and context["image_count"] == 1
     assert context["media_access"]["tool"] == "read"
     assert context["media_access"]["source"] == "gateway"

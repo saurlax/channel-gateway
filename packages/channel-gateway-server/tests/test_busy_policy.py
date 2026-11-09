@@ -7,6 +7,7 @@ import pytest
 
 from .test_bridge import gateway as gateway_fixture
 from .test_bridge import route, tick, webhook
+from .test_delivery_history import context
 
 gateway = gateway_fixture
 
@@ -445,10 +446,7 @@ def test_window_joins_active_run_without_repeating_history_then_rotates_when_idl
     body = json.loads(host.posts[-1].content)
     assert body["delivery"] == "steer"
     assert "environments" not in body
-    assert not any(
-        "channel_history" in part.get("value", {}) and part["value"]["channel_history"]
-        for part in body["payload"]["content"]
-    )
+    assert context(host.posts[-1])["history"] == []
     assert "First" not in body["payload"]["content"][0]["text"]
     host.incorporate()
     tick(gateway)
@@ -462,9 +460,7 @@ def test_window_joins_active_run_without_repeating_history_then_rotates_when_idl
     body = json.loads(host.posts[-1].content)
     assert body["delivery"] == "steer"
     assert body["environments"][0]["environment_id"] == "env_1"
-    history = next(
-        p["value"]["channel_history"] for p in body["payload"]["content"] if "channel_history" in p.get("value", {})
-    )
+    history = context(host.posts[-1])["history"]
     assert [item["text"] for item in history] == ["First", "New input"]
 
 

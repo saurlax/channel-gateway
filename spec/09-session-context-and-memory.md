@@ -171,8 +171,16 @@ the timeout, work state or configuration subsequently changes.
 
 ## Incremental context assembly
 
-For a new Session, assemble the current message separately from its bounded
-history window. Retain existing chronological ordering, media projection, exact
+For each accepted input, submit the current message, bounded history, structured
+message data, verified initiating-context handle and any coverage reference as
+one contextual content part. Within that part, distinguish the current message
+from untrusted historical and structured data. Use one text part within the Host's
+65,536-character limit, or one JSON part for a larger complete snapshot; never
+split context into supplemental instructions or silently truncate it. Media keeps
+its native URL parts. This changes input presentation, not the independent
+steer/queue policy or Host-owned tool-completion notifications. Frozen submissions
+keep their original representation and idempotency key across upgrades and retries.
+Retain existing chronological ordering, media projection, exact
 source scope and current read checks. A message-count bound is not a token bound
 or proof that the supplied history is complete.
 

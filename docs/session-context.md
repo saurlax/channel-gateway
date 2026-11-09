@@ -48,9 +48,18 @@ Existing routes process all authorized input until a decision Agent is selected.
 Historical filtered events stay filtered; already-frozen delivery stays unchanged.
 Old database backups may still contain retired model credentials.
 
+## Input presentation
+
+CG submits the current message, bounded channel history and source metadata
+together as one contextual input. Images and files retain their media parts.
+Large snapshots use one structured input rather than dropping history or adding
+separate supplemental instructions. Messages arriving during execution still
+follow **Messages during execution**; Host tool-completion notifications are
+independent of initial input packaging.
+
 ## Keep memory across sessions
 
-In **Routes → Memory**, **Conversation memory** is independent of conversation
+In **Routes → Memory**, **Isolate conversation memory** is independent of conversation
 continuity and enabled by default for new non-fixed a13n routes. CG creates and
 retains a writable Memory Space per source/Agent binding; sender scope includes
 the sender, and per-message Sessions reuse the concrete conversation's Space.
@@ -66,7 +75,9 @@ selection. Empty initial standalone mounts do not suppress Agent defaults. CG
 inspects the published root revision and all pinned named-child revisions, refusing
 writable standalone defaults or unpinned named children. It selects the audited
 root revision in each newly frozen managed input, without editing Agent resources. Disabling managed memory retains the
-Host's memory selection and its write permissions. Memory changes require idle
+Agent's memory selection and its write permissions. Conversations using the same
+Agent-selected Space can search each other's memories; disabling isolation does
+not itself select or merge Spaces. Memory changes require idle
 inputs and a compatible new binding. Pinned existing Threads keep their existing
 selection. CG never edits or republishes the Agent to change its tools.
 

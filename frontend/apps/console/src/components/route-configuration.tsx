@@ -519,7 +519,7 @@ export function RouteConfiguration({
         )}
         {!mcpOnly && (
           <TabsContent value="memory" className="mt-4 gap-4 data-[state=active]:grid">
-            <FormField id="conversation-memory" label={t("Conversation memory")}>
+            <FormField id="conversation-memory" label={t("Isolate conversation memory")}>
               <Switch
                 id="conversation-memory"
                 checked={conversationMemory}
@@ -528,13 +528,15 @@ export function RouteConfiguration({
               />
               <p className="text-xs text-muted-foreground">
                 {t(
-                  "Use a separate a13n Memory Space for each source conversation. Reuse it across fresh threads. Requires Host memory-space support.",
+                  "Use a separate Memory Space for each conversation scope. Reuse it across new sessions.",
                 )}
               </p>
             </FormField>
             {!conversationMemory && (
               <p className="text-xs text-muted-foreground">
-                {t("Host memory selection applies, including its write permissions.")}
+                {t(
+                  "Use the Agent's memory configuration. Conversations sharing a Space can search across chats. Its write permissions apply.",
+                )}
               </p>
             )}
             {conversationMemory && (

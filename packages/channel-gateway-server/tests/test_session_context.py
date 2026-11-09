@@ -27,11 +27,7 @@ def body(request):
 
 
 def origin_handle(request):
-    return next(
-        part["value"]["origin_context"]
-        for part in body(request)["payload"]["content"]
-        if part["type"] == "json" and "origin_context" in part["value"]
-    )
+    return context(request)["origin_context"]
 
 
 def expire(gateway):
@@ -339,11 +335,8 @@ def test_full_incremental_window_retains_a_recovery_reference(gateway):
     finish(gateway)
     request = submissions(gateway)[1]
     assert len(context(request)["history"]) == 100
-    coverage = next(
-        p["value"]["history_coverage"]
-        for p in body(request)["payload"]["content"]
-        if "history_coverage" in p.get("value", {})
-    )
+    assert len(body(request)["payload"]["content"]) == 1
+    coverage = context(request)["history_coverage"]
     assert coverage["complete"] is False and coverage["read"]["resource"] == "messages"
     frozen = gateway[0].portal.call(store.rows, "SELECT body FROM events WHERE target LIKE '%/inbox'", ())
     assert "history_coverage" in frozen[0]["body"]

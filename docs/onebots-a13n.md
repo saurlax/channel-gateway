@@ -281,7 +281,12 @@ route. Use **Load earlier messages** to read older history.
 If a message is `submitted`, check the assigned run in a13n; a waiting run needs
 to be resolved there. For a failed event, fix connection or Agent configuration
 and select **Retry**. Keep replacement a13n keys within the same principal and
-workspace. Retrying resumes the recorded command or polling operation.
+workspace. Retry checks the Host before replacing an accepted input. A confirmed
+failed or cancelled execution is submitted again using current configuration;
+an uncertain submission keeps its original request and idempotency key, and
+active or completed work is only polled. If status cannot be confirmed, Retry
+leaves the event unchanged. Retrying an unsuccessful execution can repeat effects
+it already performed; inspect any existing Agent replies first.
 
 Outgoing entries in the same conversation show their text and delivery status. A `queued` reply is waiting for sending; a `sent` reply has a confirmed
 channel receipt. If a reply is `unknown`, inspect the channel before deciding whether

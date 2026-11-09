@@ -241,7 +241,9 @@ class Bridge:
                 return
             if not target:
                 target = await self.store.prepare_delivery(event, route, body, active_thread_id=active_thread)
-            receipt = await self.adapters.host(connection, "POST", target, body=body, key=event["id"])
+            receipt = await self.adapters.host(
+                connection, "POST", target, body=body, key=event["delivery_key"] or event["id"]
+            )
             await self.store.submitted(event["id"], route["id"], receipt)
             self.wake.set()
             return
@@ -267,6 +269,33 @@ class Bridge:
             return
         await self.store.update_event(event["id"], state="completed", error=None)
         self.wake.set()
+
+    async def retry(self, event_id: str) -> str:
+        """Reconcile acceptance before deciding whether a new execution is safe."""
+        rows = await self.store.rows("SELECT * FROM events WHERE id=?", (event_id,))
+        if not rows or rows[0]["state"] != "failed":
+            raise ValueError("Only a failed event can be retried")
+        event = rows[0]
+        if not event["entry_id"]:
+            return await self.store.retry_event(event, restart=False)
+        route = await self.store.route(event["route_id"])
+        message = json.loads(event["message"])
+        if not route or not route_allows_sender(route, message["sender_id"]):
+            raise ValueError("Route permission revoked")
+        connection = await self.store.connection(route["host_id"])
+        if not connection or connection["kind"] != "a13n":
+            raise ValueError("Host connection is unavailable")
+        run_id = event["run_id"]
+        restart = False
+        if not run_id:
+            path = resource_path("threads", event["thread_id"]) + "/inbox/" + event["entry_id"]
+            entry = await self.adapters.host(connection, "GET", path)
+            run_id = entry.get("assigned_run_id")
+            restart = entry["status"] in {"cancelled", "rejected"} and not run_id
+        if run_id:
+            run = await self.adapters.host(connection, "GET", resource_path("runs", run_id))
+            restart = run["status"] in {"failed", "cancelled"}
+        return await self.store.retry_event(event, restart=restart, route=route, connection=connection)
 
     async def send(self, reply: dict) -> None:
         route = await self.store.route(reply["route_id"])

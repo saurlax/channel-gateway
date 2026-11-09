@@ -557,11 +557,12 @@ def create_app(
 
     @app.post("/api/v1/events/{event_id}/retry")
     async def retry(event_id: str, _admin: None = Depends(admin)) -> dict:
-        rows = await store.rows("SELECT * FROM events WHERE id=?", (event_id,))
-        if not rows or rows[0]["state"] != "failed":
-            raise HTTPException(409, "Only a failed event can be retried")
-        state = "submitted" if rows[0]["entry_id"] else "queued"
-        await store.update_event(event_id, state=state, attempts=0, error=None)
+        try:
+            state = await bridge.retry(event_id)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from None
+        except (AdapterError, httpx.HTTPError, KeyError, TypeError):
+            raise HTTPException(502, "Host status could not be confirmed; retry later") from None
         bridge.wake.set()
         return {"state": state}
 

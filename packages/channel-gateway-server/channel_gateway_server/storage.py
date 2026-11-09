@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS archived_routes (
 );
 CREATE TABLE IF NOT EXISTS events (
  id TEXT PRIMARY KEY, route_id TEXT NOT NULL, message TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued',
- target TEXT, body TEXT, thread_id TEXT, entry_id TEXT, run_id TEXT,
+ target TEXT, body TEXT, thread_id TEXT, entry_id TEXT, run_id TEXT, delivery_key TEXT,
  attempts INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE TABLE IF NOT EXISTS replies (
@@ -104,6 +104,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS route_mcp_connection ON routes(
 ) WHERE json_extract(value, '$.mcp_connection_id') IS NOT NULL;
 """
 
+ROUTES_QUERY = (
+    "SELECT r.*,(json_type(r.value,'$.sources')='array' OR EXISTS(SELECT 1 FROM connections c WHERE c.id=r.channel_id)) "
+    "AND EXISTS(SELECT 1 FROM connections h WHERE h.id=json_extract(r.value,'$.host_id')) AS channel_present "
+    "FROM routes r ORDER BY r.id"
+)
+
 
 def new_id(kind: str) -> str:
     return kind + "_" + secrets.token_hex(8)
@@ -129,6 +135,10 @@ class Store:
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA journal_mode=WAL")
         await self.db.executescript(SCHEMA)
+        async with self.db.execute("PRAGMA table_info(events)") as cursor:
+            event_columns = {row["name"] for row in await cursor.fetchall()}
+        if "delivery_key" not in event_columns:
+            await self.db.execute("ALTER TABLE events ADD COLUMN delivery_key TEXT")
         async with self.db.execute("PRAGMA table_info(stream_sessions)") as cursor:
             stream_columns = {row["name"] for row in await cursor.fetchall()}
         if "reply_context" not in stream_columns:
@@ -386,11 +396,9 @@ class Store:
         return value
 
     async def routes(self) -> list[dict]:
-        rows = await self.rows(
-            "SELECT r.*,(json_type(r.value,'$.sources')='array' OR EXISTS(SELECT 1 FROM connections c WHERE c.id=r.channel_id)) "
-            "AND EXISTS(SELECT 1 FROM connections h WHERE h.id=json_extract(r.value,'$.host_id')) AS channel_present "
-            "FROM routes r ORDER BY r.id"
-        )
+        return self._route_views(await self.rows(ROUTES_QUERY))
+
+    def _route_views(self, rows: list[dict]) -> list[dict]:
         routes = [self.route_view(row) for row in rows]
         for route, row in zip(routes, rows, strict=True):
             route["enabled"] = route["enabled"] and bool(row["channel_present"])
@@ -863,6 +871,7 @@ class Store:
                 )
             row.pop("body")
             row.pop("target")
+            row.pop("delivery_key")
         if route_id is None:
             observations = await self.rows("SELECT * FROM observations ORDER BY rowid DESC LIMIT ?", (limit,))
             for row in observations:
@@ -1259,6 +1268,38 @@ class Store:
             )
             await db.execute("UPDATE events SET target=?,body=? WHERE id=?", (target, json.dumps(body), event["id"]))
         return target
+
+    async def retry_event(
+        self, event: dict, *, restart: bool, route: dict | None = None, connection: dict | None = None
+    ) -> str:
+        """Resume an uncertain delivery, or reserve one new delivery after confirmed failure."""
+        async with self.transaction() as db:
+            async with db.execute("SELECT * FROM events WHERE id=?", (event["id"],)) as cursor:
+                current = await cursor.fetchone()
+            if current is None or dict(current) != event or current["state"] != "failed":
+                raise ValueError("Event changed; refresh before retrying")
+            if route is not None:
+                async with db.execute(ROUTES_QUERY) as cursor:
+                    routes = self._route_views([dict(row) for row in await cursor.fetchall()])
+                saved_route = next((row for row in routes if row["id"] == route["id"]), None)
+                async with db.execute("SELECT value FROM connections WHERE id=?", (route["host_id"],)) as cursor:
+                    saved_host = await cursor.fetchone()
+                if (
+                    saved_route is None
+                    or saved_route != route
+                    or saved_host is None
+                    or json.loads(saved_host[0]) != connection
+                ):
+                    raise ValueError("Route or Host changed; refresh before retrying")
+            state = "queued" if restart or not event["entry_id"] else "submitted"
+            if restart:
+                await db.execute("DELETE FROM event_thread_bindings WHERE event_id=?", (event["id"],))
+                await db.execute(
+                    "UPDATE events SET target=NULL,body=NULL,thread_id=NULL,entry_id=NULL,run_id=NULL,delivery_key=? WHERE id=?",
+                    (new_id("delivery"), event["id"]),
+                )
+            await db.execute("UPDATE events SET state=?,attempts=0,error=NULL WHERE id=?", (state, event["id"]))
+        return state
 
     async def reset_thread(self, route_id: str) -> dict | None:
         """Detach a route's threads without replaying or deleting history."""

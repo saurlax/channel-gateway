@@ -109,7 +109,7 @@ Fixed threads intentionally share upstream history across sources; removing a
 source cannot retract history already submitted to that thread.
 
 Thread bindings persist across restarts. Before an external request, an event
-freezes its binding scope, target and body; retries reuse that exact request and
+freezes its binding scope, target and body; transport retries reuse that exact request and
 idempotency key, including for `message`. Only the oldest unconfirmed submission
 in a destination scope advances. Accepted inputs are polled independently;
 the busy-input policy below controls whether they delay new submissions.
@@ -175,7 +175,7 @@ are shared across concrete conversations. Reset detaches the environment origin.
 Window submissions retain FIFO admission and never overtake an unconfirmed
 submission in their conversation. Accepted work does not block newer steers.
 Other conversations remain independent. Snapshot, active/idle destination and
-mount selection are frozen with the Host request and reused on every retry,
+mount selection are frozen with the Host request and reused on every transport retry,
 even if the run completes before a lost receipt is retried. Frozen requests made
 before this change retain their original bodies and destinations. Existing
 upstream threads/environments and gateway history are not deleted.
@@ -204,7 +204,7 @@ Generic MCP Hosts expose no execution control and reject non-default busy policy
 Missing stored policies default to `steer`. Children inherit the current parent's
 policy. The policy may change during execution without changing thread identity
 or resetting bindings. A change affects only requests whose bodies are not yet
-frozen. Previously frozen bodies retain their delivery selection on every retry;
+frozen. Previously frozen bodies retain their delivery selection on every transport retry;
 a lost acceptance receipt still blocks later submissions in that scope until
 resolved. Each cycle reserves capacity for polling accepted work as well as
 admitting new requests.
@@ -302,6 +302,7 @@ stateDiagram-v2
     queued --> failed: Host request failures
     submitted --> failed: Host request failures or unsuccessful entry/run
     failed --> queued: Retry without entry receipt
+    failed --> queued: Retry after confirmed unsuccessful execution
     failed --> submitted: Retry with entry receipt
 ```
 
@@ -309,7 +310,7 @@ Before the first submission attempt, CG persists the target path and complete
 request body. Creation uses `POST /threads`; continuation uses
 `POST /threads/{thread_id}/inbox`, with `delivery: steer` by default or
 `next_run` for queue mode. The event ID is the
-stable `Idempotency-Key`. A lost receipt retries the same target, body, and key,
+initial `Idempotency-Key`. A lost receipt retries the same target, body, and key,
 even when configuration or thread observations change later.
 
 A submission receipt records the thread, inbox entry, and optional run ID.
@@ -319,8 +320,22 @@ waiting runs remain `submitted`; waiting work is resolved in a13n.
 
 Host request/parsing failures increment attempts; five failures mark the event
 `failed`. Valid run observations reset that failure counter. Administrator retry
-resets attempts and resumes submission or polling based on the persisted entry
-receipt; it preserves a frozen submission request. Replacement a13n keys must
+resets attempts. Without an entry receipt it resumes the frozen submission with
+the same key. With a receipt it first reads the assigned run, resolving the exact
+entry when necessary. A confirmed `failed` or `cancelled` run, or a `cancelled` or
+`rejected` entry with no assigned run, reserves a new delivery under the same
+source event. It clears the old request and receipt, selects current routing and
+Agent configuration, and durably allocates a fresh idempotency key before the new
+submission. Repeated transport attempts, including after restart, reuse that new
+delivery's frozen target, body and key. Source-event deduplication is unchanged.
+Concurrent administrator retries may reserve only one new delivery.
+
+Active, completed, pending or unrecognized Host outcomes resume polling without
+creating another execution. A failed status read leaves the event unchanged;
+the administrator receives a safe error. Route/Host changes during the read
+refuse the stale retry. A new execution can repeat effects an unsuccessful run
+already performed; CG does not resend existing channel replies automatically.
+Replacement a13n keys must
 retain the same upstream principal/workspace for the upstream idempotency scope
 to remain valid.
 

@@ -13,10 +13,12 @@ from .channels.actions import tool_message_allowed
 from .channels.common import OperationRejected, SendBlocked
 from .channels.manager import ChannelManager
 from .channels.platforms.common import same_connection
-from .model_providers import ModelError, should_process
+from .host_context import MemoryPolicyError
+from .host_failures import failure_notice
 from .models import route_allows_sender
 from .routing import select_route
 from .storage import Store
+from .wake_decisions import DecisionError, decision_key, should_process
 
 logger = logging.getLogger("channel-gateway.bridge")
 
@@ -40,13 +42,13 @@ class Bridge:
         self._wake_jobs.clear()
 
     async def _classify(
-        self, provider: dict | None, message: dict, history: list[dict], active: bool
+        self, connection: dict, route: dict, event_id: str, message: dict, history: list[dict], active: bool
     ) -> tuple[bool, str | None]:
         try:
-            if provider is None:
-                raise ModelError("Model provider is unavailable")
-            return await should_process(self.adapters.client, provider, message, history, active=active), None
-        except ModelError as failure:
+            return await should_process(
+                self.store, self.adapters, connection, route, event_id, message, history, active=active
+            ), None
+        except DecisionError as failure:
             # Classification is an optimization, never a message-loss boundary.
             return True, str(failure)
 
@@ -108,14 +110,17 @@ class Bridge:
         for event in await self.store.pending():
             try:
                 await self.advance(event)
-            except (AdapterError, httpx.HTTPError, ValueError, KeyError, TypeError):
+            except (AdapterError, httpx.HTTPError, ValueError, KeyError, TypeError) as failure:
                 attempts = event["attempts"] + 1
-                await self.store.update_event(
-                    event["id"],
-                    attempts=attempts,
-                    error="Host request failed; check connection and Agent configuration",
-                    state="failed" if attempts >= 5 else event["state"],
+                error = (
+                    str(failure)
+                    if isinstance(failure, MemoryPolicyError)
+                    else "Host request failed; check connection and Agent configuration"
                 )
+                if attempts >= 5:
+                    await self.store.fail_event(event["id"], error, failure_notice(str(failure)), attempts=attempts)
+                else:
+                    await self.store.update_event(event["id"], attempts=attempts, error=error)
         for reply in await self.store.pending_replies():
             await self.send(reply)
         if self.channels:
@@ -155,25 +160,38 @@ class Bridge:
             # original command even after another receipt binds the route's thread.
             target = event["target"]
             pending_decision = self._wake_jobs.get(event["id"])
-            if pending_decision and pending_decision[0] == route and not pending_decision[1].done():
+            if (
+                pending_decision
+                and pending_decision[0] == {"route": route, "host": connection}
+                and not pending_decision[1].done()
+            ):
                 return
             active_thread = None
+            active = False
             previous = None
-            if not target and route.get("thread_policy") == "window":
+            if not target and route.get("thread_policy") != "message":
                 from .host_context import active_work
 
                 previous = await self.store.environment_thread(route, message)
-                if previous:
+                if previous and route.get("session_idle_minutes") is None and not route.get("wake_agent_id"):
+                    active_thread = previous
+                elif previous:
                     thread = await self.adapters.host(connection, "GET", resource_path("threads", previous))
-                    if await active_work(
-                        self.adapters, connection, thread, children=route.get("coordinate_tasks", False)
+                    active = await active_work(
+                        self.adapters,
+                        connection,
+                        thread,
+                    )
+                    if await self.store.retained_session(
+                        previous, active, route.get("session_idle_minutes"), route["host_id"]
                     ):
                         active_thread = previous
-            if not target and route.get("wake_provider_id"):
-                decision = await self.store.wake_decision(event["id"])
+            if not target and route.get("wake_agent_id"):
+                binding = decision_key(connection, route, event["id"])
+                decision = await self.store.wake_decision(event["id"], binding)
                 if decision is None:
                     job = self._wake_jobs.get(event["id"])
-                    if job and job[0] != route:
+                    if job and job[0] != {"route": route, "host": connection}:
                         job[1].cancel()
                         await asyncio.gather(job[1], return_exceptions=True)
                         self._wake_jobs.pop(event["id"])
@@ -183,33 +201,60 @@ class Bridge:
                             return
                         task = asyncio.create_task(
                             self._classify(
-                                await self.store.model_provider(route["wake_provider_id"]),
+                                connection,
+                                route,
+                                event["id"],
                                 message,
                                 await self.store.delivery_history(event, {**route, "history_limit": 8}),
-                                bool(active_thread),
+                                active,
                             )
                         )
                         task.add_done_callback(lambda _: self.wake.set())
-                        self._wake_jobs[event["id"]] = (route, task)
-                        return
-                    if not job[1].done():
+                        self._wake_jobs[event["id"]] = ({"route": route, "host": connection}, task)
                         return
                     self._wake_jobs.pop(event["id"])
                     process, error = job[1].result()
-                    if await self.store.route(route["id"]) != route:
+                    if await self.store.route(route["id"]) != route or not same_connection(
+                        await self.store.connection(connection["id"]), connection
+                    ):
                         return
-                    await self.store.save_wake_decision(event["id"], route["wake_provider_id"], process, error)
-                    decision = await self.store.wake_decision(event["id"])
+                    await self.store.save_wake_decision(event["id"], route["wake_agent_id"], process, error, binding)
+                    decision = await self.store.wake_decision(event["id"], binding)
                 if decision and not decision["process"]:
                     await self.store.update_event(event["id"], state="filtered", error=None)
                     return
-            body = (
-                json.loads(event["body"])
-                if event["body"]
-                else host_body(
-                    message, route, None if active_thread else await self.store.delivery_history(event, route)
-                )
-            )
+            if target:
+                body = json.loads(event["body"])
+            else:
+                history = await self.store.delivery_history(event, route, active_thread)
+                body = host_body(message, route, history)
+                if route.get("conversation_memory"):
+                    from .host_context import memory_safe_revision
+
+                    body["agent_revision_id"] = await memory_safe_revision(self.adapters, connection, route["agent_id"])
+                import secrets
+
+                handle = secrets.token_urlsafe(32)
+                context_part = {
+                    "origin_context": handle,
+                    "instruction": "Pass origin_context to send_message for verified initiating context. Never disclose this handle.",
+                }
+                body["payload"]["content"].append({"type": "json", "value": context_part})
+                body["_context_handle"] = handle
+                if active_thread and len(history) == 100:
+                    body["payload"]["content"].append(
+                        {
+                            "type": "json",
+                            "value": {
+                                "history_coverage": {
+                                    "complete": False,
+                                    "route_id": route["id"],
+                                    "read": {"resource": "messages", "arguments": {"limit": 100}},
+                                    "instruction": "Earlier context may be missing. Read this route's gateway messages from the latest page and follow next_cursor as needed; creation order can differ from send-confirmation order.",
+                                }
+                            },
+                        }
+                    )
             if "connection_tools" in body.get("options", {}).get("overrides", {}):
                 # A frozen command may already have reached the Host. Retire it
                 # rather than replay a removed policy or change an idempotent body.
@@ -217,25 +262,33 @@ class Bridge:
                     event["id"], state="blocked", error="Legacy tool override retired; send a new message"
                 )
                 return
-            if not target and route.get("thread_policy") == "window":
-                if active_thread:
-                    body["delivery"] = "steer"
-                else:
-                    if previous:
-                        body["environments"] = await self.adapters.thread_environments(connection, previous)
-                    body["delivery"] = "next_run"
+            if not target and not active_thread:
+                origin, provisioning = await self.store.environment_origin(route)
+                if provisioning:
+                    # The first shared-environment creation may already have reached the Host.
+                    # Its original event must reconcile before another Session can use it.
+                    return
+                if origin:
+                    body["environments"] = await self.adapters.thread_environments(connection, origin)
             if not target and not active_thread and route.get("conversation_memory"):
                 # An existing inbox retains its settled session selection.
                 from .host_context import memory_space
 
-                if route.get("thread_policy") in {"window", "message"} or not route.get("thread_id"):
-                    space_id = await memory_space(self.store, self.adapters, connection, route, message)
-                    body["session"] = {
-                        "memory": {
-                            "enabled": True,
-                            "spaces": [{"name": "conversation", "space_id": space_id, "access": "write"}],
-                        }
+                space_id = await memory_space(self.store, self.adapters, connection, route, message)
+                body["session"] = {
+                    "memory": {
+                        "enabled": True,
+                        "spaces": [
+                            {"name": "conversation", "space_id": space_id, "access": "write"},
+                            *[
+                                {"name": "global-" + str(index + 1), "space_id": identifier, "access": "read"}
+                                for index, identifier in enumerate(route.get("global_memory_space_ids", []))
+                            ],
+                        ],
                     }
+                }
+                # Standalone defaults were inspected; empty initial mounts do not suppress them.
+                body["memories"] = []
             # Recheck authorization after all external reads, before freezing a submission.
             if not target and await self.store.route(route["id"]) != route:
                 return
@@ -252,7 +305,7 @@ class Bridge:
             path = resource_path("threads", event["thread_id"]) + "/inbox/" + event["entry_id"]
             entry = await self.adapters.host(connection, "GET", path)
             if entry["status"] not in {"pending", "assigned", "consumed"}:
-                await self.store.update_event(event["id"], state="failed", error="a13n did not accept the inbox entry")
+                await self.store.fail_event(event["id"], "a13n did not accept the inbox entry", failure_notice())
                 return
             run_id = entry.get("assigned_run_id")
             if not run_id:
@@ -260,13 +313,24 @@ class Bridge:
             await self.store.update_event(event["id"], run_id=run_id)
         run = await self.adapters.host(connection, "GET", resource_path("runs", run_id))
         if run["status"] in {"accepted", "running", "waiting"}:
+            await self.store.retained_session(
+                event["thread_id"], True, route.get("session_idle_minutes"), route["host_id"]
+            )
             await self.store.update_event(event["id"], attempts=0, error=None)
             return
         if run["status"] != "completed":
-            await self.store.update_event(
-                event["id"], state="failed", error="Agent run ended without a completed result"
-            )
+            notice = failure_notice(run.get("failure"), status=run["status"])
+            await self.store.fail_event(event["id"], notice, notice)
             return
+        active = False
+        if route.get("session_idle_minutes") is not None:
+            from .host_context import active_work
+
+            thread = await self.adapters.host(connection, "GET", resource_path("threads", event["thread_id"]))
+            active = await active_work(self.adapters, connection, thread)
+        await self.store.retained_session(
+            event["thread_id"], active, route.get("session_idle_minutes"), route["host_id"]
+        )
         await self.store.update_event(event["id"], state="completed", error=None)
         self.wake.set()
 
@@ -295,13 +359,22 @@ class Bridge:
         if run_id:
             run = await self.adapters.host(connection, "GET", resource_path("runs", run_id))
             restart = run["status"] in {"failed", "cancelled"}
-        return await self.store.retry_event(event, restart=restart, route=route, connection=connection)
+        return await self.store.retry_event(
+            event, restart=restart, route=route, connection=connection, prior_run_id=run_id
+        )
 
     async def send(self, reply: dict) -> None:
         route = await self.store.route(reply["route_id"])
         if not route or not route["enabled"]:
             await self.store.finish_reply(reply["id"], "blocked", error="Route is disabled")
             return
+        provenance = await self.store.rows("SELECT origin FROM message_provenance WHERE reply_id=?", (reply["id"],))
+        if provenance:
+            origin = json.loads(provenance[0]["origin"])
+            source_route = await self.store.route(origin["route_id"])
+            if not source_route or not route_allows_sender(source_route, origin["sender_id"]):
+                await self.store.finish_reply(reply["id"], "blocked", error="Origin permission revoked")
+                return
         if reply["event_id"]:
             source = await self.store.event(reply["event_id"])
             if source is None or not route_allows_sender(route, source["message"]["sender_id"]):
@@ -315,7 +388,7 @@ class Bridge:
             return
         payload = await self.store.reply_payload(reply["id"])
         proactive = payload and payload.get("delivery") in {"proactive", "wakeup"}
-        if payload and (
+        if (payload or reply["event_id"]) and (
             not tool_message_allowed(route, connection)
             or (proactive and "message.proactive" not in route.get("action_grants", []))
         ):

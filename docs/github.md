@@ -154,13 +154,13 @@ writes fail closed during an active cooldown instead of retrying automatically.
 Conversations use `conversation_kind: thread` and
 `conversation_id: REPOSITORY_ID:ISSUE_OR_PR_NUMBER`, for example `400001:12`.
 Use the existing route API with that channel ID, a Host ID and, for a13n, an Agent
-ID. Wildcard routes materialize independent conversation children. Use per-
-conversation or window delivery for isolated working environments; a fixed
-thread intentionally shares execution history. The existing [Host setup](agent-hosts.md)
+ID. Wildcard routes materialize independent conversation children. Select conversation scope for separate Issue/PR context and independently select
+conversation environments to retain a workspace per Issue/PR. A fixed Thread
+intentionally shares execution history; global environment scope shares files. The existing [Host setup](agent-hosts.md)
 and [a13n guide](onebots-a13n.md) apply without a new execution service.
 
 `discover(resource='operations', route_id=...)` advertises schemas. Examples below
-are tool arguments, with the authorized `route_id` supplied on every Host-key call.
+are tool arguments, with the authorized `route_id` supplied on every multi-source route-token call.
 
 Read the current PR:
 

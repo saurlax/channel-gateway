@@ -15,7 +15,7 @@ from .test_thread_delivery import configure, deliver, submissions
 gateway = gateway_fixture
 
 
-@pytest.mark.parametrize("policy", ["conversation", "sender", "fixed", "message", "window"])
+@pytest.mark.parametrize("policy", ["conversation", "sender", "fixed", "message"])
 @pytest.mark.parametrize("status", ["failed", "cancelled"])
 def test_retry_failed_run_submits_new_execution_with_current_configuration(gateway, policy, status):
     configured = configure(gateway, policy)
@@ -44,7 +44,10 @@ def test_retry_failed_run_submits_new_execution_with_current_configuration(gatew
     assert completed["state"] == "completed"
     assert len(client.get("/api/v1/events").json()) == 1
     assert webhook(gateway, message_id=1).json()["state"] == "duplicate"
-    assert client.get("/api/v1/replies").json() == []
+    notices = client.get("/api/v1/replies").json()
+    assert len(notices) == 1
+    assert notices[0]["event_id"] == failed["id"]
+    assert notices[0]["state"] == "sent"
 
 
 def test_lost_retry_receipt_reuses_new_key_and_frozen_request_after_restart(gateway):

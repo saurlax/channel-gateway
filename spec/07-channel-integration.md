@@ -93,7 +93,7 @@ One connection represents one bot/installation identity. A Slack workspace, Lark
 tenant, Teams tenant, WhatsApp phone-number binding, and Signal linked device are
 not interchangeable accounts. OAuth user credentials are a separate selected
 principal with separate storage/revocation, never an automatic fallback for a
-bot operation. Channel API credentials remain separate from Host MCP keys.
+bot operation. Channel API credentials remain separate from route MCP tokens.
 
 ## Conversation and message identity
 

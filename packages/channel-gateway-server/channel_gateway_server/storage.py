@@ -6,6 +6,7 @@ import json
 import secrets
 import time
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
@@ -16,12 +17,35 @@ from .channels.platforms.common import CHANNEL_KINDS, CONVERSATION_KINDS, same_c
 from .media import public_message
 from .models import route_allows_sender
 from .routing import RouteConflict, check_source_conflicts, route_sources, select_route
-from .thread_policy import thread_binding_key
+from .thread_policy import environment_binding_key, thread_binding_key
+
+verified_origin: ContextVar[dict | None] = ContextVar("cgw_verified_origin", default=None)
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS model_providers (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS session_activity (
+ host_id TEXT NOT NULL, thread_id TEXT NOT NULL, idle_since REAL, last_input REAL NOT NULL,
+ PRIMARY KEY(host_id,thread_id)
+);
+CREATE TABLE IF NOT EXISTS environment_bindings (
+ scope TEXT PRIMARY KEY, event_id TEXT NOT NULL, thread_id TEXT
+);
+CREATE TABLE IF NOT EXISTS delivery_assembly (
+ event_id TEXT PRIMARY KEY, environment_scope TEXT, context_handle_hash TEXT NOT NULL UNIQUE, session_id TEXT
+);
+CREATE TABLE IF NOT EXISTS context_positions (
+ thread_id TEXT NOT NULL, route_id TEXT NOT NULL, created_at TEXT NOT NULL, record_id TEXT NOT NULL,
+ PRIMARY KEY(thread_id,route_id)
+);
+CREATE TABLE IF NOT EXISTS confirmed_sends (
+ reply_id TEXT PRIMARY KEY, accepted_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS message_provenance (
+ reply_id TEXT PRIMARY KEY, origin TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wake_requests (id TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS wake_decisions (
- event_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, process INTEGER NOT NULL, error TEXT
+ event_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, process INTEGER NOT NULL, error TEXT, binding TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS conversation_memories (
  scope TEXT PRIMARY KEY, space_id TEXT NOT NULL
@@ -32,7 +56,6 @@ CREATE TABLE IF NOT EXISTS operation_effects (
 );
 CREATE INDEX IF NOT EXISTS operation_effect_parent ON operation_effects(operation_id);
 CREATE TABLE IF NOT EXISTS connections (id TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS host_keys (host_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS thread_bindings (
  binding_key TEXT PRIMARY KEY, route_id TEXT NOT NULL, thread_id TEXT NOT NULL
 );
@@ -61,6 +84,7 @@ CREATE TABLE IF NOT EXISTS replies (
 CREATE TABLE IF NOT EXISTS reply_payloads (
  reply_id TEXT PRIMARY KEY, payload TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS host_failure_notices (event_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS qq_send_attempts (
  id INTEGER PRIMARY KEY, account_id TEXT NOT NULL, conversation_key TEXT NOT NULL, created_at REAL NOT NULL
 );
@@ -139,6 +163,18 @@ class Store:
             event_columns = {row["name"] for row in await cursor.fetchall()}
         if "delivery_key" not in event_columns:
             await self.db.execute("ALTER TABLE events ADD COLUMN delivery_key TEXT")
+        # Host-wide capabilities are retired; only route-issued tokens authenticate MCP.
+        await self.db.execute("DROP TABLE IF EXISTS host_keys")
+        await self.db.execute("DROP TABLE IF EXISTS model_providers")
+        async with self.db.execute("PRAGMA table_info(wake_decisions)") as cursor:
+            wake_columns = {row["name"] for row in await cursor.fetchall()}
+        if "provider_id" in wake_columns:
+            await self.db.execute("ALTER TABLE wake_decisions RENAME COLUMN provider_id TO agent_id")
+        if "binding" not in wake_columns:
+            await self.db.execute("ALTER TABLE wake_decisions ADD COLUMN binding TEXT NOT NULL DEFAULT ''")
+        for table in ("routes", "archived_routes"):
+            await self.db.execute(f"UPDATE {table} SET value=json_remove(value,'$.wake_provider_id')")
+
         async with self.db.execute("PRAGMA table_info(stream_sessions)") as cursor:
             stream_columns = {row["name"] for row in await cursor.fetchall()}
         if "reply_context" not in stream_columns:
@@ -148,7 +184,9 @@ class Store:
             await db.execute("UPDATE routes SET value=json_remove(value,'$.auto_reply','$.access_mode')")
             await db.execute("UPDATE replies SET state='queued' WHERE state='approved'")
             await db.execute(
-                "UPDATE replies SET state='blocked',error='Automatic output delivery retired' WHERE event_id IS NOT NULL AND state='queued'"
+                "UPDATE replies SET state='blocked',error='Automatic output delivery retired' "
+                "WHERE event_id IS NOT NULL AND state='queued' "
+                "AND event_id NOT IN (SELECT event_id FROM host_failure_notices)"
             )
             for table in ("routes", "archived_routes"):
                 async with db.execute(f"SELECT id,value FROM {table}") as cursor:
@@ -156,12 +194,13 @@ class Store:
                 for row in stored:
                     value = json.loads(row[1])
                     previous = value.pop("reply_source", None)
+                    retired_coordination = value.pop("coordinate_tasks", None)
                     # Preserve existing OneBot reaction authority without granting it to other routes.
                     if previous == "mcp":
                         grants = value.setdefault("action_grants", [])
                         if "message.react" not in grants and "message.react.onebot" not in grants:
                             grants.append("message.react.onebot")
-                    if previous is not None:
+                    if previous is not None or retired_coordination is not None:
                         await db.execute(f"UPDATE {table} SET value=? WHERE id=?", (json.dumps(value), row[0]))
             await db.execute(
                 "UPDATE channel_actions SET required_grant='message.react.onebot' WHERE required_grant='legacy.react'"
@@ -175,24 +214,38 @@ class Store:
         await self.db.execute(
             "UPDATE stream_sessions SET state='unknown' WHERE id IN (SELECT json_extract(arguments,'$.stream_handle') FROM channel_actions WHERE state='unknown' AND operation='stream_message')"
         )
-        # Upgrade legacy default conversation routes without losing environment origins.
-        # Explicit sender/fixed/message policies and frozen requests stay intact.
+        # Preserve continuing legacy routes; window maps once to fresh-on-idle sessions.
         async with self.transaction() as db:
-            async with db.execute("SELECT id,value FROM routes") as cursor:
+            async with db.execute("SELECT * FROM routes") as cursor:
                 legacy = await cursor.fetchall()
             for row in legacy:
                 value = json.loads(row["value"])
-                if "history_limit" in value:
-                    continue
-                value["history_limit"] = 30
-                async with db.execute("SELECT value FROM connections WHERE id=?", (value["host_id"],)) as cursor:
-                    host = await cursor.fetchone()
-                if (
-                    host
-                    and json.loads(host[0])["kind"] == "a13n"
-                    and value.get("thread_policy", "conversation") == "conversation"
-                ):
-                    value["thread_policy"] = "window"
+                value.setdefault("history_limit", 30)
+                old = {**value, "thread_id": row["thread_id"]}
+                if value.get("thread_policy") == "window":
+                    old_key = thread_binding_key(old, {})
+                    value.update(thread_policy="conversation", session_idle_minutes=0, environment_scope="conversation")
+                    new_key = thread_binding_key(value, {})
+                    async with db.execute(
+                        "SELECT e.thread_id FROM event_thread_bindings b JOIN events e ON e.id=b.event_id "
+                        "WHERE b.binding_key=? AND e.thread_id IS NOT NULL ORDER BY e.rowid DESC LIMIT 1",
+                        (old_key,),
+                    ) as cursor:
+                        previous = await cursor.fetchone()
+                    await db.execute(
+                        "UPDATE event_thread_bindings SET binding_key=? WHERE binding_key=?", (new_key, old_key)
+                    )
+                    await db.execute("DELETE FROM thread_bindings WHERE binding_key=?", (old_key,))
+                    if previous:
+                        await db.execute(
+                            "INSERT OR REPLACE INTO thread_bindings VALUES (?,?,?)",
+                            (new_key, value.get("parent_route_id") or value["id"], previous[0]),
+                        )
+                        env_key = environment_binding_key(value)
+                        await db.execute(
+                            "INSERT OR IGNORE INTO environment_bindings VALUES (?,?,?)",
+                            (env_key, "legacy:" + value["id"], previous[0]),
+                        )
                 await db.execute("UPDATE routes SET value=? WHERE id=?", (json.dumps(value), row["id"]))
         # A request interrupted during delivery might already have taken effect.
         await self.db.execute(
@@ -224,44 +277,25 @@ class Store:
     async def connections(self) -> list[dict]:
         return [json.loads(row["value"]) for row in await self.rows("SELECT value FROM connections ORDER BY id")]
 
-    async def model_providers(self) -> list[dict]:
-        return [json.loads(row["value"]) for row in await self.rows("SELECT value FROM model_providers ORDER BY id")]
-
-    async def model_provider(self, identifier: str) -> dict | None:
-        rows = await self.rows("SELECT value FROM model_providers WHERE id=?", (identifier,))
+    async def wake_request(self, identifier: str) -> dict | None:
+        rows = await self.rows("SELECT value FROM wake_requests WHERE id=?", (identifier,))
         return json.loads(rows[0]["value"]) if rows else None
 
-    async def save_model_provider(self, value: dict, previous: dict | None = None) -> bool:
+    async def save_wake_request(self, identifier: str, value: dict) -> None:
         async with self.transaction() as db:
-            if previous is None:
-                await db.execute("INSERT INTO model_providers VALUES (?,?)", (value["id"], json.dumps(value)))
-                return True
-            result = await db.execute(
-                "UPDATE model_providers SET value=? WHERE id=? AND value=?",
-                (json.dumps(value), value["id"], json.dumps(previous)),
-            )
-            return result.rowcount == 1
+            await db.execute("INSERT OR REPLACE INTO wake_requests VALUES (?,?)", (identifier, json.dumps(value)))
 
-    async def delete_model_provider(self, identifier: str) -> bool:
-        async with self.transaction() as db:
-            async with db.execute(
-                "SELECT 1 FROM routes WHERE json_extract(value,'$.wake_provider_id')=? "
-                "AND json_extract(value,'$.parent_route_id') IS NULL LIMIT 1",
-                (identifier,),
-            ) as cursor:
-                if await cursor.fetchone():
-                    raise RouteConflict("This provider is assigned to a route")
-            result = await db.execute("DELETE FROM model_providers WHERE id=?", (identifier,))
-            return result.rowcount == 1
-
-    async def wake_decision(self, event_id: str) -> dict | None:
-        rows = await self.rows("SELECT * FROM wake_decisions WHERE event_id=?", (event_id,))
+    async def wake_decision(self, event_id: str, binding: str) -> dict | None:
+        rows = await self.rows("SELECT * FROM wake_decisions WHERE event_id=? AND binding=?", (event_id, binding))
         return rows[0] if rows else None
 
-    async def save_wake_decision(self, event_id: str, provider_id: str, process: bool, error: str | None) -> None:
+    async def save_wake_decision(
+        self, event_id: str, agent_id: str, process: bool, error: str | None, binding: str
+    ) -> None:
         async with self.transaction() as db:
             await db.execute(
-                "INSERT OR IGNORE INTO wake_decisions VALUES (?,?,?,?)", (event_id, provider_id, int(process), error)
+                "INSERT OR REPLACE INTO wake_decisions (event_id,agent_id,process,error,binding) VALUES (?,?,?,?,?)",
+                (event_id, agent_id, int(process), error, binding),
             )
 
     async def conversation_memory(self, scope: str) -> str | None:
@@ -363,20 +397,6 @@ class Store:
             await db.execute("INSERT INTO connections VALUES (?,?)", (value["id"], json.dumps(value)))
         return value
 
-    async def rotate_host_key(self, host_id: str) -> str:
-        token = secrets.token_urlsafe(32)
-        async with self.transaction() as db:
-            await db.execute(
-                "INSERT INTO host_keys VALUES (?,?) ON CONFLICT(host_id) DO UPDATE SET token_hash=excluded.token_hash",
-                (host_id, token_hash(token)),
-            )
-        return token
-
-    async def host_for_token(self, token: str) -> dict | None:
-        rows = await self.rows("SELECT host_id FROM host_keys WHERE token_hash=?", (token_hash(token),))
-        host = await self.connection(rows[0]["host_id"]) if rows else None
-        return host if host and host["kind"] in {"a13n", "mcp"} else None
-
     @staticmethod
     def route_view(row: dict) -> dict:
         value = {**json.loads(row["value"]), "thread_id": row["thread_id"]}
@@ -390,9 +410,13 @@ class Store:
         value.setdefault("history_limit", 30)
         value.setdefault("busy_policy", "steer")
         value.setdefault("fixed_thread_id", None)
-        value.setdefault("wake_provider_id", None)
+        value.setdefault("wake_agent_id", None)
         value.setdefault("conversation_memory", False)
-        value.setdefault("coordinate_tasks", False)
+        value.pop("coordinate_tasks", None)
+        value.setdefault("session_idle_minutes", None)
+        value.setdefault("environment_scope", "session")
+        value.setdefault("global_memory_space_ids", [])
+        value.setdefault("shared_memory", False)
         return value
 
     async def routes(self) -> list[dict]:
@@ -417,9 +441,12 @@ class Store:
                         "history_limit",
                         "busy_policy",
                         "fixed_thread_id",
-                        "wake_provider_id",
+                        "wake_agent_id",
                         "conversation_memory",
-                        "coordinate_tasks",
+                        "session_idle_minutes",
+                        "environment_scope",
+                        "global_memory_space_ids",
+                        "shared_memory",
                     ):
                         row[key] = parent[key]
                     selected = select_route(routes, row["channel_id"], row["conversation_kind"], row["conversation_id"])
@@ -443,10 +470,6 @@ class Store:
         host = connections.get(value["host_id"])
         if not host or host["kind"] not in {"a13n", "mcp"}:
             return False
-        if value.get("wake_provider_id"):
-            async with db.execute("SELECT 1 FROM model_providers WHERE id=?", (value["wake_provider_id"],)) as cursor:
-                if not await cursor.fetchone():
-                    return False
         return all(
             source["channel_id"] == "*"
             or (source["channel_id"] in connections and connections[source["channel_id"]]["kind"] in CHANNEL_KINDS)
@@ -656,6 +679,11 @@ class Store:
                     "thread_policy",
                     "fixed_thread_id",
                     "mcp_connection_id",
+                    "session_idle_minutes",
+                    "environment_scope",
+                    "conversation_memory",
+                    "global_memory_space_ids",
+                    "shared_memory",
                 )
             ):
                 async with db.execute(
@@ -697,6 +725,26 @@ class Store:
                 )
             else:
                 await db.execute("UPDATE routes SET value=? WHERE id=?", (json.dumps(value), identifier))
+            if any(
+                value.get(key) != old.get(key)
+                for key in (
+                    "thread_policy",
+                    "host_id",
+                    "agent_id",
+                    "fixed_thread_id",
+                    "session_idle_minutes",
+                    "environment_scope",
+                    "conversation_memory",
+                    "global_memory_space_ids",
+                    "shared_memory",
+                )
+            ):
+                await db.execute(
+                    "UPDATE routes SET thread_id=NULL WHERE id=? OR json_extract(value,'$.parent_route_id')=?",
+                    (identifier, identifier),
+                )
+                await db.execute("DELETE FROM thread_bindings WHERE route_id=?", (identifier,))
+                await db.execute("DELETE FROM event_thread_bindings WHERE route_id=?", (identifier,))
             await self._reconcile_children(db)
             return True
 
@@ -747,7 +795,6 @@ class Store:
                 (identifier, identifier),
             )
             await db.execute("DELETE FROM channel_state WHERE connection_id=?", (identifier,))
-            await db.execute("DELETE FROM host_keys WHERE host_id=?", (identifier,))
             return True
 
     async def delete_route(self, identifier: str) -> bool:
@@ -853,7 +900,7 @@ class Store:
             "SELECT e.*,COALESCE(r.channel_id,a.channel_id) AS source_channel,"
             "COALESCE(r.kind,a.kind) AS source_kind,COALESCE(r.conversation_id,a.conversation_id) AS source_conversation,"
             "json_extract(COALESCE(r.value,a.value),'$.name') AS route_name,"
-            "w.provider_id AS wake_provider_id,w.process AS wake_process,w.error AS wake_error FROM events e "
+            "w.agent_id AS wake_agent_id,w.process AS wake_process,w.error AS wake_error FROM events e "
             "LEFT JOIN wake_decisions w ON w.event_id=e.id "
             "LEFT JOIN routes r ON r.id=e.route_id LEFT JOIN archived_routes a ON a.id=e.route_id"
             + where
@@ -907,13 +954,7 @@ class Store:
                     thread = route.get("fixed_thread_id") or thread
                 elif route.get("thread_policy", "conversation") == "conversation":
                     thread = thread or route.get("thread_id")
-            scope = (
-                ("binding", key)
-                if route.get("thread_policy") == "window"
-                else ("thread", route["host_id"], thread)
-                if thread
-                else ("binding", key or event["id"])
-            )
+            scope = ("thread", route["host_id"], thread) if thread else ("binding", key or event["id"])
             scopes.setdefault(scope, []).append(event)
         queued, submitted = [], []
         for events in scopes.values():
@@ -927,8 +968,6 @@ class Store:
                 if head["frozen"]
                 else route.get("busy_policy", "steer")
             )
-            if route.get("thread_policy") == "window":
-                policy = "steer"
             if policy == "steer" or not any(
                 event["state"] == "submitted" and event["sequence"] < head["sequence"] for event in events
             ):
@@ -1064,9 +1103,12 @@ class Store:
             messages.append(message)
         return messages
 
-    async def sent_messages(self, route: dict, *, limit: int = 20, before: tuple[str, str] | None = None) -> list[dict]:
+    async def sent_messages(
+        self, route: dict, *, limit: int = 20, before: tuple[str, str] | None = None, context_order: bool = False
+    ) -> list[dict]:
         """Read confirmed bot messages under the selected conversation's current read scope."""
         params: tuple = (route["channel_id"], route["conversation_kind"], route["conversation_id"])
+        order_time = "COALESCE(confirmed.accepted_at,p.created_at)" if context_order else "p.created_at"
         where = "r.channel_id=? AND r.kind=? AND r.conversation_id=?"
         if not route["channel_read"]:
             where += " AND p.route_id=?"
@@ -1078,20 +1120,21 @@ class Store:
             where += " AND json_extract(e.message,'$.sender_id')=?"
             params += (route["history_sender_id"],)
         if before is not None:
-            where += " AND (p.created_at,p.id)<(?,?)"
+            where += f" AND ({order_time},p.id)<(?,?)"
             params += before
         rows = await self.rows(
-            """WITH destinations AS (
+            f"""WITH destinations AS (
                 SELECT id,channel_id,kind,conversation_id FROM routes
                 UNION ALL SELECT id,channel_id,kind,conversation_id FROM archived_routes
-            ) SELECT p.id,p.text,p.message_id,p.created_at,q.payload,json_extract(c.value,'$.kind') AS channel
+            ) SELECT p.id,p.text,p.message_id,{order_time} AS created_at,q.payload,json_extract(c.value,'$.kind') AS channel
               FROM replies p JOIN destinations r ON r.id=p.route_id
               JOIN connections c ON c.id=r.channel_id
               LEFT JOIN events e ON e.id=p.event_id
               LEFT JOIN reply_payloads q ON q.reply_id=p.id
+              LEFT JOIN confirmed_sends confirmed ON confirmed.reply_id=p.id
               WHERE p.state='sent' AND COALESCE(json_extract(q.payload,'$.kind'),'message')!='reaction' AND """
             + where
-            + " ORDER BY p.created_at DESC,p.id DESC LIMIT ?",
+            + f" ORDER BY {order_time} DESC,p.id DESC LIMIT ?",
             (*params, max(1, min(limit, 100))),
         )
         messages = []
@@ -1129,7 +1172,7 @@ class Store:
         return messages
 
     async def conversation_messages(
-        self, route: dict, *, limit: int = 20, before: tuple[str, str] | None = None
+        self, route: dict, *, limit: int = 20, before: tuple[str, str] | None = None, context_order: bool = False
     ) -> list[dict]:
         limit = max(1, min(limit, 100))
         incoming = (
@@ -1137,22 +1180,115 @@ class Store:
             if route["channel_read"]
             else await self.received_messages(route, limit=limit, history_metadata=True, before=before)
         )
-        outgoing = await self.sent_messages(route, limit=limit, before=before)
+        outgoing = await self.sent_messages(route, limit=limit, before=before, context_order=context_order)
         return sorted(incoming + outgoing, key=lambda message: (message["created_at"], message["history_id"]))[-limit:]
 
     async def environment_thread(self, route: dict, message: dict) -> str | None:
-        """Last accepted thread in this conversation, solely for reusing its mounts."""
         key = thread_binding_key(route, message)
-        rows = await self.rows(
-            "SELECT e.thread_id FROM event_thread_bindings b JOIN events e ON e.id=b.event_id "
-            "WHERE b.binding_key=? AND e.thread_id IS NOT NULL ORDER BY e.rowid DESC LIMIT 1",
-            (key,),
-        )
+        rows = await self.rows("SELECT thread_id FROM thread_bindings WHERE binding_key=?", (key,))
+        if route.get("fixed_thread_id"):
+            return route["fixed_thread_id"]
         return rows[0]["thread_id"] if rows else None if route.get("conversation_memory") else route.get("thread_id")
 
-    async def delivery_history(self, event: dict, route: dict) -> list[dict]:
+    async def retained_session(self, thread_id: str, active: bool, minutes: int | None, host_id: str) -> bool:
+        now = time.time()
+        async with self.transaction() as db:
+            await db.execute("INSERT OR IGNORE INTO session_activity VALUES (?,?,NULL,?)", (host_id, thread_id, now))
+            if active:
+                await db.execute(
+                    "UPDATE session_activity SET idle_since=NULL WHERE host_id=? AND thread_id=?", (host_id, thread_id)
+                )
+                return True
+            await db.execute(
+                "UPDATE session_activity SET idle_since=COALESCE(idle_since,?) WHERE host_id=? AND thread_id=?",
+                (now, host_id, thread_id),
+            )
+            async with db.execute(
+                "SELECT idle_since,last_input FROM session_activity WHERE host_id=? AND thread_id=?",
+                (host_id, thread_id),
+            ) as cursor:
+                state = await cursor.fetchone()
+        assert state is not None
+        return minutes is None or now - max(state[0], state[1]) < minutes * 60
+
+    async def environment_origin(self, route: dict) -> tuple[str | None, bool]:
+        key = environment_binding_key(route)
+        if not key:
+            return None, False
+        rows = await self.rows(
+            "SELECT b.*,e.state AS origin_state,e.run_id AS origin_run_id FROM environment_bindings b "
+            "LEFT JOIN events e ON e.id=b.event_id WHERE b.scope=?",
+            (key,),
+        )
+        if not rows:
+            return None, False
+        origin = rows[0]
+        # A Thread receipt can precede Run admission and template reservation.
+        # Sharing its empty desired mounts then would provision another environment.
+        pending_admission = origin["origin_state"] in {"queued", "submitted"} and origin["origin_run_id"] is None
+        if origin["origin_state"] == "failed" and origin["origin_run_id"] is None:
+            raise ValueError("Shared environment origin has no confirmed execution")
+        return origin["thread_id"], origin["thread_id"] is None or pending_admission
+
+    async def resolve_origin(self, handle: str, host_id: str) -> dict:
+        rows = await self.rows(
+            "SELECT e.*,a.session_id FROM delivery_assembly a JOIN events e ON e.id=a.event_id WHERE a.context_handle_hash=?",
+            (token_hash(handle),),
+        )
+        event = rows[0] if rows else None
+        source = await self.route(event["route_id"]) if event else None
+        if not event or not source or source["host_id"] != host_id or event["state"] not in {"submitted", "completed"}:
+            raise ValueError("Origin context is unavailable or inactive")
+        message = json.loads(event["message"])
+        if not route_allows_sender(source, message["sender_id"]):
+            raise ValueError("Origin context is unavailable or inactive")
+        return {
+            "_completed": event["state"] == "completed",
+            "route_id": source["id"],
+            "channel_id": source["channel_id"],
+            "conversation_kind": source["conversation_kind"],
+            "conversation_id": source["conversation_id"],
+            "event_id": event["id"],
+            "sender_id": message["sender_id"],
+            "source_message_id": message["source_message_id"],
+            "thread_id": event["thread_id"],
+            "session_id": event["session_id"],
+            "run_id": event["run_id"],
+            "reason": message["text"][:2000],
+        }
+
+    async def reply_provenance(self, reader: dict, reply_id: str) -> dict:
+        rows = await self.rows("SELECT origin FROM message_provenance WHERE reply_id=?", (reply_id,))
+        if not rows:
+            return {"status": "unavailable"}
+        origin = json.loads(rows[0]["origin"])
+        source = await self.route(origin["route_id"])
+        grants = reader.get("provenance_read_channel_ids", reader.get("read_channel_ids"))
+        readable = (
+            source
+            and source["enabled"]
+            and (not reader.get("history_sender_id") or reader["history_sender_id"] == origin["sender_id"])
+            and (
+                (grants is not None and ("*" in grants or origin["channel_id"] in grants))
+                or (
+                    grants is None
+                    and reader["id"] == origin["route_id"]
+                    and route_allows_sender(reader, origin["sender_id"])
+                )
+            )
+        )
+        return {"status": "verified", **origin} if readable else {"status": "restricted"}
+
+    async def delivery_history(self, event: dict, route: dict, thread_id: str | None = None) -> list[dict]:
         """Snapshot prior chat content within the triggering conversation's read scope."""
-        limit = route.get("history_limit", 30)
+        positions = (
+            await self.rows(
+                "SELECT * FROM context_positions WHERE thread_id=? AND route_id=?", (thread_id, route["id"])
+            )
+            if thread_id
+            else []
+        )
+        limit = 100 if positions and route.get("history_limit", 30) else route.get("history_limit", 30)
         if not limit:
             return []
         grants = route.get("read_channel_ids")
@@ -1164,11 +1300,25 @@ class Store:
             scope.update(
                 channel_read=False, sender_policy="allowlist", allowed_user_ids=[sender], history_sender_id=sender
             )
-        messages = await self.conversation_messages(scope, limit=limit, before=(event["created_at"], event["id"]))
+        messages = await self.conversation_messages(
+            scope, limit=limit, before=(event["created_at"], event["id"]), context_order=True
+        )
+        if positions:
+            position = positions[0]
+            messages = [
+                m
+                for m in messages
+                if (m["created_at"], m["history_id"]) > (position["created_at"], position["record_id"])
+            ]
+        for item in messages:
+            if item["direction"] == "outgoing":
+                item["provenance"] = await self.reply_provenance(route, item["history_id"])
         # Project only chat content and public media handles, never private payloads.
         return [
             {
+                "history_id": item["history_id"],
                 "direction": item["direction"],
+                **({"provenance": item["provenance"]} if "provenance" in item else {}),
                 "source_message_id": item["source_message_id"],
                 "sender_id": item["sender_id"],
                 "created_at": item["created_at"],
@@ -1243,22 +1393,7 @@ class Store:
                 saved = await cursor.fetchone()
             if saved and saved[0]:
                 return saved[0]
-            thread_id = None
-            if key:
-                async with db.execute("SELECT thread_id FROM thread_bindings WHERE binding_key=?", (key,)) as cursor:
-                    binding = await cursor.fetchone()
-                thread_id = binding[0] if binding else None
-            policy = route.get("thread_policy", "conversation")
-            if policy == "fixed":
-                thread_id = route.get("fixed_thread_id") or thread_id
-            elif policy == "conversation":
-                # A manual reset may have cleared the binding after the worker
-                # read this route. Consult the current binding inside the lock.
-                async with db.execute("SELECT thread_id FROM routes WHERE id=?", (route["id"],)) as cursor:
-                    current = await cursor.fetchone()
-                thread_id = thread_id or (current[0] if current else None)
-            if policy == "window":
-                thread_id = active_thread_id
+            thread_id = active_thread_id
             target = "/threads/" + quote(thread_id, safe="") + "/inbox" if thread_id else "/threads"
             if thread_id:
                 body.pop("session", None)
@@ -1266,11 +1401,26 @@ class Store:
                 "INSERT INTO event_thread_bindings(event_id,binding_key,route_id) VALUES (?,?,?)",
                 (event["id"], key, owner),
             )
+            handle = body.pop("_context_handle", None)
+            if handle:
+                await db.execute(
+                    "INSERT INTO delivery_assembly(event_id,environment_scope,context_handle_hash) VALUES (?,?,?)",
+                    (event["id"], environment_binding_key(route), token_hash(handle)),
+                )
+            env_key = environment_binding_key(route)
+            if not thread_id and env_key:
+                await db.execute("INSERT OR IGNORE INTO environment_bindings VALUES (?,?,NULL)", (env_key, event["id"]))
             await db.execute("UPDATE events SET target=?,body=? WHERE id=?", (target, json.dumps(body), event["id"]))
         return target
 
     async def retry_event(
-        self, event: dict, *, restart: bool, route: dict | None = None, connection: dict | None = None
+        self,
+        event: dict,
+        *,
+        restart: bool,
+        route: dict | None = None,
+        connection: dict | None = None,
+        prior_run_id: str | None = None,
     ) -> str:
         """Resume an uncertain delivery, or reserve one new delivery after confirmed failure."""
         async with self.transaction() as db:
@@ -1294,9 +1444,14 @@ class Store:
             state = "queued" if restart or not event["entry_id"] else "submitted"
             if restart:
                 await db.execute("DELETE FROM event_thread_bindings WHERE event_id=?", (event["id"],))
+                await db.execute("DELETE FROM delivery_assembly WHERE event_id=?", (event["id"],))
+                if prior_run_id is None:
+                    await db.execute("DELETE FROM environment_bindings WHERE event_id=?", (event["id"],))
+                # A confirmed execution remains the shared environment's admission
+                # evidence until the replacement receipt supplies its own Run.
                 await db.execute(
-                    "UPDATE events SET target=NULL,body=NULL,thread_id=NULL,entry_id=NULL,run_id=NULL,delivery_key=? WHERE id=?",
-                    (new_id("delivery"), event["id"]),
+                    "UPDATE events SET target=NULL,body=NULL,thread_id=NULL,entry_id=NULL,run_id=?,delivery_key=? WHERE id=?",
+                    (prior_run_id, new_id("delivery"), event["id"]),
                 )
             await db.execute("UPDATE events SET state=?,attempts=0,error=NULL WHERE id=?", (state, event["id"]))
         return state
@@ -1348,6 +1503,7 @@ class Store:
         thread_id = receipt["thread"]["id"]
         entry_id = receipt["entry"]["id"]
         run_id = (receipt.get("run") or {}).get("id")
+        route = await self.route(route_id)
         async with self.transaction() as db:
             await db.execute(
                 "UPDATE routes SET thread_id=COALESCE(thread_id,?) WHERE id=? "
@@ -1356,15 +1512,49 @@ class Store:
                 (thread_id, route_id, event_id),
             )
             await db.execute(
-                "INSERT OR IGNORE INTO thread_bindings(binding_key,route_id,thread_id) "
+                "INSERT OR REPLACE INTO thread_bindings(binding_key,route_id,thread_id) "
                 "SELECT b.binding_key,b.route_id,? FROM event_thread_bindings b "
-                "JOIN routes r ON r.id=b.route_id WHERE b.event_id=? AND b.binding_key IS NOT NULL",
+                "JOIN routes r ON r.id=b.route_id JOIN events e ON e.id=b.event_id "
+                "WHERE b.event_id=? AND b.binding_key IS NOT NULL AND NOT EXISTS "
+                "(SELECT 1 FROM event_thread_bindings later JOIN events newer ON newer.id=later.event_id "
+                "WHERE later.binding_key=b.binding_key AND newer.rowid>e.rowid AND newer.thread_id IS NOT NULL)",
                 (thread_id, event_id),
             )
+            async with db.execute("SELECT thread_id FROM events WHERE id=?", (event_id,)) as cursor:
+                prior_receipt = await cursor.fetchone()
             await db.execute(
                 "UPDATE events SET state='submitted',thread_id=?,entry_id=?,run_id=?,attempts=0,error=NULL WHERE id=?",
                 (thread_id, entry_id, run_id, event_id),
             )
+
+            async with db.execute("SELECT * FROM events WHERE id=?", (event_id,)) as cursor:
+                accepted = await cursor.fetchone()
+            if accepted:
+                await db.execute(
+                    "INSERT INTO context_positions VALUES (?,?,?,?) ON CONFLICT(thread_id,route_id) "
+                    "DO UPDATE SET created_at=excluded.created_at,record_id=excluded.record_id "
+                    "WHERE (excluded.created_at,excluded.record_id)>(context_positions.created_at,context_positions.record_id)",
+                    (thread_id, route_id, accepted["created_at"], event_id),
+                )
+                if not prior_receipt or prior_receipt[0] is None:
+                    await db.execute(
+                        "INSERT INTO session_activity VALUES (?,?,NULL,?) ON CONFLICT(host_id,thread_id) "
+                        "DO UPDATE SET idle_since=NULL,last_input=excluded.last_input",
+                        (route["host_id"] if route else "", thread_id, time.time()),
+                    )
+                if route and environment_binding_key(route):
+                    # Frozen submissions from before the scope migration have no
+                    # new assembly row but still establish their original environment.
+                    await db.execute(
+                        "INSERT OR IGNORE INTO environment_bindings SELECT ?,?,? WHERE EXISTS "
+                        "(SELECT 1 FROM event_thread_bindings WHERE event_id=?)",
+                        (environment_binding_key(route), event_id, thread_id, event_id),
+                    )
+                await db.execute("UPDATE environment_bindings SET thread_id=? WHERE event_id=?", (thread_id, event_id))
+                await db.execute(
+                    "UPDATE delivery_assembly SET session_id=? WHERE event_id=?",
+                    (receipt["thread"].get("session_id"), event_id),
+                )
 
     async def queue_reply(self, route: dict, text: str, *, payload: dict | None = None) -> dict:
         row = {"id": new_id("reply"), "route_id": route["id"], "event_id": None, "text": text, "state": "queued"}
@@ -1373,9 +1563,30 @@ class Store:
                 "INSERT OR IGNORE INTO replies(id,route_id,event_id,text,state) VALUES (?,?,?,?,?)",
                 tuple(row[key] for key in ["id", "route_id", "event_id", "text", "state"]),
             )
+            origin = verified_origin.get()
+            if origin and cursor.rowcount == 1:
+                await db.execute("INSERT INTO message_provenance VALUES (?,?)", (row["id"], json.dumps(origin)))
             if payload is not None and cursor.rowcount == 1:
                 await db.execute("INSERT INTO reply_payloads VALUES (?,?)", (row["id"], json.dumps(payload)))
         return row
+
+    async def fail_event(self, identifier: str, error: str, notice: str, *, attempts: int | None = None) -> None:
+        """Fail pending input and enqueue its one source-linked notice in the same commit."""
+        async with self.transaction() as db:
+            cursor = await db.execute(
+                "UPDATE events SET state='failed',error=?,attempts=COALESCE(?,attempts) "
+                "WHERE id=? AND state IN ('queued','submitted')",
+                (error, attempts, identifier),
+            )
+            if cursor.rowcount != 1:
+                return
+            cursor = await db.execute("INSERT OR IGNORE INTO host_failure_notices(event_id) VALUES (?)", (identifier,))
+            if cursor.rowcount == 1:
+                await db.execute(
+                    "INSERT OR IGNORE INTO replies(id,route_id,event_id,text,state) "
+                    "SELECT ?,route_id,id,?,'queued' FROM events WHERE id=?",
+                    (new_id("reply"), notice, identifier),
+                )
 
     async def reply_payload(self, identifier: str) -> dict | None:
         rows = await self.rows("SELECT payload FROM reply_payloads WHERE reply_id=?", (identifier,))
@@ -1459,6 +1670,12 @@ class Store:
             await db.execute(
                 "UPDATE replies SET state=?,error=?,message_id=? WHERE id=?", (state, error, message_id, identifier)
             )
+            if state == "sent":
+                await db.execute(
+                    "INSERT OR IGNORE INTO confirmed_sends SELECT id,strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                    "FROM replies WHERE id=?",
+                    (identifier,),
+                )
 
     async def queue_channel_action(self, route: dict, operation: str, arguments: dict, grant: str) -> dict:
         identifier = new_id("action")

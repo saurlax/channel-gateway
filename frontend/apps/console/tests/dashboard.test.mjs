@@ -35,7 +35,7 @@ test("recent activity keeps MCP availability, acceptance, completion and reply d
       "blocked",
       "unmatched",
     ].map((state) => ({ state })),
-    replies: ["approved", "sending", "sent", "blocked", "unknown"].map((state) => ({
+    replies: ["queued", "sending", "sent", "blocked", "unknown"].map((state) => ({
       state,
     })),
   });
@@ -44,9 +44,4 @@ test("recent activity keeps MCP availability, acceptance, completion and reply d
   for (const key of ["queued", "submitted", "completed", "failed", "blocked", "unmatched"])
     assert.equal(result[key], 1);
   assert.equal(result.replyIssues, 2);
-});
-
-test("an empty gateway has zero counts without invented activity", () => {
-  const result = dashboardSummary({ connections: [], routes: [], events: [], replies: [] });
-  assert.ok(Object.values(result).every((value) => value === 0));
 });

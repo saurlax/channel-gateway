@@ -143,6 +143,9 @@ def configure(platform, kind="group", grants=(), conversation=None, **overrides)
         "/api/v1/routes",
         json={
             "name": "Scope",
+            "conversation_memory": False,
+            "session_idle_minutes": None,
+            "environment_scope": "session",
             "channel_id": channel["id"],
             "conversation_kind": kind,
             "conversation_id": conversation
@@ -1642,11 +1645,11 @@ def test_proactive_image_rechecks_grant_after_upload(platform):
 
 
 def test_five_tool_inventory_is_constant_across_conversations_and_keys(platform):
-    client, _, _, _, host = platform
+    client, _, _, _, _host = platform
     routes = [configure(platform, conversation=str(500 + i)) for i in range(4)]
     routes.append(configure(platform, "guild"))
     expected = {"discover", "read", "send_message", "execute_action", "get_operation"}
-    for key in [host["mcp_key"], *(route["agent_token"] for route in routes)]:
+    for key in [route["agent_token"] for route in routes]:
         tools = rpc(client, key, "tools/list", {}).json()["result"]["tools"]
         assert {tool["name"] for tool in tools} == expected
         assert len(tools) == 5

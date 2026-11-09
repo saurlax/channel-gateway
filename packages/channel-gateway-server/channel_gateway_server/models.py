@@ -13,7 +13,7 @@ from .media import MAX_IMAGE_BASE64, decode_image
 type Identifier = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:@-]+$")]
 type SenderIds = Annotated[list[Identifier], Field(max_length=256)]
 type ReadChannels = Annotated[list[Identifier | Literal["*"]], Field(max_length=100)]
-type ThreadPolicy = Literal["conversation", "sender", "fixed", "message", "window"]
+type ThreadPolicy = Literal["conversation", "sender", "fixed", "message"]
 type BusyPolicy = Literal["steer", "queue"]
 type ConversationKind = Literal["private", "group", "guild", "guild_dm", "channel", "thread"]
 type ActionGrant = Literal[
@@ -211,7 +211,7 @@ class ConnectionInput(Contract):
             self.api_url = weixin_url(self.api_url or "https://ilinkai.weixin.qq.com")
         elif self.kind == "mcp":
             if self.transport or self.api_url or self.token or self.self_id or self.webhook_secret:
-                raise ValueError("MCP hosts use a gateway-issued key and no upstream credentials")
+                raise ValueError("MCP hosts do not use upstream credentials")
         elif self.transport or self.self_id or self.webhook_secret or not self.token or not self.api_url:
             raise ValueError("a13n requires an HTTP API URL and workspace API key")
         elif urlsplit(self.api_url).scheme not in {"http", "https"}:
@@ -263,17 +263,40 @@ class RouteInput(Contract):
     thread_policy: ThreadPolicy = "conversation"
     history_limit: int = Field(default=30, ge=0, le=100, strict=True)
     busy_policy: BusyPolicy = "steer"
-    wake_provider_id: Identifier | None = None
+    wake_agent_id: Identifier | None = None
     conversation_memory: bool = False
-    coordinate_tasks: bool = False
+    session_idle_minutes: int | None = Field(default=None, ge=0, strict=True)
+    environment_scope: Literal["global", "conversation", "session"] = "session"
+    global_memory_space_ids: list[Identifier] = []
+    shared_memory: bool = False
     fixed_thread_id: Identifier | None = None
     enabled: bool = True
     mcp_connection_id: Identifier | None = None
 
     @model_validator(mode="after")
     def reply_policy(self) -> "RouteInput":
-        if self.conversation_memory and self.thread_policy != "window":
-            raise ValueError("Conversation memory requires bounded-history delivery")
+        if len(set(self.global_memory_space_ids)) != len(self.global_memory_space_ids):
+            raise ValueError("Choose distinct global Memory Spaces")
+        if self.global_memory_space_ids and not self.conversation_memory:
+            raise ValueError("Global Memory Spaces require scoped memory")
+        if self.thread_policy == "fixed":
+            if self.fixed_thread_id and (self.conversation_memory or self.environment_scope != "session"):
+                raise ValueError("Pinned threads retain their existing memory and environment selection")
+            if self.fixed_thread_id and self.session_idle_minutes is not None:
+                raise ValueError("Pinned threads require indefinite session retention")
+            if self.conversation_memory and not self.shared_memory:
+                raise ValueError("Fixed threads require explicit shared memory")
+            sources = self.sources or [
+                RouteSource(
+                    channel_id=self.channel_id or "*",
+                    conversation_kind=self.conversation_kind or "*",
+                    conversation_id=self.conversation_id or "*",
+                )
+            ]
+            if self.environment_scope == "conversation" and (
+                len(sources) != 1 or any(s.channel_id == "*" or s.conversation_id == "*" for s in sources)
+            ):
+                raise ValueError("Shared threads across conversations require global or session environments")
         if len(set(self.action_grants)) != len(self.action_grants):
             raise ValueError("Choose distinct action grants")
         if self.fixed_thread_id and self.thread_policy != "fixed":
@@ -323,9 +346,12 @@ class RouteUpdate(Contract):
     thread_policy: ThreadPolicy | None = None
     history_limit: int | None = Field(default=None, ge=0, le=100, strict=True)
     busy_policy: BusyPolicy | None = None
-    wake_provider_id: Identifier | None = None
+    wake_agent_id: Identifier | None = None
     conversation_memory: bool | None = None
-    coordinate_tasks: bool | None = None
+    session_idle_minutes: int | None = Field(default=None, ge=0, strict=True)
+    environment_scope: Literal["global", "conversation", "session"] | None = None
+    global_memory_space_ids: list[Identifier] | None = None
+    shared_memory: bool | None = None
     fixed_thread_id: Identifier | None = None
     sender_policy: Literal["allowlist", "any"] | None = None
     enabled: bool | None = None

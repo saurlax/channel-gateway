@@ -364,7 +364,7 @@ function ConnectionForm({
         {((!isChannel && hostType === "a13n") || onebot) && (
           <FormField
             id="api-token"
-            label={isChannel ? t("OneBot access token") : t("Workspace API key")}
+            label={isChannel ? t("OneBot access token") : t("a13n workspace API key")}
           >
             <Input id="api-token" name="token" type="password" required autoComplete="off" />
           </FormField>
@@ -553,7 +553,7 @@ function ConnectionDetails({
               ? t("Gateway WebSocket URL")
               : connection.transport === "ws"
                 ? t("Account WebSocket URL")
-                : t("API base URL")
+                : t(connection.kind === "a13n" ? "a13n API URL" : "API base URL")
           }
         >
           <Input id="connection-url" readOnly value={channelEndpoint(connection)} />
@@ -567,18 +567,6 @@ function ConnectionDetails({
             value={`${location.origin}/api/v1/hooks/${connection.kind}/${connection.id}`}
           />
         </FormField>
-      )}
-      {isHost(connection) && (
-        <>
-          <FormField id="host-mcp-url" label={t("MCP URL")}>
-            <Input id="host-mcp-url" readOnly value={`${location.origin}/mcp/`} />
-          </FormField>
-          <p className="text-xs text-muted-foreground">
-            {t(
-              "Use this host’s MCP key as the bearer credential. It grants access to all enabled routes assigned to this host.",
-            )}
-          </p>
-        </>
       )}
       {connection.kind === "mcp" ? null : connection.kind === "weixin" ? (
         <WeixinLogin connection={connection} csrfToken={csrfToken} refresh={refresh} />
@@ -619,7 +607,9 @@ function ConnectionDetails({
                 ? t("New private key (optional)")
                 : appSecret
                   ? t("New AppSecret (optional)")
-                  : t("New API token (optional)")
+                  : connection.kind === "a13n"
+                    ? t("Replacement a13n API key (optional)")
+                    : t("New API token (optional)")
             }
           >
             {githubApp ? (
@@ -628,6 +618,11 @@ function ConnectionDetails({
               <Input id="new-token" name="token" type="password" autoComplete="off" />
             )}
           </FormField>
+          {connection.kind === "a13n" && (
+            <p className="text-xs text-muted-foreground">
+              {t("Paste an API key issued by a13n. Leave empty to keep the saved key.")}
+            </p>
+          )}
           {qq && (
             <FormField id="update-qq-intents" label={t("QQ Gateway intents")}>
               <Input
@@ -677,7 +672,7 @@ function ConnectionDetails({
           description={
             isHost(connection)
               ? t(
-                  "This removes the host and its credentials, revokes its MCP key, disables assigned routes, and blocks pending work. Message and reply history is retained. This cannot be undone.",
+                  "This removes the host and its credentials, disables assigned routes, and blocks pending work. Message and reply history is retained. This cannot be undone.",
                 )
               : t(
                   "This removes the channel and its credentials, disables its routes, and blocks pending work. Message and reply history is retained. This cannot be undone.",
@@ -690,18 +685,6 @@ function ConnectionDetails({
           clearError={clearError}
           onDeleted={onSaved}
         />
-        {isHost(connection) && (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={async () => {
-              if (await action(`connections/${connection.id}/mcp-key`)) onSaved();
-            }}
-          >
-            {t("Rotate MCP key")}
-          </Button>
-        )}
         {connection.kind !== "mcp" && connection.kind !== "weixin" && (
           <Button type="submit" form="connection-credentials" disabled={busy}>
             {busy ? t("Saving…") : t("Save credentials")}

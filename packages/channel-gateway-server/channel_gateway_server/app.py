@@ -29,7 +29,6 @@ from .channels.qq import qq_message, validation_response, verify_callback
 from .channels.qq_notifications import record_notification
 from .mcp_tools import RouteAuthorization, create_mcp
 from .media import MediaReader
-from .model_providers import ModelError, ModelProviderInput, completion, public_provider
 from .models import (
     AdministratorLogin,
     ConnectionInput,
@@ -43,7 +42,7 @@ from .models import (
     public_connection,
 )
 from .routing import RouteConflict, route_sources
-from .storage import Store, new_id
+from .storage import Store
 
 MAX_WEBHOOK_BYTES = 1024 * 1024
 
@@ -217,77 +216,16 @@ def create_app(
     async def connections(_admin: None = Depends(admin)) -> list[dict]:
         return [connection_view(row) for row in await store.connections()]
 
-    @app.get("/api/v1/model-providers")
-    async def model_providers(_admin: None = Depends(admin)) -> list[dict]:
-        return [public_provider(row) for row in await store.model_providers()]
-
-    @app.post("/api/v1/model-providers", status_code=201)
-    async def add_model_provider(body: ModelProviderInput, _admin: None = Depends(admin)) -> dict:
-        if body.api_key is None:
-            raise HTTPException(422, "Enter a model API key")
-        value = {
-            **body.model_dump(exclude={"api_key"}),
-            "api_key": body.api_key.get_secret_value(),
-            "id": new_id("provider"),
-        }
-        await store.save_model_provider(value)
-        return public_provider(value)
-
-    @app.patch("/api/v1/model-providers/{provider_id}")
-    async def change_model_provider(provider_id: str, body: ModelProviderInput, _admin: None = Depends(admin)) -> dict:
-        previous = await store.model_provider(provider_id)
-        if previous is None:
-            raise HTTPException(404, "Model provider not found")
-        value = {
-            **body.model_dump(exclude={"api_key"}),
-            "id": provider_id,
-            "api_key": body.api_key.get_secret_value() if body.api_key else previous["api_key"],
-        }
-        if not await store.save_model_provider(value, previous):
-            raise HTTPException(409, "Model provider changed; refresh before editing")
-        return public_provider(value)
-
-    @app.delete("/api/v1/model-providers/{provider_id}")
-    async def delete_model_provider(provider_id: str, _admin: None = Depends(admin)) -> dict:
-        try:
-            if not await store.delete_model_provider(provider_id):
-                raise HTTPException(404, "Model provider not found")
-        except RouteConflict as error:
-            raise HTTPException(409, str(error)) from None
-        return {"id": provider_id}
-
-    @app.post("/api/v1/model-providers/{provider_id}/test")
-    async def test_model_provider(provider_id: str, _admin: None = Depends(admin)) -> dict:
-        provider = await store.model_provider(provider_id)
-        if provider is None:
-            raise HTTPException(404, "Model provider not found")
-        try:
-            for decision in (False, True) if provider.get("decision_model") else (False,):
-                await completion(http, provider, [{"role": "user", "content": "Reply with OK."}], decision=decision)
-        except ModelError as error:
-            raise HTTPException(422, str(error)) from None
-        return {"id": provider_id, "status": "ok"}
-
     @app.post("/api/v1/connections", status_code=201)
     async def add_connection(body: ConnectionInput, _admin: None = Depends(admin)) -> dict:
         row = await store.add_connection(body.stored())
         await channels.restart(row)
-        value = connection_view(row)
-        if row["kind"] in {"a13n", "mcp"}:
-            value["mcp_key"] = await store.rotate_host_key(row["id"])
-        return value
-
-    @app.post("/api/v1/connections/{connection_id}/mcp-key")
-    async def rotate_host_key(connection_id: str, _admin: None = Depends(admin)) -> dict:
-        row = await store.connection(connection_id)
-        if not row or row["kind"] not in {"a13n", "mcp"}:
-            raise HTTPException(404, "Agent host not found")
-        return {"id": connection_id, "name": row["name"], "mcp_key": await store.rotate_host_key(connection_id)}
+        return connection_view(row)
 
     @app.get("/api/v1/connections/{connection_id}/host-resources/{resource}")
     async def host_resources(
         connection_id: Identifier,
-        resource: Literal["agents", "threads"],
+        resource: Literal["agents", "threads", "memory-spaces"],
         cursor: str | None = Query(default=None, max_length=2048),
         _admin: None = Depends(admin),
     ) -> dict:
@@ -348,8 +286,15 @@ def create_app(
 
     def validate_host_route(host: dict, body: RouteInput) -> None:
         if host["kind"] == "mcp":
-            if body.wake_provider_id or body.conversation_memory or body.coordinate_tasks:
-                raise HTTPException(422, "Model decisions and conversation context require an a13n Host")
+            if (
+                body.wake_agent_id
+                or body.conversation_memory
+                or body.session_idle_minutes is not None
+                or body.environment_scope != "session"
+                or body.global_memory_space_ids
+                or body.shared_memory
+            ):
+                raise HTTPException(422, "Agent decisions and conversation context require an a13n Host")
             if body.busy_policy != "steer":
                 raise HTTPException(422, "Execution input policies require an a13n Host")
             if body.agent_id or body.mcp_connection_id or body.thread_policy != "conversation" or body.fixed_thread_id:
@@ -362,8 +307,6 @@ def create_app(
         if not host or host["kind"] not in {"a13n", "mcp"}:
             raise HTTPException(422, "Choose a channel and an agent host")
         validate_host_route(host, body)
-        if body.wake_provider_id and not await store.model_provider(body.wake_provider_id):
-            raise HTTPException(422, "Choose an existing model provider")
         if check_thread and body.fixed_thread_id:
             try:
                 thread = await bridge.adapters.host(host, "GET", "/threads/" + body.fixed_thread_id)
@@ -405,8 +348,17 @@ def create_app(
     @app.post("/api/v1/routes", status_code=201)
     async def add_route(body: RouteInput, _admin: None = Depends(admin)) -> dict:
         host = await store.connection(body.host_id)
-        if host and host["kind"] == "a13n" and "thread_policy" not in body.model_fields_set:
-            body.thread_policy = "window"
+        if host and host["kind"] == "a13n":
+            if "session_idle_minutes" not in body.model_fields_set and not body.fixed_thread_id:
+                body.session_idle_minutes = 60
+            if "environment_scope" not in body.model_fields_set:
+                body.environment_scope = "conversation" if body.thread_policy != "fixed" else "session"
+            if "conversation_memory" not in body.model_fields_set and body.thread_policy != "fixed":
+                body.conversation_memory = True
+            try:
+                body = RouteInput.model_validate(body.model_dump())
+            except ValueError as error:
+                raise HTTPException(422, "Invalid session, memory or environment policy") from error
         await validate_route_resources(body)
         if body.mcp_connection_id and any(
             route["host_id"] == body.host_id and route.get("mcp_connection_id") == body.mcp_connection_id
@@ -452,23 +404,6 @@ def create_app(
             )
         ):
             updates.pop("sources")
-        if any(
-            key in updates and updates[key] != row.get(key)
-            for key in (
-                "mcp_connection_id",
-                "host_id",
-                "agent_id",
-                "thread_policy",
-                "fixed_thread_id",
-                "conversation_memory",
-            )
-        ):
-            active = await store.rows(
-                "SELECT e.id FROM events e JOIN routes r ON r.id=e.route_id WHERE (r.id=? OR json_extract(r.value,'$.parent_route_id')=?) AND e.state IN ('queued','submitted')",
-                (route_id, route_id),
-            )
-            if active:
-                raise HTTPException(409, "Wait for the current input to finish before changing the delivery policy")
         if row.get("parent_route_id"):
             raise HTTPException(422, "Edit the parent route to change this conversation's access")
         value = {key: item for key, item in row.items() if key not in {"id", "thread_id", "parent_route_id"}}
@@ -762,7 +697,6 @@ def create_app(
 
         @app.get("/", include_in_schema=False)
         @app.get("/overview", include_in_schema=False)
-        @app.get("/model-providers", include_in_schema=False)
         @app.get("/channels", include_in_schema=False)
         @app.get("/hosts", include_in_schema=False)
         @app.get("/routes", include_in_schema=False)

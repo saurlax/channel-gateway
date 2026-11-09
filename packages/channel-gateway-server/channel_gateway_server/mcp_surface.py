@@ -12,6 +12,7 @@ from .channels.platforms.common import PLATFORMS
 from .channels.qq_operations import OPERATIONS, applicable, check_json
 from .mcp_github import GitHubMessage
 from .media import MAX_MEDIA_BYTES
+from .storage import verified_origin
 
 READS = {
     "messages": "read_conversation",
@@ -79,7 +80,7 @@ def native_arguments(arguments: dict | None) -> dict:
     return {"operation": operation.removeprefix("qq."), "arguments": arguments.get("parameters", {})}
 
 
-def install_tools(server, operations, store, authorized_route, readable_route):
+def install_tools(server, operations, store, authorized_route, readable_route, adapters):
     async def view(route_id):
         try:
             return await authorized_route(route_id)
@@ -272,8 +273,7 @@ def install_tools(server, operations, store, authorized_route, readable_route):
             )
         return await operations.call(READS[resource], arguments, route_id)
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
-    async def send_message(
+    async def send_content(
         content: Annotated[list[ContentPart], Field(max_length=2)],
         route_id: str | None = None,
         delivery: Literal["passive", "proactive", "wakeup"] | None = None,
@@ -393,6 +393,36 @@ def install_tools(server, operations, store, authorized_route, readable_route):
             route_id,
         )
         return receipt(result, "message")
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
+    async def send_message(
+        content: Annotated[list[ContentPart], Field(max_length=2)],
+        route_id: str | None = None,
+        delivery: Literal["passive", "proactive", "wakeup"] | None = None,
+        reply_to: Annotated[str, Field(min_length=1, max_length=1024)] | None = None,
+        stream: StreamOptions | None = None,
+        native: dict | None = None,
+        origin_context: Annotated[str, Field(min_length=1, max_length=128)] | None = None,
+    ) -> dict:
+        """Queue text/media using an authorized destination. Pass the current gateway origin_context for verified initiating attribution, including cross-chat sends. It grants no destination access. Poll get_operation; queued is not delivered."""
+        destination = await authorized_route(route_id)
+        origin = await store.resolve_origin(origin_context, destination["host_id"]) if origin_context else None
+        if origin:
+            # Attribution requires authority over the initiating source as well as the destination.
+            await authorized_route(origin["route_id"])
+            if origin.pop("_completed", False):
+                from .adapters import resource_path
+                from .host_context import active_work
+
+                host = await store.connection(destination["host_id"])
+                thread = await adapters.host(host, "GET", resource_path("threads", origin["thread_id"]))
+                if not await active_work(adapters, host, thread):
+                    raise ValueError("Origin context is unavailable or inactive")
+        token = verified_origin.set(origin)
+        try:
+            return await send_content(content, route_id, delivery, reply_to, stream, native)
+        finally:
+            verified_origin.reset(token)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False))
     async def execute_action(

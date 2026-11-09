@@ -29,7 +29,7 @@ zero-based indices. Fetch the pixels using:
 
 The result is native MCP image content. Reads require the current conversation
 read grant; read access never adds activation sources or reply authority. A
-specific route token may omit `route_id`; a Host key or account-history handle
+specific route token may omit `route_id`; a multi-source route token or account-history handle
 requires it. History never exposes signed image URLs.
 
 Up to four images per message are projected. MCP downloads accept PNG, JPEG,
@@ -56,7 +56,7 @@ CG cannot refresh an expired QQ URL. Default `content` reads still return bytes.
 
 ## Send images
 
-Enable CG's `send_message` tool through the shared Host MCP connection.
+Enable CG's `send_message` tool through the route-token MCP connection.
 Every route supports passive tool replies; QQ proactive images additionally
 require `message.proactive`. A dedicated connection is optional for one concrete
 source. Agent final output is never sent.

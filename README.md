@@ -17,7 +17,7 @@ other authorized channels before deciding where and how to respond.
 
 > **Project status:** A bridge from OneBot v11, QQ official Bot, Weixin iLink, Slack, Feishu/Lark,
 > and Discord to a13n is implemented, with verified event ingestion, conversation routes, persistent delivery records,
-> scoped MCP tools, generic MCP client Hosts with independent keys, and a management console built from official shadcn blocks.
+> scoped MCP tools, generic MCP client Hosts with route-scoped credentials, and a management console built from official shadcn blocks.
 > Cross-channel identity linking, full RBAC, and live voice/radio
 > integrations remain planned. This is a single-process prototype.
 
@@ -49,7 +49,8 @@ use simulated APIs; real-account installation acceptance has not been performed.
 ## How it fits together
 
 The implemented bridge separates channel ingestion, host execution, and
-agent-facing communication tools. Only explicit Agent message-tool requests create channel messages. Agent final output is never sent.
+agent-facing communication tools. Only explicit Agent message-tool requests publish Agent output. Agent final output is never sent.
+Terminal a13n failures produce a bounded gateway failure notice in the source conversation.
 
 ```mermaid
 flowchart LR
@@ -85,9 +86,10 @@ delivery was disabled. Platform permissions still determine which messages reach
 
 ## Run from source
 
-Optional [model providers and wake decisions](docs/model-providers.md) let routes
-filter unrelated messages before a13n delivery, select conversation-specific
-Memory Spaces across fresh sessions, and supply long-task coordinator guidance.
+Optional [wake decisions and session context](docs/session-context.md) let routes
+use an Agent on their Host to filter unrelated messages before delivery and select
+conversation-specific Memory Spaces across fresh sessions. Long-task coordination
+is configured in the Host Agent.
 These controls preserve the Host's configured tools, asynchronous subagents and
 environment policy; they do not edit Agent revisions.
 
@@ -116,24 +118,28 @@ and Agent replies. Messages opens each conversation on a dedicated chat history
 page, with incoming messages on the left, Agent replies on the right, and earlier
 history available without a modal. Management pages use a search toolbar and table; Add and
 row actions open dialogs for channels and Agent Hosts. Route creation and editing
-use separate pages with Basic information, Routing, and Connections tabs.
-Routing shows Sources and Destination together. Sources support multiple
+use separate pages with Basic, Routing, Session, Memory, and Permissions and
+connections tabs. Routing shows Sources and Destination together; Session groups
+context continuity and environment settings, and Memory groups memory selection. Sources support multiple
 channel/conversation rows, including all current and future channels, all conversations,
 all private chats, or all groups. All conversations includes every supported
 conversation type; all private chats excludes groups. Existing routes retain their
-source scope until edited. Sources govern Agent activation and reply destinations. Connections
+source scope until edited. Sources govern Agent activation and reply destinations. Permissions and connections
 contains the optional dedicated a13n MCP connection binding, and selects
 readable bot accounts independently, granting reads across their received
 conversations. Agent tools are configured in the Agent Host interface and
 CG always preserves that configuration. Select Agents from the Host list. Thread
-delivery defaults to fresh threads with the latest 30 channel-history messages,
-reusing environments within each source conversation. Messages arriving during
-an active run join that Thread with `steer`, without repeating the history window. The history limit is configurable from 0 to 100. Continuous conversation,
-per-sender, fixed, and independent per-message choices remain available. For
-continuous-thread a13n routes, new messages join the
-current run at a safe boundary by default, with a queue-until-finished option under
-Messages during execution.
-You can reset a route's retained Agent threads from **Routes → Edit → Reset
+delivery offers four scopes: per conversation (default), per sender, fixed shared,
+and per message. New a13n routes retain Sessions for 60 idle minutes, attach up to
+30 initial channel-history messages, and use scoped writable memory. Continuing
+Sessions receive incremental context rather than a repeated history window.
+Environment scope is independent: global shared for the same Host/Agent, one per
+channel conversation (default), or one per Session. Optional global Memory Spaces
+are read-only. Active root/descendant work prevents idle rollover. **Messages
+during execution** independently selects safe-boundary steering or FIFO queueing.
+The [session setup guide](docs/onebots-a13n.md#thread-delivery) explains defaults,
+shared-file scope and compatibility with existing routes.
+You can reset a route's retained Agent threads from **Routes → Edit → Session → Reset
 conversations** after pending inputs finish. Future messages start fresh while
 gateway history is preserved. Modal forms keep
 one field per row at every width. Sign in
@@ -172,7 +178,7 @@ administrator username and a password of at least 8 characters. When both are un
 health and status remain available but management is disabled; configuring only
 one refuses startup. Login uses an
 HttpOnly session cookie, survives page refresh, and expires after 12 hours or
-service restart. Sign-out revokes the session. MCP uses separate Host/route keys. SQLite state defaults to `.channel-gateway/`; set
+service restart. Sign-out revokes the session. MCP uses separate route tokens. SQLite state defaults to `.channel-gateway/`; set
 `CGW_DATA_DIR` to a persistent private directory when hosting the service.
 Credentials and message history are stored there, without encryption at rest.
 Use one process and one replica. Expose authenticated endpoints through HTTPS.

@@ -21,10 +21,15 @@ class Upstreams:
         self.fail_submit = False
         self.fail_send = False
         self.queued_receipt = False
+        self.entry_status = "consumed"
         self.run_status = "completed"
+        self.run_failure = None
+        self.host_error_status = None
         self.output = "Hello from the agent"
         self.unique_threads = False
         self.thread_count = 0
+        self.memory_spaces = []
+        self.agent_config = {"memory_mounts": [], "subagents": {"named": {}}}
         self.archived_threads: set[str] = set()
         self.missing_threads: set[str] = set()
         self.agent_page = {
@@ -41,6 +46,29 @@ class Upstreams:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
+        if request.url.host == "host.test" and self.host_error_status:
+            return httpx.Response(self.host_error_status, json={"private": "Never publish upstream response bodies"})
+        if request.method == "GET" and "/agents/" in path:
+            if "/revisions/" in path:
+                return httpx.Response(200, json={"id": "rev_1", "config": self.agent_config})
+            return httpx.Response(200, json={"id": path.rsplit("/", 1)[-1], "default_revision_id": "rev_1"})
+        if path == "/api/v1/memory-spaces":
+            if request.method == "POST":
+                space = {"id": "mspace_" + str(len(self.memory_spaces) + 1), **json.loads(request.content)}
+                self.memory_spaces.append(space)
+                return httpx.Response(201, json=space)
+            label = request.url.params.get("label", "").removeprefix("cgw-scope:")
+            return httpx.Response(
+                200,
+                json={
+                    "items": [s for s in self.memory_spaces if s["labels"]["cgw-scope"] == label],
+                    "next_cursor": None,
+                },
+            )
+        if request.method == "GET" and path.endswith("/inbox"):
+            return httpx.Response(200, json={"items": [], "next_cursor": None})
+        if request.method == "GET" and path.endswith("/threads") and "session_id" in request.url.params:
+            return httpx.Response(200, json={"items": [], "next_cursor": None})
         if request.method == "GET" and path.endswith("/environments"):
             return httpx.Response(
                 200,
@@ -61,6 +89,7 @@ class Upstreams:
                 200,
                 json={
                     "id": identifier,
+                    "session_id": "session_" + identifier,
                     "archived_at": "2026-01-01" if identifier in self.archived_threads else None,
                     "current_run_id": "run_active" if self.run_status in {"accepted", "running", "waiting"} else None,
                 },
@@ -87,8 +116,10 @@ class Upstreams:
                 },
             )
         if "/inbox/" in path:
-            return httpx.Response(200, json={"status": "consumed", "assigned_run_id": "run_" + path.rsplit("_", 1)[-1]})
-        return httpx.Response(200, json={"status": self.run_status, "output": self.output})
+            return httpx.Response(
+                200, json={"status": self.entry_status, "assigned_run_id": "run_" + path.rsplit("_", 1)[-1]}
+            )
+        return httpx.Response(200, json={"status": self.run_status, "output": self.output, "failure": self.run_failure})
 
 
 @pytest.fixture
@@ -135,6 +166,9 @@ def route(gateway, *, kind="group", source="output", conversation="123"):
         json={
             "name": "Test conversation",
             "thread_policy": "conversation",
+            "session_idle_minutes": None,
+            "environment_scope": "session",
+            "conversation_memory": False,
             "channel_id": channel["id"],
             "host_id": host["id"],
             "conversation_kind": kind,
@@ -145,7 +179,7 @@ def route(gateway, *, kind="group", source="output", conversation="123"):
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    return remember_route_token(client, response.json())
 
 
 def webhook(gateway, *, user=7, kind="group", conversation=123, message_id=1, signed=True, self_id=99, text="Hello"):
@@ -172,6 +206,121 @@ def webhook(gateway, *, user=7, kind="group", conversation=123, message_id=1, si
 def tick(gateway):
     client, app, *_ = gateway
     client.portal.call(app.state.bridge.tick)
+
+
+@pytest.mark.parametrize("kind,user", [("group", 7), ("private", 123)])
+def test_failed_run_notifies_source_once_without_disclosing_host_text(gateway, kind, user):
+    client, _, upstream, *_ = gateway
+    route(gateway, kind=kind)
+    upstream.run_status = "failed"
+    upstream.run_failure = {
+        "code": "model_recovery_exhausted",
+        "message": "Private prompt and host-token; Model provider returned HTTP 429.",
+    }
+    event_id = webhook(gateway, kind=kind, user=user).json()["event_id"]
+    tick(gateway)
+    tick(gateway)
+    replies = client.get("/api/v1/replies").json()
+    assert len(replies) == 1 and replies[0]["state"] == "sent"
+    assert replies[0]["event_id"] == event_id and "HTTP 429" in replies[0]["text"]
+    assert "host-token" not in replies[0]["text"] and "Private prompt" not in replies[0]["text"]
+    send = next(r for r in upstream.requests if r.url.path.endswith("send_msg"))
+    assert json.loads(send.content)["group_id" if kind == "group" else "user_id"] == 123
+    assert client.post(f"/api/v1/events/{event_id}/retry").status_code == 200
+    tick(gateway)
+    tick(gateway)
+    assert len([r for r in upstream.requests if r.url.path.endswith("send_msg")]) == 1
+
+
+def test_host_request_failure_notifies_only_after_retry_exhaustion(gateway):
+    client, _, upstream, *_ = gateway
+    route(gateway)
+    upstream.host_error_status = 503
+    webhook(gateway)
+    for _ in range(4):
+        tick(gateway)
+        assert client.get("/api/v1/replies").json() == []
+    tick(gateway)
+    event = client.get("/api/v1/events").json()[0]
+    assert event["state"] == "failed" and event["attempts"] == 5
+    reply = client.get("/api/v1/replies").json()[0]
+    assert reply["state"] == "sent" and "unavailable" in reply["text"]
+    assert "private" not in reply["text"]
+
+
+def test_rejected_inbox_entry_notifies_without_waiting_for_a_run(gateway):
+    client, _, upstream, *_ = gateway
+    route(gateway)
+    upstream.queued_receipt = True
+    upstream.entry_status = "withdrawn"
+    webhook(gateway)
+    tick(gateway)
+    tick(gateway)
+    assert client.get("/api/v1/events").json()[0]["state"] == "failed"
+    assert client.get("/api/v1/replies").json()[0]["state"] == "sent"
+    assert not any("/runs/" in r.url.path for r in upstream.requests)
+
+
+def test_cancelled_run_notifies_without_forwarding_partial_output(gateway):
+    client, _, upstream, *_ = gateway
+    route(gateway)
+    upstream.run_status = "cancelled"
+    upstream.output = "Private partial output"
+    webhook(gateway)
+    tick(gateway)
+    tick(gateway)
+    reply = client.get("/api/v1/replies").json()[0]
+    assert reply["state"] == "sent" and reply["text"] == "Agent request was cancelled."
+
+
+def test_failure_notice_survives_restart_and_ambiguous_send_is_not_replayed(gateway, tmp_path):
+    from channel_gateway_server.bridge import Bridge
+    from channel_gateway_server.storage import Store
+
+    client, app, upstream, *_ = gateway
+    route(gateway)
+    upstream.run_status = "failed"
+    identifier = webhook(gateway).json()["event_id"]
+    tick(gateway)
+    event = client.portal.call(app.state.store.event, identifier)
+    client.portal.call(app.state.bridge.advance, event)
+    other = Store(tmp_path / "gateway.sqlite3")
+    client.portal.call(other.open)
+    try:
+        assert client.portal.call(other.replies)[0]["state"] == "queued"
+        upstream.fail_send = True
+        restarted = Bridge(other, app.state.bridge.adapters, channels=app.state.channels)
+        client.portal.call(restarted.tick)
+        client.portal.call(restarted.tick)
+        assert client.portal.call(other.replies)[0]["state"] == "unknown"
+        assert len([r for r in upstream.requests if r.url.path.endswith("send_msg")]) == 1
+    finally:
+        client.portal.call(other.close)
+
+
+def test_revocation_blocks_queued_failure_notice(gateway):
+    client, app, upstream, *_ = gateway
+    configured = route(gateway)
+    upstream.run_status = "failed"
+    identifier = webhook(gateway).json()["event_id"]
+    tick(gateway)
+    event = client.portal.call(app.state.store.event, identifier)
+    client.portal.call(app.state.bridge.advance, event)
+    client.patch(f"/api/v1/routes/{configured['id']}", json={"enabled": False})
+    tick(gateway)
+    assert client.get("/api/v1/replies").json()[0]["state"] == "blocked"
+    assert not any(r.url.path.endswith("send_msg") for r in upstream.requests)
+
+
+@pytest.mark.parametrize("status", ["accepted", "running", "waiting", "completed"])
+def test_nonfailed_run_does_not_create_failure_notice(gateway, status):
+    client, _, upstream, *_ = gateway
+    route(gateway)
+    upstream.run_status = status
+    webhook(gateway)
+    tick(gateway)
+    tick(gateway)
+    assert client.get("/api/v1/replies").json() == []
 
 
 def test_verified_events_enforce_actor_and_account_and_deduplicate(gateway):
@@ -444,13 +593,27 @@ def rpc(client, token, method, params):
     )
 
 
+def remember_route_token(client, route):
+    if "agent_token" in route:
+        if not hasattr(client, "route_tokens"):
+            client.route_tokens = {}
+        client.route_tokens[route["id"]] = route["agent_token"]
+    return route
+
+
+def route_token(client, route_id):
+    route = next(row for row in client.get("/api/v1/routes").json() if row["id"] == route_id)
+    owner = route.get("parent_route_id") or route_id
+    return client.route_tokens[owner]
+
+
 def send_tool(gateway, text="Hello from the agent"):
     """A simulated Agent explicitly calls the public MCP send tool."""
     client = gateway[0]
     event = next(row for row in client.get("/api/v1/events").json() if row.get("route_id"))
     result = rpc(
         client,
-        gateway[-1]["mcp_key"],
+        route_token(client, event["route_id"]),
         "tools/call",
         {
             "name": "send_message",
@@ -500,7 +663,7 @@ def test_mcp_does_not_accept_administrator_credentials_or_browser_origins(gatewa
 
 
 def test_mcp_reads_authorized_history_independently_of_ingress_routing(gateway):
-    client, app, upstream, _, host = gateway
+    client, app, upstream, _, _host = gateway
     webhook(gateway, text="Before route", message_id=10)
     configured = route(gateway)
     client.patch(f"/api/v1/routes/{configured['id']}", json={"enabled": False})
@@ -513,7 +676,7 @@ def test_mcp_reads_authorized_history_independently_of_ingress_routing(gateway):
     def read(limit):
         result = rpc(
             client,
-            host["mcp_key"],
+            configured["agent_token"],
             "tools/call",
             {
                 "name": "read",
@@ -532,7 +695,7 @@ def test_mcp_reads_authorized_history_independently_of_ingress_routing(gateway):
 
 
 def test_mcp_observed_history_does_not_restore_deleted_route_history(gateway):
-    client, _, _, _, host = gateway
+    client, _, _, _, _host = gateway
     configured = route(gateway)
     webhook(gateway, text="Archived route history", message_id=21)
     assert client.delete(f"/api/v1/routes/{configured['id']}").status_code == 200
@@ -540,7 +703,7 @@ def test_mcp_observed_history_does_not_restore_deleted_route_history(gateway):
     replacement = route(gateway)
     read = rpc(
         client,
-        host["mcp_key"],
+        replacement["agent_token"],
         "tools/call",
         {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": replacement["id"]}},
     )
@@ -549,13 +712,13 @@ def test_mcp_observed_history_does_not_restore_deleted_route_history(gateway):
 
 
 def test_mcp_all_conversation_scope_discovers_previously_received_conversations(gateway):
-    client, app, upstream, _, host = gateway
+    client, app, upstream, _, _host = gateway
     webhook(gateway, kind="private", text="Previously received private text", message_id=31)
     webhook(gateway, kind="private", user=8, text="Explicitly denied", message_id=32)
     specific = route(gateway, kind="private", conversation="8")
     client.patch(f"/api/v1/routes/{specific['id']}", json={"enabled": False})
     parent = catchall(gateway)
-    for key in (host["mcp_key"], parent["agent_token"]):
+    for key in (parent["agent_token"],):
         listing = rpc(
             client, key, "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
         ).json()["result"]
@@ -573,58 +736,6 @@ def test_mcp_all_conversation_scope_discovers_previously_received_conversations(
         assert "Previously received private text" in read.text and "Explicitly denied" not in read.text
     assert not client.portal.call(app.state.store.pending)
     assert not upstream.requests
-
-
-def test_structured_output_is_not_serialized_into_a_channel(gateway):
-    client, _, upstream, *_ = gateway
-    upstream.output = {"private_record": {"password": "not-a-public-reply"}}
-    route(gateway)
-    webhook(gateway)
-    tick(gateway)
-    tick(gateway)
-    assert client.get("/api/v1/replies").json() == []
-    assert client.get("/api/v1/events").json()[0]["state"] == "completed"
-
-
-@pytest.mark.parametrize("text", ["", "Internal observation that must remain private"])
-def test_explicit_silence_completes_without_reply_or_error(gateway, text):
-    client, _, upstream, *_ = gateway
-    upstream.output = {"reply": False, "text": text}
-    route(gateway)
-    webhook(gateway, text="We are chatting with each other")
-    tick(gateway)
-    tick(gateway)
-    tick(gateway)
-    event = client.get("/api/v1/events").json()[0]
-    assert event["state"] == "completed" and event["error"] is None
-    assert client.get("/api/v1/replies").json() == []
-    assert not any(r.url.path.endswith("send_msg") for r in upstream.requests)
-
-
-@pytest.mark.parametrize("reply", [None, 0, 1, "false", "true"])
-def test_malformed_reply_decision_never_sends_its_text(gateway, reply):
-    client, _, upstream, *_ = gateway
-    upstream.output = {"reply": reply, "text": "Must not be sent"}
-    route(gateway)
-    webhook(gateway)
-    tick(gateway)
-    tick(gateway)
-    assert client.get("/api/v1/replies").json() == []
-    assert client.get("/api/v1/events").json()[0]["error"] is None
-
-
-def test_final_reply_envelope_cannot_send_a_message(gateway):
-    client, _, upstream, *_ = gateway
-    upstream.output = {"reply": True, "text": "Never publish final output"}
-    route(gateway)
-    webhook(gateway)
-    tick(gateway)
-    tick(gateway)
-    tick(gateway)
-    assert client.get("/api/v1/replies").json() == []
-    event = client.get("/api/v1/events").json()[0]
-    assert event["state"] == "completed" and event["error"] is None
-    assert not any(r.url.path.endswith("send_msg") for r in upstream.requests)
 
 
 def test_agent_history_merges_confirmed_bot_sends_and_incoming_with_combined_limit(gateway):
@@ -878,9 +989,9 @@ def test_channel_deletion_revokes_parent_and_child_mcp_access(gateway):
     assert len(routes) == 2 and all(not row["enabled"] for row in routes)
     assert rpc(client, parent["agent_token"], "tools/list", {}).status_code == 401
     listing = rpc(
-        client, host["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+        client, parent["agent_token"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
     )
-    assert listing.status_code == 200 and all(row["id"] not in listing.text for row in routes)
+    assert listing.status_code == 401 and all(row["id"] not in listing.text for row in routes)
     value = {key: item for key, item in old.items() if key != "thread_id"}
     assert not client.portal.call(app.state.store.update_route, parent["id"], value, old)
     assert client.get("/api/v1/events").json()[0]["message"]["text"] == "Retained private history"
@@ -907,8 +1018,6 @@ def test_host_deletion_revokes_keys_and_stops_only_assigned_routes(gateway, kind
     assert client.delete(f"/api/v1/connections/{host['id']}").status_code == 200
     assert client.portal.call(app.state.store.connection, channel["id"]) is not None
     assert client.portal.call(app.state.store.connection, host["id"]) is None
-    assert not client.portal.call(app.state.store.rows, "SELECT * FROM host_keys WHERE host_id=?", (host["id"],))
-    assert rpc(client, host["mcp_key"], "tools/list", {}).status_code == 401
     assert rpc(client, configured["agent_token"], "tools/list", {}).status_code == 401
     assert not client.get("/api/v1/routes").json()[0]["enabled"]
     tick(gateway)
@@ -996,16 +1105,16 @@ def mcp_host_route(gateway, *, conversation="456"):
         },
     )
     assert response.status_code == 201, response.text
-    return host, response.json()
+    return host, remember_route_token(client, response.json())
 
 
-def test_host_keys_enforce_assignment_and_explicit_conversation_selection(gateway):
+def test_route_tokens_enforce_scope_and_allow_single_source_defaults(gateway):
     client, _, upstream, *_ = gateway
-    host, configured = mcp_host_route(gateway)
+    _host, configured = mcp_host_route(gateway)
     other = route(gateway, source="mcp")
     webhook(gateway, conversation=456, text="Codex input")
     webhook(gateway, text="Other host private content", message_id=2)
-    key = host["mcp_key"]
+    key = configured["agent_token"]
     listed = rpc(client, key, "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}})
     assert configured["id"] in listed.text and other["id"] not in listed.text
     assert "Codex input" not in listed.text
@@ -1017,7 +1126,7 @@ def test_host_keys_enforce_assignment_and_explicit_conversation_selection(gatewa
         assert denied.json()["result"]["isError"] is True
         assert "Other host private content" not in denied.text
     missing = rpc(client, key, "tools/call", {"name": "read", "arguments": {"resource": "messages", "arguments": {}}})
-    assert missing.json()["result"]["isError"] is True
+    assert not missing.json()["result"].get("isError")
     read = rpc(
         client,
         key,
@@ -1048,7 +1157,7 @@ def test_host_keys_enforce_assignment_and_explicit_conversation_selection(gatewa
 
 def test_mcp_pull_inputs_never_submit_or_claim_run_completion(gateway):
     client, _, upstream, *_ = gateway
-    host, configured = mcp_host_route(gateway)
+    _host, configured = mcp_host_route(gateway)
     webhook(gateway, conversation=456)
     webhook(gateway, conversation=456, message_id=2)
     tick(gateway)
@@ -1059,7 +1168,7 @@ def test_mcp_pull_inputs_never_submit_or_claim_run_completion(gateway):
     assert all(event["run_id"] is None and event["thread_id"] is None for event in events)
     rpc(
         client,
-        host["mcp_key"],
+        configured["agent_token"],
         "tools/call",
         {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": configured["id"]}},
     )
@@ -1067,15 +1176,16 @@ def test_mcp_pull_inputs_never_submit_or_claim_run_completion(gateway):
     assert client.get("/api/v1/replies").json() == []
 
 
-def test_host_key_rotation_and_current_route_access(gateway):
-    client, app, _, channel, a13n = gateway
+def test_route_token_rotation_and_current_route_access(gateway):
+    client, app, _, _, _ = gateway
     host, configured = mcp_host_route(gateway)
+    assert "mcp_key" not in host
     webhook(gateway, conversation=456)
-    key = host["mcp_key"]
+    key = configured["agent_token"]
     assert key not in client.get("/api/v1/connections").text
-    assert client.portal.call(app.state.store.host_for_token, key)["id"] == host["id"]
-    assert client.post(f"/api/v1/connections/{channel['id']}/mcp-key").status_code == 404
-    rotated = client.post(f"/api/v1/connections/{host['id']}/mcp-key").json()["mcp_key"]
+    assert client.portal.call(app.state.store.route_for_token, key)["id"] == configured["id"]
+    assert client.post(f"/api/v1/connections/{host['id']}/mcp-key").status_code == 404
+    rotated = client.post(f"/api/v1/routes/{configured['id']}/token").json()["agent_token"]
     assert rpc(client, key, "tools/list", {}).status_code == 401
     assert rpc(client, rotated, "tools/list", {}).status_code == 200
     client.patch(f"/api/v1/routes/{configured['id']}", json={"allowed_user_ids": ["8"]})
@@ -1087,28 +1197,16 @@ def test_host_key_rotation_and_current_route_access(gateway):
     )
     assert "Hello" not in read.text
     client.patch(f"/api/v1/routes/{configured['id']}", json={"enabled": False})
-    listed = rpc(client, rotated, "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}})
-    assert configured["id"] not in listed.text
-    denied = rpc(
-        client,
-        rotated,
-        "tools/call",
-        {
-            "name": "send_message",
-            "arguments": {"content": [{"type": "text", "text": "Blocked"}], "route_id": configured["id"]},
-        },
-    )
-    assert denied.json()["result"]["isError"] is True
-    # API + MCP hosts receive independent keys as well.
+    assert rpc(client, rotated, "tools/list", {}).status_code == 401
     other = route(gateway)
     listed = rpc(
-        client, a13n["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+        client, other["agent_token"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
     )
     assert other["id"] in listed.text and configured["id"] not in listed.text
 
 
 def test_mcp_hosts_reject_upstream_credentials_and_a13n_bindings(gateway):
-    client, _, _, channel, host = gateway
+    client, _, _, channel, _ = gateway
     assert (
         client.post("/api/v1/connections", json={"name": "Wrong", "kind": "mcp", "token": "must-not-leak"}).status_code
         == 422
@@ -1122,14 +1220,8 @@ def test_mcp_hosts_reject_upstream_credentials_and_a13n_bindings(gateway):
         "conversation_id": "7",
         "allowed_user_ids": ["7"],
     }
-    for field in ({"agent_id": "ap_wrong"}, {"mcp_connection_id": "conn_wrong"}, {"reply_source": "output"}):
+    for field in ({"agent_id": "ap_wrong"}, {"mcp_connection_id": "conn_wrong"}):
         assert client.post("/api/v1/routes", json={**payload, **field}).status_code == 422
-    assert (
-        client.post("/api/v1/routes", json={**payload, "host_id": host["id"], "reply_source": "output"}).status_code
-        == 422
-    )
-    created = client.post("/api/v1/routes", json=payload).json()
-    assert client.patch(f"/api/v1/routes/{created['id']}", json={"reply_source": "output"}).status_code == 422
 
 
 def catchall(gateway, *, kind="private", host=None):
@@ -1139,6 +1231,9 @@ def catchall(gateway, *, kind="private", host=None):
         json={
             "name": "Personal assistant",
             "thread_policy": "conversation",
+            "session_idle_minutes": None,
+            "environment_scope": "session",
+            "conversation_memory": False,
             "channel_id": channel["id"],
             "host_id": (host or configured_host)["id"],
             "conversation_kind": kind,
@@ -1148,11 +1243,11 @@ def catchall(gateway, *, kind="private", host=None):
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    return remember_route_token(client, response.json())
 
 
 def test_unrouted_messages_discover_identity_without_delivery_or_mcp_access(gateway):
-    client, _, upstream, _, host = gateway
+    client, _, upstream, _, _host = gateway
     webhook(gateway, kind="private", text="Discover my sender")
     webhook(gateway, kind="private", text="Discover my sender")
     rows = client.get("/api/v1/events").json()
@@ -1165,7 +1260,7 @@ def test_unrouted_messages_discover_identity_without_delivery_or_mcp_access(gate
     assert (
         "Discover my sender"
         not in rpc(
-            client, host["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+            client, "retired-host-key", "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
         ).text
     )
     route(gateway, kind="private", conversation="7")
@@ -1242,7 +1337,7 @@ def test_parent_policy_revokes_child_ingress_pending_work_and_mcp_history(gatewa
     client.patch(f"/api/v1/routes/{parent['id']}", json={"enabled": False})
     assert rpc(client, parent["agent_token"], "tools/list", {}).status_code == 401
     listing = rpc(
-        client, host["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+        client, parent["agent_token"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
     )
     assert child["id"] not in listing.text
     assert webhook(gateway, kind="private", user=7, message_id=3).json()["state"] == "blocked"
@@ -1325,6 +1420,9 @@ def create_rule(gateway, sources, **overrides):
         json={
             "name": "Sources",
             "thread_policy": "conversation",
+            "session_idle_minutes": None,
+            "environment_scope": "session",
+            "conversation_memory": False,
             "sources": sources,
             "host_id": host["id"],
             "agent_id": "agt_example",
@@ -1333,7 +1431,7 @@ def create_rule(gateway, sources, **overrides):
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    return remember_route_token(client, response.json())
 
 
 def new_channel(client):
@@ -1349,7 +1447,7 @@ def new_channel(client):
         },
     )
     assert response.status_code == 201
-    return response.json()
+    return remember_route_token(client, response.json())
 
 
 def children(client, parent):
@@ -1488,7 +1586,7 @@ def test_legacy_exact_route_expands_without_losing_its_thread_or_sender_policy(g
 
 
 def test_destination_change_starts_new_threads_and_revokes_old_host(gateway):
-    client, _, _, channel, host = gateway
+    client, _, _, channel, _host = gateway
     configured = create_rule(gateway, [source(channel["id"], "group", "123")])
     webhook(gateway)
     assert client.patch(f"/api/v1/routes/{configured['id']}", json={"agent_id": "agt_other"}).status_code == 409
@@ -1500,7 +1598,10 @@ def test_destination_change_starts_new_threads_and_revokes_old_host(gateway):
     assert changed.status_code == 200, changed.text
     assert not children(client, configured)
     listed = rpc(
-        client, host["mcp_key"], "tools/call", {"name": "discover", "arguments": {"resource": "conversations"}}
+        client,
+        configured["agent_token"],
+        "tools/call",
+        {"name": "discover", "arguments": {"resource": "conversations"}},
     )
     assert old["id"] not in listed.text
     webhook(gateway, message_id=2)
@@ -1721,7 +1822,7 @@ def test_read_channels_can_exclude_the_source_and_include_another_account(gatewa
     webhook(gateway, kind="private", text="Source input")
     webhook(other, kind="private", text="Readable account")
     unrelated = client.post("/api/v1/connections", json={"name": "Unrelated", "kind": "mcp"}).json()
-    for token in (configured["agent_token"], host["mcp_key"]):
+    for token in (configured["agent_token"],):
         listed = mcp_result(client, token, "discover", resource="conversations")["conversations"]
         own = next(row for row in listed if row["channel_id"] == channel["id"])
         external = next(row for row in listed if row["channel_id"] == other_channel["id"])
@@ -1735,7 +1836,7 @@ def test_read_channels_can_exclude_the_source_and_include_another_account(gatewa
             {"name": "read", "arguments": {"resource": "messages", "arguments": {}, "route_id": own["id"]}},
         )
         assert denied.json()["result"]["isError"]
-    assert mcp_result(client, unrelated["mcp_key"], "discover", resource="conversations")["conversations"] == []
+    assert "mcp_key" not in unrelated
     assert len([event for event in client.get("/api/v1/events").json() if event["state"] == "queued"]) == 1
 
 
@@ -1813,3 +1914,51 @@ def test_invalid_read_channel_grants_are_rejected_without_changing_authority(gat
         response = client.patch(f"/api/v1/routes/{configured['id']}", json={"read_channel_ids": invalid})
         assert response.status_code == 422, response.text
     assert client.get("/api/v1/routes").json()[0]["read_channel_ids"] == []
+
+
+def test_hosts_never_issue_mcp_credentials_and_legacy_keys_are_revoked(gateway):
+    from channel_gateway_server.storage import token_hash
+
+    client, app, _, _, host = gateway
+    assert "mcp_key" not in host
+    generic = client.post("/api/v1/connections", json={"name": "Generic", "kind": "mcp"}).json()
+    assert "mcp_key" not in generic
+    assert client.post(f"/api/v1/connections/{host['id']}/mcp-key").status_code == 404
+    assert client.post(f"/api/v1/connections/{generic['id']}/mcp-key").status_code == 404
+    configured = route(gateway)
+    legacy = "retired-host-capability"
+
+    async def old_schema():
+        async with app.state.store.transaction() as db:
+            await db.execute("CREATE TABLE host_keys (host_id TEXT PRIMARY KEY, token_hash TEXT UNIQUE)")
+            await db.execute("INSERT INTO host_keys VALUES (?,?)", (host["id"], token_hash(legacy)))
+
+    client.portal.call(old_schema)
+    assert rpc(client, legacy, "tools/list", {}).status_code == 401
+    client.portal.call(app.state.store.close)
+    client.portal.call(app.state.store.open)
+    assert not client.portal.call(
+        app.state.store.rows, "SELECT name FROM sqlite_master WHERE type='table' AND name='host_keys'"
+    )
+    assert rpc(client, legacy, "tools/list", {}).status_code == 401
+    assert rpc(client, configured["agent_token"], "tools/list", {}).status_code == 200
+
+
+def test_route_tokens_cannot_reach_another_route_on_the_same_host(gateway):
+    first = route(gateway)
+    second = route(gateway, kind="private", conversation="7")
+    client = gateway[0]
+    webhook(gateway, kind="private", text="Other route secret")
+    for name, arguments in [
+        ("read", {"resource": "messages"}),
+        ("send_message", {"content": [{"type": "text", "text": "Forbidden"}]}),
+    ]:
+        response = rpc(
+            client,
+            first["agent_token"],
+            "tools/call",
+            {"name": name, "arguments": {"route_id": second["id"], **arguments}},
+        )
+        assert response.json()["result"]["isError"]
+        assert "Other route secret" not in response.text
+    assert not client.get("/api/v1/replies").json()

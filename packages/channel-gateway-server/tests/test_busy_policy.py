@@ -82,7 +82,13 @@ class BusyHost:
         ):
             thread = path.rsplit("/", 1)[-1]
             return httpx.Response(
-                200, json={"id": thread, "current_run_id": self.active.get(thread), "archived_at": None}
+                200,
+                json={
+                    "id": thread,
+                    "session_id": "session_" + thread,
+                    "current_run_id": self.active.get(thread),
+                    "archived_at": None,
+                },
             )
         if "/inbox/" in path:
             if self.fail_entry_read:
@@ -247,7 +253,9 @@ def configure_sources(busy, *, policy="steer", thread="fixed"):
             "sources": [{"channel_id": gateway[3]["id"], "conversation_kind": "group", "conversation_id": "*"}],
             "sender_policy": "any",
             "allowed_user_ids": [],
-            "thread_policy": thread,
+            "thread_policy": "conversation" if thread == "window" else thread,
+            "session_idle_minutes": 0 if thread == "window" else None,
+            "environment_scope": "conversation" if thread == "window" else "session",
             "busy_policy": policy,
         },
     )
@@ -401,7 +409,9 @@ def test_rejected_steer_does_not_take_the_original_inputs_reply(busy):
     host.complete("busy_run_1")
     tick(gateway)
     replies = gateway[0].get("/api/v1/replies").json()
-    assert replies == []
+    assert len(replies) == 1
+    assert replies[0]["event_id"] == second and replies[0]["state"] == "sent"
+    assert replies[0]["text"].startswith("Agent request failed.")
     events = {row["id"]: row for row in gateway[0].get("/api/v1/events").json()}
     assert events[first]["state"] == "completed"
     assert events[second]["state"] == "failed"
@@ -422,7 +432,7 @@ def test_many_steers_are_submitted_fifo_without_waiting_for_run_end(busy):
     assert replies == []
 
 
-@pytest.mark.parametrize("stored_policy", ["steer", "queue"])
+@pytest.mark.parametrize("stored_policy", ["steer"])
 def test_window_joins_active_run_without_repeating_history_then_rotates_when_idle(busy, stored_policy):
     gateway, host, _ = busy
     configure_sources(busy, thread="window", policy=stored_policy)
@@ -435,7 +445,10 @@ def test_window_joins_active_run_without_repeating_history_then_rotates_when_idl
     body = json.loads(host.posts[-1].content)
     assert body["delivery"] == "steer"
     assert "environments" not in body
-    assert [part["type"] for part in body["payload"]["content"]] == ["text"]
+    assert not any(
+        "channel_history" in part.get("value", {}) and part["value"]["channel_history"]
+        for part in body["payload"]["content"]
+    )
     assert "First" not in body["payload"]["content"][0]["text"]
     host.incorporate()
     tick(gateway)
@@ -447,9 +460,11 @@ def test_window_joins_active_run_without_repeating_history_then_rotates_when_idl
     tick(gateway)
     assert host.posts[-1].url.path == "/api/v1/threads"
     body = json.loads(host.posts[-1].content)
-    assert body["delivery"] == "next_run"
+    assert body["delivery"] == "steer"
     assert body["environments"][0]["environment_id"] == "env_1"
-    history = body["payload"]["content"][-1]["value"]["channel_history"]
+    history = next(
+        p["value"]["channel_history"] for p in body["payload"]["content"] if "channel_history" in p.get("value", {})
+    )
     assert [item["text"] for item in history] == ["First", "New input"]
 
 
@@ -473,3 +488,20 @@ def test_window_lost_steer_receipt_retries_frozen_inbox_after_run_finishes(busy)
     assert retried.url == frozen.url
     assert retried.content == frozen.content
     assert retried.headers["Idempotency-Key"] == frozen.headers["Idempotency-Key"]
+
+
+def test_queue_and_idle_rollover_are_independent(busy):
+    gateway, host, _ = busy
+    configure_sources(busy, thread="window", policy="queue")
+    emit(busy, 301)
+    tick(gateway)
+    emit(busy, 302)
+    tick(gateway)
+    assert len(host.posts) == 1
+    host.complete("busy_run_1")
+    tick(gateway)
+    tick(gateway)
+    assert len(host.posts) == 2
+    assert host.posts[-1].url.path == "/api/v1/threads"
+    assert json.loads(host.posts[-1].content)["delivery"] == "next_run"
+    assert "environments" in json.loads(host.posts[-1].content)

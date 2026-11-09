@@ -29,7 +29,7 @@ direct official platform connections. See the
    permitted to read Agents, threads, and runs
    and run the selected agent. No interactive login session is used.
 5. In **Routes & access**, select **Add a route**. Set its name and enabled state
-   in **Basic information**. In **Routing → Sources**, each row
+   in **Basic**. In **Routing → Sources**, each row
    selects a channel and a user or group. Search observed conversations or enter
    a platform ID and select its user/group type. Use the plus button for another
    row and the row's delete button to remove it. **All channels** includes channels
@@ -42,11 +42,11 @@ direct official platform connections. See the
    In **Routing → Destination**, choose the Agent Host and select an Agent from
    its list. Search by name or ID; use **Load more** for later pages. Choose
    **Conversation continuity** (one thread per private chat or group by default).
-   In **Connections**, select **Readable channels**.
+   In **Permissions and connections**, select **Readable channels**.
    Each readable channel grants access to all received private/group conversations
    for that bot account; it does not trigger the Agent or authorize replies there.
    Select **All channels** to include future accounts, or select none to deny reads.
-   Configure the shared Host MCP connection for message sends, without a dedicated
+   Configure a route-token MCP connection for message sends, without a dedicated
    route binding. Each conversation gets its own thread
    unless you select another [thread delivery policy](#thread-delivery).
 6. Send a text message as an authorized user. **Messages** lists conversations, including
@@ -54,7 +54,13 @@ direct official platform connections. See the
    page. Received messages appear on the left and Agent replies on the right,
    with timestamps, delivery states, and diagnostics. Use **Load earlier messages**
    for older history and **Back to messages** to return to the conversation list.
-   Authorized private and group replies are sent automatically without review.
+  Authorized private and group replies are sent automatically without review.
+  A terminal a13n failure also queues a short gateway failure notice in the source
+  conversation. Known causes such as service rate/quota rejection are summarized;
+  private upstream error bodies and Agent output are never forwarded. A notice
+  is queued once per input, including across restart and manual retry, and remains
+  subject to current route access and the platform's reply window. Older failed
+  inputs are not replayed or backfilled with notices.
 
 The signing secret must match OneBots' configuration. Start with a private test
 conversation and an Agent whose permissions are appropriate for its participants.
@@ -74,57 +80,72 @@ flight.
 
 ## Thread delivery
 
-Choose **Conversation continuity** in **Routing → Destination**. Options are
-include bounded history with shared environments, ongoing chats, personal
-assistance in groups, independent tasks, and cross-source collaboration. Each option includes a description; the selected
-option's description remains below the selector.
+Choose **Conversation continuity** in **Session → Context**:
 
-- **Bounded history, shared environment** is the default. When idle, a message gets a
-  fresh thread with the latest channel history, reusing the same conversation's
-  environment mounts. While a Thread has an active run, new messages join it
-  through `steer`; the history window is not attached again. Files stay in the
-  environment while model context starts fresh on each idle-to-active transition. The first message
-  follows the Agent's normal environment setup. Environment lookup or mount
-  failures stop delivery rather than silently creating an empty replacement.
-- **Continue each private chat or group** keeps one thread for each source channel
-  account and private/group conversation. This retains upstream model history.
-- **Keep each group member separate** keeps a thread for each sender inside a source
-  conversation. The same person in another group or account uses another thread.
-- **Start fresh for every message** starts a fresh thread and session for every message.
-  An Agent with a default environment template can consequently create a new
-  environment for each message. Retrying a delivery reuses the same request and
-  does not intentionally create another thread.
-- **Share context across all sources** shares one thread across all sources on this route. Select an
-  existing thread from the Host list, or leave **Created on first message** selected.
-  All admitted sources share its upstream history; removing a source does not
-  erase history already delivered there.
+- **Continue each private chat or group** (default): each concrete source
+  conversation keeps its own coordinator Thread.
+- **Keep each group member separate**: each sender keeps a separate Thread
+  within that conversation, without linking people across groups or accounts.
+- **Start fresh for every message**: each triggering message starts a new Session.
+- **Share context across all sources**: the route shares a Thread across sources.
+  Select an existing Thread or **Created on first message**. Removing a source
+  cannot erase context already submitted to a shared Thread.
 
-Replies stay attached to their original source conversation under every policy.
-Wait for queued/submitted inputs to finish before changing the Agent or thread
-policy. On upgrade, existing default conversation routes switch to bounded
-history once, retaining their previous thread as the environment origin. Explicit
-sender, fixed, and per-message policies remain unchanged. Frozen deliveries keep
-their original request. No upstream thread or environment is deleted.
+In **Session → Context**, **Session idle timeout (minutes)** defaults to **60** for new a13n routes. Empty
+retains the Session indefinitely; **0** starts fresh whenever idle. Accepted values
+are **0 or greater**, with no gateway-imposed upper limit. An active root Run, descendant or pending coordinator input keeps
+its Session regardless of timeout. Per-message scope always starts fresh. Pinned
+existing Threads require indefinite retention and keep their existing memory and
+environment selection; choose create-on-first-message for new selection settings.
 
-Set **History message limit** in **Routing → Destination**. It defaults to **30**
-and accepts **0–100**. It counts previous incoming and confirmed sent messages
-combined, excluding the current message. **0** omits history. Only messages from
-the current conversation within the route's read permissions are attached; an
-empty readable-channel grant omits history. This is a message-count limit, not
-a token budget. Media appear as counts with source IDs for authorized tool reads.
+In **Session → Execution environment**, **Environment scope** is independent of conversation continuity:
 
-Continuous-thread choices keep upstream context regardless of the attached
-history limit. Current a13n Service automatically compacts at its configured token
-threshold (90% of the model context window by default). CG does not invoke a
-manual compaction API. Use bounded history when a strict channel-history count is
-required; use continuous threads when preserving model/tool state is preferred.
+| Option | Behavior |
+| --- | --- |
+| **Global shared environment** | Participating routes on the same Host and Agent share one environment set across chats and Sessions |
+| **One environment per conversation** (new-route default) | Each bot account's concrete group or private chat keeps its environment across senders and Session generations |
+| **Follow session lifetime** | Every new coordinator Session provisions its own environment; continuing Runs reuse it |
 
-To clear a route's Agent context, open **Routes → Edit → Reset conversations**
+A bot account with several chats does not constitute one conversation. Separate
+sender Threads can share their chat's environment. Global sharing exposes files
+to every participating execution, even with separate model history and memory.
+Use separate work directories for concurrent tasks. Fixed Threads spanning
+multiple conversations require global or Session environments. Lookup/mount
+failures stop delivery instead of creating an empty replacement. Subagent
+shared/dedicated environment edges remain configured in the Host.
+
+In **Session → Context**, **History message limit** defaults to **30** and accepts **0–100**; **0** omits
+automatic history. New Sessions receive that many previous authorized incoming
+and confirmed sent messages, excluding the current trigger. Continuing Sessions
+receive only new context since their last accepted input, bounded to 100 records.
+A full delta identifies possible missing context and a gateway history-read
+reference. Earlier history remains readable through authorized pagination. Media
+appear as source handles/counts. These are message counts, not token budgets;
+a13n still owns automatic compaction.
+
+In **Memory**, enable **Conversation memory** (on by default for new non-fixed a13n routes) to
+reuse scoped writable memory across Session changes. Optionally enter **Global
+Memory Spaces** with the searchable multi-select; choices show Host Space names
+and read-only access. Pagination and retry preserve current selections. Changing
+the Host clears its selected Spaces. Host Space defaults are replaced. Root and named-child revisions must have
+only read-only standalone memory defaults; named child revisions must be pinned.
+CG refuses unsafe or uninspectable configurations without editing the Agent. Fixed shared Threads require **Shared memory across sources**; existing
+source Spaces are not merged. See [memory configuration](session-context.md#keep-memory-across-sessions).
+
+Wait for queued/submitted inputs to finish before changing Session, environment
+or memory policies. Upgrades retain existing continuing Threads; legacy `window`
+routes become conversation scope with zero-minute retention and conversation
+reused environments. Existing per-message routes retain Session environments.
+Frozen deliveries retain their original requests. No upstream environment,
+Thread or memory is deleted or automatically cleaned during migration.
+
+To clear a route's Agent context, open **Routes → Edit → Session → Reset conversations**
 and confirm. Wait for all of that route's pending inputs to finish first.
 This resets every conversation and sender thread on the route, including
 automatically created conversation children. Future messages start fresh a13n
-threads and sessions; gateway history and previous upstream threads remain
-available. Other routes are unaffected. An explicitly selected fixed shared
+threads and sessions; gateway history, scoped memory and previous upstream threads
+remain available. Global/conversation environments are retained; Session-scoped
+environments are replaced for the next Session. Other routes are unaffected. An explicitly selected fixed shared
 thread must instead be changed in the destination selector; per-message
 delivery already starts fresh. A new Agent revision applies to new runs even in
 an existing thread, so resetting is for clearing history rather than publishing
@@ -132,10 +153,9 @@ prompt changes.
 
 ### Messages during execution
 
-Bounded-history delivery always steers into the active Thread and hides
-this selector. When idle it starts a fresh Thread with the history window. The following options apply to the other thread policies.
+The busy policy is independent of conversation scope, keepalive and environment selection.
 
-In **Routing → Destination → Messages during execution**, choose:
+In **Session → Context → Messages during execution**, choose:
 
 - **Join current execution** (default): CG immediately submits `steer`. Compatible
   messages join the active a13n run at its next safe boundary.
@@ -204,52 +224,39 @@ ordinary text, use `send_message`. Final Agent output is never forwarded.
 QQ proactive sends require `message.proactive`; reactions use `message.react`.
 All required tools must be enabled in the Agent Host.
 
-For an Agent that shares one Host trust boundary, configure **one MCP connection**
-in a13n with the Host's MCP key. Copy it when creating the Host, or obtain a new
-one through **Agent hosts → Manage → Rotate MCP key**. Use the key as the
+Create a route, copy its generated token and MCP URL from the one-time dialog,
+and configure a corresponding MCP connection in a13n. Use the token as the
 **bearer credential**. The equivalent a13n create body is:
 
 ```json
 {
   "type": "mcp",
-  "name": "Channel Gateway",
+  "name": "Channel Gateway route",
   "config": { "url": "https://GATEWAY/mcp/", "tools": null },
   "auth": "bearer",
-  "credential": { "token": "HOST_MCP_KEY" }
+  "credential": { "token": "ROUTE_MCP_TOKEN" }
 }
 ```
 
-Select that connection and the desired tools in the Agent interface. The gateway
-exposes one fixed tool inventory, including the additional
-[QQ tools and operations](qq-platform.md). Call `discover(resource="conversations")` to discover
-current authorized destinations, then pass the selected `id` as `route_id` to
-reads, sends, and actions. For an incoming channel message, use its gateway-verified
-`route_id`. Adding groups, private chats, or guild channels only changes route
-data; it does not require another connection, new tools, or per-conversation Tool
-Search groups. Native resource operations use the same fixed tools with an
-`operation` argument.
+Select that connection and the desired tools in the Agent interface. A route
+token covers its configured sources, readable channels and action grants. Call
+`discover(resource="conversations")`, then supply the returned concrete `id` as
+`route_id` to reads, sends and actions. A single exact source may omit `route_id`;
+multi-source/wildcard routes require a concrete child. Read-only handles always
+require an explicit ID and cannot send. Adding conversations under the same
+route uses the same connection and five tools. Separate route configurations
+need separate tokens, even when they share a Host or Agent.
 
-Use the shared Host-key connection for all message sends and pass the verified
-concrete `route_id` explicitly. Exact, multi-source and wildcard sources all use
-the same tools. QQ proactive delivery requires `message.proactive`; passive
-sending remains available without that grant.
+One concrete source can optionally record its dedicated a13n MCP connection ID
+in the route form. The connection must use that route's token; this binding does
+not add tools, broaden access or replace the Agent's configured connection list.
+An Agent configured with several route connections has their combined configured
+capabilities, so select an Agent appropriate for every admitted sender.
 
-Dedicated route credentials are optional for narrower access. One concrete source
-can bind a dedicated MCP connection using that route's token. This is optional
-isolation, not a requirement for sending or adding groups.
-An Agent configured with both shared and dedicated connections still has the
-shared connection's full Host authority.
-
-Choose an Agent whose remaining permissions are appropriate for all conversations
-assigned to the Host. CG does not override the Agent's connection tools, built-in
-toolsets, plugins, skills, or access to other Host resources. The Host key does not
-broaden route sources, sender policy, read grants, or action grants. See the
-[Agent tool contract](../spec/04-agent-tools.md) for exact tool selection and scope.
-
-When rotating a Host key, replace the bearer credential in its shared connection.
-For a dedicated route connection, rotate the route token instead. Wait for active
-input to finish before changing a route MCP binding. Never put either key in
-`mcp_headers`; use the bearer credential field shown above.
+Rotate credentials in **Routes → Edit → Permissions and connections → Route
+token** and update the corresponding a13n bearer credential. Host-wide MCP keys
+are no longer issued or accepted; upstream a13n workspace API keys are separate.
+Never put a route token in `mcp_headers`.
 
 ## Quiet group participation
 

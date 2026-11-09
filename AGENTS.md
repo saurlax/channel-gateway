@@ -50,7 +50,9 @@ those stages only when the user has authorized them.
   implementation helpers where useful, but give each resource its own list,
   search, creation flow, and labels.
 - Agent Hosts support a13n API + MCP and generic MCP clients. Keep upstream
-  credentials separate from Host MCP keys; enforce route assignment on the server.
+  credentials separate from route MCP tokens; generate MCP credentials only on
+  routes, with no Host-level MCP address or token controls. Enforce route scope
+  on the server.
   Generic MCP routes have no a13n agent or connection binding fields.
 - Management pages use a search toolbar above a table. Show empty and filtered
   states inside the table; keep the layout usable on narrow screens with table
@@ -60,10 +62,15 @@ those stages only when the user has authorized them.
   pages. Channel and Host editing, credentials, details, and reply details open
   from row actions in modals. Modal fields always use one column at every width.
   Read-only activity lists need no Add button.
-- Route configuration uses Basic information, Routing, and Connections tabs
-  without a Card wrapper. Basic information contains name and enabled state;
-  Routing shows Sources and Destination together; Connections contains the optional
-  dedicated a13n MCP connection binding and readable channel accounts.
+- Route configuration uses Basic, Routing, Session, Memory, and Permissions and
+  connections tabs without a Card wrapper. Basic contains name, enabled state and
+  a Danger zone containing Delete route. Routing shows Sources
+  and Destination (Host and Agent). Session contains the optional wake decision Agent, Context (conversation scope,
+  fixed Thread, keepalive, history and busy policy), Execution environment, and Reset conversations.
+  Memory contains scoped memory and global read-only Spaces. Permissions and
+  connections contains readable channels, platform action grants and the optional
+  dedicated a13n MCP connection binding, plus Route token rotation. Hide Session and Memory for generic MCP
+  Hosts. Keep Save and Cancel outside the tabs; validation selects the owning tab.
   Agent tool permissions are configured in the Agent Host interface; CG always
   inherits the Agent's configured connection tools.
   Each source row has channel and user/group input columns, followed by a delete
@@ -84,7 +91,8 @@ those stages only when the user has authorized them.
   product and responsive adjustments. Preserve browser-language localization,
   accessible labels, keyboard interaction, and destination authorization checks.
 
-- Only explicit Agent message-tool requests create channel messages. Agent final output is never sent. Show incoming
+- Only explicit Agent message-tool requests publish Agent output. Terminal a13n failures may produce
+  a bounded gateway failure notice under the delivery contract. Agent final output is never sent. Show incoming
   messages and Agent replies together in conversation history under Messages.
   Conversation history is opened only from Messages, not from route rows. Route
   rows have one Edit action; thread reset, token rotation, enable/disable settings, and deletion

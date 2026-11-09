@@ -1,43 +1,60 @@
 # Routing and delivery
 
+This document owns route authorization, durable delivery and reply lifecycles.
+[Session context and memory](09-session-context-and-memory.md) owns the implemented
+session keepalive, environment selection, incremental context and memory contract.
+
 ## Optional wake decisions and scoped context
 
-An a13n route may select `wake_provider_id`, referencing an administrator-managed
-OpenAI-compatible provider. Null (the default) retains existing delivery. After
-route and sender authorization, CG classifies the current event and at most eight
-authorized source-history messages. Current text is bounded to 8000 characters,
-each history text to 800. Verified bot mentions always process. Other candidates
-receive a strict boolean decision; malformed decisions or provider failure
-process normally. Disabling a provider also falls back to normal delivery.
+An a13n route may select optional `wake_agent_id`, a published Agent on that
+route's Host. Null (the default) delivers every authorized message. Generic MCP
+Hosts reject this setting. After source and sender authorization, CG asks the
+selected Agent to classify the current event and at most eight authorized source
+history messages (current text: 8000 characters; each prior text: 800). Media is
+represented by presence. Bot mentions follow the same decision path.
 
-Decisions persist by event ID before submission. Negative decisions set the event
-to `filtered`, retain history, create no Host input and cannot be manually retried
-as a failed delivery. A frozen Host request is never reclassified. Classification
-uses at most eight process-owned tasks, each with a 20-second request timeout,
-without blocking polling or sends. Shutdown cancels and joins those tasks; queued
-events survive. Authority is rechecked before freezing a new Host submission.
+Each decision uses a fresh Host Thread, independent from destination session,
+environment and memory bindings. Session memory is disabled and initial standalone
+mounts are empty. The Host resolves the Agent revision and retains authority over
+its configured standalone memory, tools and subagents. CG does not grant route credentials or an origin handle to the check. Administrators
+should select an Agent without side-effect tools. The result must be a JSON object
+(or JSON string) containing a boolean `process`; additional fields are ignored.
+Decision final output is consumed only for gating, never published to channels.
 
-`conversation_memory` defaults false and requires window delivery. Its stable
-binding includes route, Host, Agent and concrete source identity. CG creates a
-Memory Space through the Host's public API and persists its ID. A scope label
-recovers an uncertain creation before retrying. New threads explicitly select
-that Space in `session.memory`; active-thread inbox submissions keep the settled
-selection. Enabling memory uses a new binding scope rather than steering into an
-old globally selected session. Resetting threads retains the Space; removing a
-route does not delete Host memory. Host failure never falls back to shared memory.
-This selection replaces default Spaces, not separately authored standalone memory
-mounts or child defaults, and grants no additional channel access.
+Requests, receipts, results and deadlines persist under a stable event/Host-endpoint/
+decision-Agent key before destination submission. Lost receipts retry the same body
+and key; restart resumes the same check. Deferred inputs resolve their assigned
+run through the inbox entry. A check has one persisted 60-second deadline covering
+submission and result polling, with at most eight background tasks. Terminal failures, unavailable Agents, malformed results and
+timeouts process normally with sanitized diagnostics. Timeouts do not cancel Host
+work. Shutdown cancels local tasks; durable checks remain resumable.
 
-`coordinate_tasks` defaults false and adds coordinator/delegation guidance to
-verified input context. It changes no published Agent configuration, tool roster,
-subagent mode or environment edge. Under window delivery, active work includes
-the root Run, active descendant Threads in its Session and pending/assigned root
-inbox entries. Incomplete child observation fails instead of declaring idleness.
-Once these are idle, a fresh window reuses the conversation's desired environment
-mounts, including their permission ceilings. Arbitrary external job completion is
-not inferred. These options are rejected for generic MCP Hosts.
+Negative decisions set the event to `filtered`, retain history and create no
+destination input. Frozen destination requests never reclassify. Binding changes
+require a new decision for queued input; settled historical events stay settled.
+Authority is rechecked before freezing destination input. Legacy model-provider
+APIs and console pages are removed, stored provider secrets and assignments are
+retired at startup, and old routes default to full delivery until configured.
 
-See [model setup](../docs/model-providers.md) for configuration and limitations.
+New a13n routes enable `conversation_memory` except for fixed shared destinations,
+which require explicit `shared_memory`. New Sessions select a scoped writable
+Memory Space and optional `global_memory_space_ids` with read-only access, while
+inspecting standalone defaults on the root and pinned named-child revisions.
+Writable standalone defaults and unpinned named-child revisions are rejected;
+`memories: []` alone does not suppress defaults. The audited root revision is
+selected explicitly on newly frozen submissions. Enabling or
+changing selection starts a compatible binding rather than modifying settled
+Session memory. Host selection failures never fall back to global defaults.
+
+Task coordination belongs to the Host's Agent prompts, Skills and tools. CG adds
+no delegation/coordinator instructions to newly prepared inputs. The retired
+`coordinate_tasks` setting is rejected on management writes and removed from
+stored routes at startup; frozen submissions retain their exact original bodies.
+Idle rollover still checks root work, descendants and pending/assigned inputs,
+independently of prompts. Incomplete observation fails retryably rather than
+establishing idleness. Memory and lifecycle controls remain a13n-only.
+
+See [session configuration](../docs/session-context.md) for configuration and limitations.
 
 ## Conversation routes
 
@@ -91,8 +108,7 @@ For an `a13n` Host, `thread_policy` chooses delivery context:
 
 | Policy | Thread scope |
 | --- | --- |
-| `window` (default for new a13n routes) | Steer new messages into the active Thread; when idle, start a fresh thread with bounded channel history and the same conversation's environment mounts |
-| `conversation` | One thread for each concrete channel account/kind/conversation |
+| `conversation` (default) | One thread for each concrete channel account/kind/conversation |
 | `sender` | One thread per verified sender within each concrete conversation; the same sender in another group or account is independent |
 | `fixed` | All sources of the configured route share one thread; select `fixed_thread_id` or create it on the first submitted message |
 | `message` | Each incoming message creates a fresh thread and session |
@@ -100,11 +116,20 @@ For an `a13n` Host, `thread_policy` chooses delivery context:
 An existing fixed thread must be accessible and unarchived on the selected Host
 when saved. The console offers existing threads and an explicit create-on-first-message
 choice. `fixed_thread_id` is rejected for other policies; generic MCP Hosts accept
-only the default policy and no fixed thread. On upgrade, legacy a13n `conversation` routes without `history_limit` switch once
-to `window`, retaining their last thread as the environment origin. Explicit
-`sender`, `fixed`, and `message` policies remain unchanged. Previously frozen
-requests retain their exact target and body. Generic MCP routes retain
-`conversation` and have no Host execution policy.
+only the default policy and no fixed thread. New managed a13n routes default to
+`session_idle_minutes: 60` and `environment_scope: conversation`, except fixed
+routes default to Session environments. `session_idle_minutes: null` retains a
+Thread indefinitely; zero rolls over whenever idle. Positive values specify the
+idle timeout in minutes without a gateway-imposed maximum. Message scope always starts a fresh Session. Pinned existing
+Threads require indefinite retention and keep their existing memory/environment
+selection; attempts to replace those selections are rejected. Cross-conversation
+fixed bindings reject conversation-scoped environments.
+
+Upgrade maps stored `window` routes to conversation scope, zero-minute idle
+rollover and conversation environments. Existing conversation/sender/fixed
+bindings retain indefinite lifetime and their settled mounts; message bindings
+retain independent environments. Frozen submissions keep their original requests.
+Generic MCP routes retain conversation scope and no Host execution controls.
 Fixed threads intentionally share upstream history across sources; removing a
 source cannot retract history already submitted to that thread.
 
@@ -138,57 +163,51 @@ and senders. Generic MCP routes are rejected; explicitly pinned fixed-thread
 routes require choosing a new shared destination in route settings, and
 per-message routes already start fresh for every input.
 
-## Bounded input history and environment reuse
+## Input history, keepalive and environments
 
-`history_limit` is an integer from 0 to 100, default 30, editable on routes.
-Each newly prepared a13n input, except active-window steers, carries up to that
-many previous incoming and
-confirmed sent messages in chronological order as a `channel_history` JSON
-content part. The current message is separate and does not count toward the
-limit. The snapshot ends before the current event's `(created_at, id)` cursor;
-it excludes later events, unsent/failed replies and reactions. Messages stay
-within the exact channel account/kind/conversation and current read authority:
-explicit channel grants permit its received history, empty/nonmatching grants
-omit history, and legacy null grants retain source/sender scope. Sender-thread
-inputs further restrict automatic history to their triggering sender; outgoing
-messages without a matching linked sender are omitted. History contains
-text, direction, source IDs, timestamps and media counts, never raw provider
-payloads, credentials or private reply context. A separate JSON part avoids the
-Host's per-text-part size limit. This bounds message count, not token usage.
+`history_limit` is 0–100, default 30, and bounds the initial authorized history
+snapshot. The current event is separate. Continuations attach a delta since the
+last confirmed context position for that Thread and concrete source, bounded at
+100 messages; they do not repeat the initial history window. Zero omits automatic
+history. Sender scope retains sender-only history restrictions. Read grants,
+media projection and exclusion of unsent/failed/unknown replies remain unchanged.
+A separate JSON content part bounds message count rather than tokens.
 
-`window` reads the latest accepted Thread with `GET /threads/{id}` before
-preparing an input. A non-null `current_run_id` selects that Thread's inbox with
-`delivery: steer`. This input contains only the new message/context/media, without
-a repeated `channel_history` part or environment mounts. The Host owns safe-boundary
-incorporation and a race where its run ends between lookup and inbox acceptance.
-When `current_run_id` is null and the optional coordinator observation above
-finds no active descendant or queued root input, `window` creates a thread with `POST /threads`,
-without prior Host model history. Before freezing a new request, CG reads the previous accepted thread's
-public `GET /threads/{id}/environments` mounts and supplies `environments` with
-name, environment ID, working directory and any permission ceiling to the new thread. This preserves
-workspace files and environment identity; it does not preserve thread-local
-model/tool state. On the first message the Agent's normal environment policy
-applies. Subsequent environment lookup/mount failures are delivery failures,
-never a silent fallback to creating a replacement environment. No environments
-are shared across concrete conversations. Reset detaches the environment origin.
+Context snapshots order incoming records by collection time and outgoing records
+by confirmed channel acceptance time, so a send queued before the previous cursor
+but confirmed later is not lost. Historical sends without acceptance timestamps
+use their stored creation time. A full delta includes a coverage warning and an
+authorized history-read reference. MCP/admin history pagination retains its existing
+creation-time ordering; recovery starts from the latest gateway page and follows
+its cursors. Only a Host receipt advances the context position. Later arrivals
+remain outside the triggering event's snapshot.
 
-Window submissions retain FIFO admission and never overtake an unconfirmed
-submission in their conversation. Accepted work does not block newer steers.
-Other conversations remain independent. Snapshot, active/idle destination and
-mount selection are frozen with the Host request and reused on every transport retry,
-even if the run completes before a lost receipt is retried. Frozen requests made
-before this change retain their original bodies and destinations. Existing
-upstream threads/environments and gateway history are not deleted.
+Within keepalive, new messages retain the coordinator Thread. Active root,
+descendant and queued work prevent rollover; idle time is recorded persistently
+from confirmed observations. Expiry creates a fresh Thread/Session on the next
+trigger, never by a timer alone. The Host owns safe-boundary steering and automatic
+token-based compaction. Compaction does not change Session or environment identity.
 
-The other thread policies remain explicit choices. Their `history_limit` bounds
-only attached channel history; continuing Host threads retain their own model
-history. a13n Service provides automatic token-based compaction; CG does not call
-a manual compaction endpoint or claim that compaction enforces a message count.
+Snapshot, destination and mount selection are frozen with the Host request and
+reused on every transport retry, even if the run completes before a lost receipt
+is retried. Existing frozen requests retain their original bodies and destinations.
+
+`environment_scope` selects `global`, `conversation` or `session` independently
+of Thread scope. Global shares one mount set for participating routes on the same
+Host and Agent; conversation shares per concrete account/kind/conversation across
+senders and Session generations; session uses normal Agent provisioning for each
+new Session. Shared environment creation is reserved before submission; uncertain
+receipts must reconcile before another Session can use that environment. Reuse
+reads desired mounts from the originating Host Thread, preserving directories and
+permission ceilings, and fails rather than silently replacing missing mounts.
+Reset retains global/conversation environment bindings and detaches Session ones.
+
+The detailed rules and compatibility boundaries are in
+[Session context and memory](09-session-context-and-memory.md).
 
 ## Messages during execution
 
-`busy_policy` applies to a13n Hosts outside `window`, which always steers into
-an active Thread and starts fresh when idle:
+`busy_policy` applies independently to all a13n conversation scopes:
 
 | Policy | Submission behavior |
 | --- | --- |
@@ -220,7 +239,9 @@ Every newly prepared Host input includes a `channel_output` context declaring
 requests retain their original bodies.
 
 Administrator-only `GET /api/v1/connections/{id}/host-resources/{resource}` supports
-`agents` and `threads` for a configured a13n Host. It uses that Host's server-side
+`agents`, `threads` and `memory-spaces` for a configured a13n Host. Memory Space
+choices request `enabled=true`, exclude disabled Spaces and project names/IDs
+without guidance, files or backing-store details. It uses that Host's server-side
 credential, forwards a bounded opaque `cursor` with a page size of 50, and returns
 only `{items: [{id, name}], next_cursor}`. Archived resources and unpublished
 agents are omitted. Failure returns a safe diagnostic without upstream bodies or
@@ -257,11 +278,11 @@ an enabled `*` route, without queuing old inputs or creating upstream threads.
 Existing exact routes take priority even when disabled or assigned to another
 Host; history discovery cannot override that assignment.
 
-Multi-source and wildcard a13n routes use the shared Host MCP connection and
+Multi-source and wildcard a13n routes use a route-token MCP connection and
 explicit concrete route IDs. A dedicated route MCP binding remains optional and
 is supported only for one concrete source. Existing exact routes retain their
 bindings and legacy sender allowlists. Tool selection always follows the Agent
-configuration; a dedicated binding is never required for Host-key tool sends.
+configuration; a dedicated binding is optional for route-token tool sends.
 
 Verified supported messages without a route appear in management as `unmatched`,
 with nullable `route_id`. Denied ingress appears as `blocked`, also without a
@@ -329,6 +350,9 @@ Agent configuration, and durably allocates a fresh idempotency key before the ne
 submission. Repeated transport attempts, including after restart, reuse that new
 delivery's frozen target, body and key. Source-event deduplication is unchanged.
 Concurrent administrator retries may reserve only one new delivery.
+The previous terminal Run remains admission evidence for a retained shared
+environment until the replacement receipt arrives. Its initiating-context handle
+is retired; the new execution receives a fresh handle.
 
 Active, completed, pending or unrecognized Host outcomes resume polling without
 creating another execution. A failed status read leaves the event unchanged;
@@ -339,9 +363,9 @@ Replacement a13n keys must
 retain the same upstream principal/workspace for the upstream idempotency scope
 to remain valid.
 
-## Tool-only channel output
+## Agent output and failure notices
 
-Only `send_message` creates outgoing channel messages. Run completion never
+Only `send_message` publishes Agent-authored channel messages. Run completion never
 creates a reply, parses `reply`/`text`, checks final-text size or retries output
 validation. Agents may keep ordinary text final results for private execution
 records; these never enter channel history. Quiet participation means completing
@@ -349,9 +373,29 @@ without a message-tool invocation, not producing a special envelope or an empty
 model response. A model/execution failure is still a failed input; CG never treats
 partial text as a successful message.
 
+For a13n inputs, CG atomically marks a terminal failure and queues one fixed-text
+failure notice linked to the triggering event. This covers unsuccessful inbox
+assignment, an unsuccessful terminal Run, and exhaustion of the five Host request
+attempts. Intermediate request failures and accepted/running/waiting or completed
+Runs create no notice. Known categories include rate/quota rejection (HTTP 429),
+authorization, upstream availability, unavailable configuration, model recovery
+exhaustion and cancellation; unknown failures use a generic diagnostic. Arbitrary
+Host error messages, response bodies, partial output, prompts and credentials are
+never forwarded. The management event retains its failure state.
+
+The notice goes through the durable reply queue with the original event's source
+and current route/sender authorization; official QQ uses that event's saved
+passive reply context. Queued notices survive restart. A persistent event marker
+prevents another notice after polling, restart or manual input retry. Existing
+historical failures are not backfilled. A revoked destination blocks the queued
+notice, and an uncertain send stays `unknown` without automatic resend. Channel
+acceptance remains subject to platform reply windows and quotas. Generic MCP
+Hosts have no observable Run lifecycle and do not generate these notices.
+
 The removed `reply_source` setting is rejected on create/update and removed from
 stored route configuration at startup. Already queued event-linked automatic
-replies are blocked with `Automatic output delivery retired`; tool-created queued
+replies are blocked with `Automatic output delivery retired`; explicitly marked
+Host failure notices and tool-created queued
 messages keep their delivery state. Historical sent/failed/unknown records remain
 readable. Existing OneBot MCP reaction authority is converted into its explicit
 `message.react.onebot` grant, which applies only to OneBot; other routes gain no
@@ -382,7 +426,7 @@ The gateway cannot infer that a client has finished processing a message.
 | `failed`      | QQ explicitly rejected the operation, including an HTTP rate rejection |
 | `unknown`     | Delivery may have happened, but CG has no confirmed successful outcome |
 
-Explicit MCP message requests create queued replies for
+Explicit MCP message requests and the failure notices above create queued replies for
 private, group, guild-channel, and guild-DM conversations. There is no approve/reject API or manual review
 step. Agent tool configuration is managed in the Host.
 The worker rechecks route/source access, claims a queued reply, and issues one

@@ -17,7 +17,7 @@ capabilities; see the [new adapter setup guide](slack-lark-discord.md).
 ## Select a conversation
 
 Call `discover` with no arguments. Choose a returned conversation `id` and pass it
-as `route_id`. Host keys and account-history handles require an explicit handle;
+as `route_id`. Multi-source route tokens and account-history handles require an explicit handle;
 a single-source route token may omit it. `can_read` and `can_reply` are separate.
 Never substitute native account, user, group, or guild IDs for a gateway handle.
 

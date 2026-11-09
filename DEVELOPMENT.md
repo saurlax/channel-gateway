@@ -65,9 +65,14 @@ and frontend optional so future Hosts can reuse the same application behavior.
 
 ## Console management patterns
 
-Host creation selects a13n API + MCP or generic MCP. Generic Hosts need no
-upstream endpoint/key; their independent MCP key is shown once and can be rotated
-from Manage. Route forms show a13n agent/binding fields only for API Hosts.
+Host creation selects a13n API + MCP or generic MCP. Host management configures
+only upstream API credentials and resource lifecycle; it shows no CGW MCP URL or
+Host-level MCP credential. Generic Hosts require no upstream endpoint/key.
+Route forms show a13n Agent/binding fields only for API Hosts. CGW MCP credentials
+are generated only on route creation/rotation and shown once read-only together
+with the MCP endpoint. A route token never inherits another route's permissions
+through a shared Host. Upstream API key replacement remains a password input for
+a credential issued by a13n, separate from CGW-issued route tokens.
 
 Channel accounts and Agent Hosts have separate sidebar entries and management
 pages. Channel tables omit connection endpoints. Official QQ and Weixin API
@@ -114,14 +119,25 @@ channel and Agent Host creation open a shadcn Dialog. Creating a route from Mess
 opens the same page with the source conversation prefilled. Route pages support
 direct visits and reloads, show missing routes without redirecting, and return to
 the list after saving or deleting. Thread reset stays on the route edit page;
-its red outline button follows Delete route in the action row, and its confirmation
+its red outline button is in the Session tab, and its confirmation
 explicitly covers all conversations and sender threads on the saved route. Token rotation keeps the edit page open and
 shows the new token once in its own dialog. Use a single-column form directly on
 the page without a Card wrapper, and provide a Back to routes link and Cancel action.
-Route configuration uses Basic information, Routing, and Connections tabs. Basic
-information contains name and enabled state. Routing shows Sources and Destination
-together; Connections contains the optional dedicated a13n MCP connection
-binding, and readable channels. Sources use repeatable rows with two input columns
+Route configuration uses Basic, Routing, Session, Memory, and Permissions and
+connections tabs, with horizontal scrolling contained in the tab navigation on
+narrow screens. Basic contains name, enabled state and a separate Danger zone
+containing Delete route. Reset conversations belongs in Session management;
+Rotate token belongs in the Route token section of Permissions and connections.
+The bottom action row contains only Save and Cancel, including on creation. These
+remain outside all tab panels and save the whole form. Routing contains Sources
+and Destination (Host and Agent). Session has the optional wake decision Agent,
+Context (scope, conditional fixed Thread, idle timeout, history and busy policy)
+and Execution environment sections. Memory contains the scoped-memory switch,
+read-only global Space selection and conditional fixed-source sharing confirmation.
+Permissions and connections contains readable channels, platform action grants
+and the optional dedicated MCP binding. Generic MCP Hosts hide Session and Memory.
+Keep unsaved values across tab switches and select the owning tab for validation.
+Sources use repeatable rows with two input columns
 (channel, user/group) and a trailing delete button,
 including at narrow widths. A compact plus button adds a row. Channel choices
 include All channels, which includes future channels; target choices distinguish
@@ -130,7 +146,9 @@ or explicit platform IDs. All conversations includes every supported conversatio
 type; existing private-only sources keep their scope until explicitly edited.
 Sources are the complete console trigger condition; do not add a separate sender
 permission control. Destination selects the Host and Agent from its published,
-unarchived Agent list, then chooses thread delivery: per conversation (default),
+unarchived Agent list. Display these selectors in one equal-width two-column row,
+Host on the left and Agent on the right, including narrow screens. Generic MCP
+Hosts show only the full-width Host selector. Session chooses thread delivery: per conversation (default),
 per sender within a conversation, one fixed thread, or a fresh thread per message.
 Present Conversation continuity choices in use-case order: ongoing private/group
 chats, personal assistance within groups, independent messages, then shared
@@ -139,10 +157,21 @@ menu and below the selected value; connect the latter with aria-describedby.
 The Messages during execution selector applies to a13n Hosts, defaults to joining
 the current run at a safe boundary, and offers FIFO queueing until completion.
 It is independent of conversation continuity and hidden for generic MCP clients.
+Keep session idle timeout, history limit, environment scope and memory controls
+independent of the four conversation scopes. Environment scope offers global
+shared, channel conversation and Session; its descriptions identify file sharing.
+Show the Host memory selection and write-permission scope when managed memory is
+disabled. Global Memory Spaces use a searchable multi-select with paginated Host
+resource loading, retry and selected names. Host changes clear selected Spaces.
+These choices configure read-only mounts, and fixed managed
+memory requires explicit shared-memory selection. Configure task coordination in
+the Host Agent prompts/Skills; do not add a CG coordination switch or inject
+delegation instructions into channel deliveries. Pinned existing Threads retain
+their settled selection and require indefinite retention.
 Fixed delivery offers existing unarchived Host threads and create-on-first-message.
 Use searchable shadcn comboboxes with paginated resource loading, loading/error
 states and retry. Host changes clear the selected Agent and fixed thread.
-Connections configures the optional dedicated a13n MCP connection binding,
+Permissions and connections configures the optional dedicated a13n MCP connection binding,
 and selects readable
 channel accounts using checkboxes. Agent tool permissions are configured in the
 Agent Host interface; CG never overrides its connection-tool list. Enabled state

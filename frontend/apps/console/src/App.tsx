@@ -24,7 +24,6 @@ import { Events } from "@/components/events";
 import { ManagementDialog } from "@/components/management";
 import { Empty, FormField } from "@/components/form-controls";
 import { Dashboard } from "@/components/dashboard";
-import { ModelProviders } from "@/components/model-providers";
 import { useMessageActivity } from "@/hooks/use-message-activity";
 import { readPage, routeEditor, subscribeNavigation, type Page } from "@/lib/navigation";
 
@@ -32,7 +31,6 @@ const titles: Record<Page, MessageKey> = {
   overview: "Overview",
   channels: "Channels",
   hosts: "Agent hosts",
-  "model-providers": "Model providers",
   routes: "Routes & access",
   events: "Messages",
 };
@@ -50,7 +48,6 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
-  const [hostCapability, setHostCapability] = useState(false);
   const [csrfToken, setCsrfToken] = useState("");
   const [restoringSession, setRestoringSession] = useState(true);
   const [snapshot, setSnapshot] = useState(empty);
@@ -77,15 +74,14 @@ export function App() {
   const [capability, setCapability] = useState("");
   const [capabilityLabel, setCapabilityLabel] = useState("");
   const refresh = useCallback(async () => {
-    const [connections, routes, events, replies, actions, model_providers] = await Promise.all([
+    const [connections, routes, events, replies, actions] = await Promise.all([
       api<Snapshot["connections"]>(csrfToken, "connections"),
       api<Snapshot["routes"]>(csrfToken, "routes"),
       api<Snapshot["events"]>(csrfToken, "events"),
       api<Snapshot["replies"]>(csrfToken, "replies"),
       api<NonNullable<Snapshot["actions"]>>(csrfToken, "actions"),
-      api<NonNullable<Snapshot["model_providers"]>>(csrfToken, "model-providers"),
     ]);
-    setSnapshot({ connections, routes, events, replies, actions, model_providers });
+    setSnapshot({ connections, routes, events, replies, actions });
     setUpdatedAt(new Date().toISOString());
     setLoaded(true);
   }, [csrfToken]);
@@ -131,7 +127,6 @@ export function App() {
     try {
       const result = await api<{
         agent_token?: string;
-        mcp_key?: string;
         name?: string;
         id?: string;
       }>(csrfToken, path, {
@@ -145,9 +140,8 @@ export function App() {
           "Saved, but the list could not refresh. Refresh the page data before trying again.",
         );
       }
-      if (result.agent_token || result.mcp_key) {
-        setHostCapability(!!result.mcp_key);
-        setCapability(result.mcp_key ?? result.agent_token ?? "");
+      if (result.agent_token) {
+        setCapability(result.agent_token);
         setCapabilityLabel(
           result.name ??
             snapshot.routes.find((route) => route.id === path.split("/")[1])?.name ??
@@ -264,23 +258,14 @@ export function App() {
           <ManagementDialog
             open={!!capability}
             onOpenChange={(open) => !open && setCapability("")}
-            title={t(hostCapability ? "{name}: MCP key" : "{name}: access token", {
+            title={t("{name}: Route MCP token", {
               name: capabilityLabel || t("Conversation"),
             })}
-            description={
-              hostCapability
-                ? t(
-                    "This MCP key is shown once. It identifies the host and grants access to its enabled routes. Store it in your client’s secret configuration.",
-                  )
-                : t(
-                    "Use this token as an MCP bearer credential. It is shown once and grants access to this route. All-conversation routes include their concrete conversations.",
-                  )
-            }
+            description={t(
+              "Use this token as an MCP bearer credential. It is shown once and grants access to this route. All-conversation routes include their concrete conversations.",
+            )}
           >
-            <FormField
-              id="mcp-capability"
-              label={hostCapability ? t("MCP key") : t("Conversation access token")}
-            >
+            <FormField id="mcp-capability" label={t("Route MCP token")}>
               <Input id="mcp-capability" readOnly value={capability} />
             </FormField>
             <FormField id="mcp-endpoint" label={t("MCP URL")}>
@@ -311,15 +296,6 @@ export function App() {
                 />
               )}
               {page === "routes" && !editor && <Routes snapshot={snapshot} busy={busy} />}
-              {page === "model-providers" && (
-                <ModelProviders
-                  providers={snapshot.model_providers ?? []}
-                  action={action}
-                  busy={busy}
-                  error={error}
-                  clearError={() => setError("")}
-                />
-              )}
               {editor && (
                 <Suspense fallback={<Empty>{t("Loading…")}</Empty>}>
                   <RoutePage

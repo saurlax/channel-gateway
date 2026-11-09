@@ -26,13 +26,15 @@ def context(request):
     return value
 
 
-def test_default_execution_is_fresh_with_latest_thirty_messages(gateway):
+def test_zero_keepalive_is_fresh_with_latest_thirty_messages(gateway):
     client, _, upstream, channel, host = gateway
     upstream.unique_threads = True
     configured = client.post(
         "/api/v1/routes",
         json={
             "name": "Bounded",
+            "session_idle_minutes": 0,
+            "conversation_memory": False,
             "channel_id": channel["id"],
             "host_id": host["id"],
             "agent_id": "agent",
@@ -41,7 +43,7 @@ def test_default_execution_is_fresh_with_latest_thirty_messages(gateway):
             "allowed_user_ids": ["7"],
         },
     ).json()
-    assert configured["thread_policy"] == "window"
+    assert configured["thread_policy"] == "conversation"
     assert configured["history_limit"] == 30
     for index in range(33):
         webhook(gateway, message_id=index, text=f"Message {index}")
@@ -71,8 +73,8 @@ def test_history_includes_only_authorized_same_conversation_and_confirmed_sends(
     tick(gateway)
     request = next(r for r in reversed(submissions(gateway)) if context(r)["route_id"] == configured["id"])
     history = context(request)["history"]
-    assert [item["direction"] for item in history] == ["incoming", "outgoing"]
-    assert history[0]["text"] == "Earlier"
+    assert [item["direction"] for item in history] == ["outgoing"]
+    assert all(item["text"] != "Earlier" for item in history)
     assert "Denied sender" not in json.dumps(history)
     assert "Other group" not in json.dumps(history)
     assert "Current" not in json.dumps(history)
@@ -90,7 +92,7 @@ def test_history_limit_updates_and_frozen_retries(gateway, limit):
     webhook(gateway, message_id=2)
     tick(gateway)
     frozen = submissions(gateway)[-1]
-    assert len(context(frozen)["history"]) == min(limit, 1)
+    assert context(frozen)["history"] == []
     client.patch(f"/api/v1/routes/{configured['id']}", json={"history_limit": 0 if limit else 10})
     tick(gateway)
     assert submissions(gateway)[-1].content == frozen.content
@@ -132,7 +134,8 @@ def test_legacy_upgrade_is_once_and_preserves_frozen_requests(gateway):
     client.portal.call(app.state.store.close)
     client.portal.call(app.state.store.open)
     migrated = client.get("/api/v1/routes").json()[0]
-    assert migrated["thread_policy"] == "window"
+    assert migrated["thread_policy"] == "conversation"
+    assert migrated["session_idle_minutes"] is None
     assert migrated["history_limit"] == 30
     tick(gateway)
     assert submissions(gateway)[-1].content == frozen.content
@@ -148,7 +151,13 @@ def test_window_steers_active_work_without_repeating_history_and_keeps_conversat
     _, _, upstream, channel, _ = gateway
     from .test_bridge import create_rule, source
 
-    create_rule(gateway, [source(channel["id"], "group", "*")], thread_policy="window")
+    create_rule(
+        gateway,
+        [source(channel["id"], "group", "*")],
+        thread_policy="conversation",
+        session_idle_minutes=0,
+        environment_scope="conversation",
+    )
     upstream.unique_threads = True
     upstream.run_status = "running"
     webhook(gateway, message_id=1)
@@ -160,7 +169,7 @@ def test_window_steers_active_work_without_repeating_history_and_keeps_conversat
     assert len(requests) == 3
     assert requests[1].url.path == "/api/v1/threads/thread_1/inbox"
     assert json.loads(requests[1].content)["delivery"] == "steer"
-    assert all(part["type"] != "json" for part in json.loads(requests[1].content)["payload"]["content"])
+    assert context(requests[1])["history"] == []
     assert requests[2].url.path == "/api/v1/threads"
     upstream.run_status = "completed"
     tick(gateway)
@@ -177,7 +186,13 @@ def test_failed_environment_lookup_does_not_submit_a_replacement_thread(gateway)
     from .test_bridge import create_rule, source
 
     client, app, _, channel, _ = gateway
-    create_rule(gateway, [source(channel["id"], "group", "123")], thread_policy="window")
+    create_rule(
+        gateway,
+        [source(channel["id"], "group", "123")],
+        thread_policy="conversation",
+        session_idle_minutes=0,
+        environment_scope="conversation",
+    )
     webhook(gateway, message_id=1)
     tick(gateway)
     tick(gateway)
@@ -234,14 +249,14 @@ def test_legacy_conversation_upgrade_and_restart_keep_original_environment(gatew
     webhook(gateway, message_id=2)
     tick(gateway)
     tick(gateway)
-    assert submissions(gateway)[-1].url.path == "/api/v1/threads"
-    assert json.loads(submissions(gateway)[-1].content)["environments"][0]["environment_id"] == "env_1"
+    assert submissions(gateway)[-1].url.path == "/api/v1/threads/thread_1/inbox"
+    assert "environments" not in json.loads(submissions(gateway)[-1].content)
     client.portal.call(app.state.store.close)
     client.portal.call(app.state.store.open)
     webhook(gateway, message_id=3)
     tick(gateway)
     lookups = [r.url.path for r in upstream.requests if r.url.path.endswith("/environments")]
-    assert lookups == ["/api/v1/threads/thread_1/environments", "/api/v1/threads/thread_2/environments"]
+    assert lookups == []
 
 
 def test_sender_threads_do_not_automatically_attach_other_members_history(gateway):
@@ -258,4 +273,4 @@ def test_sender_threads_do_not_automatically_attach_other_members_history(gatewa
         webhook(gateway, message_id=index, user=user, text=f"Sender {user}")
         tick(gateway)
         tick(gateway)
-    assert [item["text"] for item in context(submissions(gateway)[-1])["history"]] == ["Sender 7"]
+    assert context(submissions(gateway)[-1])["history"] == []

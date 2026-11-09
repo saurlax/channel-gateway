@@ -50,16 +50,6 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
                     row for row in await store.routes() if row.get("parent_route_id") == route["id"] and row["enabled"]
                 ]
             return [route]
-        host = await store.host_for_token(token)
-        if host:
-            for parent in await store.routes():
-                if parent["host_id"] == host["id"] and parent["enabled"] and parent["conversation_id"] == "*":
-                    await store.materialize_observed_routes(parent)
-            return [
-                row
-                for row in await store.routes()
-                if row["host_id"] == host["id"] and row["enabled"] and row["conversation_id"] != "*"
-            ]
         raise ValueError("Channel access is disabled or revoked")
 
     async def authorized_route(route_id: str | None) -> dict:
@@ -84,18 +74,9 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
         routes = await authorized_routes()
         token = current_token.get()
         credential_route = await store.route_for_token(token)
-        if credential_route:
-            configured = [credential_route]
-        else:
-            host = await store.host_for_token(token)
-            if not host:
-                raise ValueError("Channel access is disabled or revoked")
-            configured = [
-                row
-                for row in await store.routes()
-                if row["host_id"] == host["id"] and row["enabled"] and not row.get("parent_route_id")
-            ]
-        channel_ids = list({channel for row in configured for channel in row.get("read_channel_ids") or []})
+        if not credential_route or not credential_route["enabled"]:
+            raise ValueError("Channel access is disabled or revoked")
+        channel_ids = credential_route.get("read_channel_ids") or []
         connections = {row["id"]: row for row in await store.connections() if row["kind"] in CHANNEL_KINDS}
         channels = set(connections)
         views = {}
@@ -106,6 +87,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
             identity = (route["channel_id"], route["conversation_kind"], route["conversation_id"])
             views[identity] = {
                 **route,
+                **({"provenance_read_channel_ids": channel_ids} if channel_ids else {}),
                 "can_read": channel_read or route.get("read_channel_ids") is None,
                 "can_reply": tool_message_allowed(route, connections[route["channel_id"]])
                 if route["channel_id"] in connections
@@ -123,6 +105,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
                 "name": f"{conversation['conversation_kind']}:{conversation['conversation_id']}",
                 "can_read": True,
                 "can_reply": False,
+                "provenance_read_channel_ids": channel_ids,
                 "channel_read": True,
             }
         return list(views.values())
@@ -202,6 +185,9 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
             before = (values[0], values[1])
         limit = max(1, min(limit, 100))
         messages = await store.conversation_messages(route, limit=limit, before=before)
+        for item in messages:
+            if item.get("direction") == "outgoing":
+                item["provenance"] = await store.reply_provenance(route, item["history_id"])
         next_cursor = (
             base64.urlsafe_b64encode(
                 json.dumps([messages[0]["created_at"], messages[0]["history_id"]]).encode()
@@ -292,7 +278,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
 
     from .mcp_surface import install_tools
 
-    install_tools(server, operations, store, authorized_route, readable_route)
+    install_tools(server, operations, store, authorized_route, readable_route, bridge.adapters)
 
     return server
 
@@ -317,11 +303,8 @@ class RouteAuthorization:
         auth = headers.get(b"authorization", b"").decode("latin-1")
         token = auth.removeprefix("Bearer ") if auth.startswith("Bearer ") else ""
         route = await self.store.route_for_token(token) if token else None
-        host = await self.store.host_for_token(token) if token else None
-        if not host and (not route or not route["enabled"]):
-            await JSONResponse({"detail": "A valid host key or route token is required"}, status_code=401)(
-                scope, receive, send
-            )
+        if not route or not route["enabled"]:
+            await JSONResponse({"detail": "A valid route token is required"}, status_code=401)(scope, receive, send)
             return
         context = current_token.set(token)
         try:

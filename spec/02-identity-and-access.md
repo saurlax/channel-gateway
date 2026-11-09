@@ -1,21 +1,19 @@
 # Identity and access
 
-## Decision model credentials
+## Wake decision authority
 
-Only authenticated administrators manage model providers or test saved models.
-API keys are accepted as secret fields, stored in the private state database and
-never returned; public views expose only credential presence. Blank/omitted edit
-credentials retain the previous key. Validation and upstream diagnostics exclude
-submitted secrets and response bodies. Selecting a wake provider explicitly
-allows the bounded triggering message and authorized same-source context to be
-sent to that provider; it grants no channel or Agent authority. Provider calls
-never follow redirects. Providers are administrator-defined HTTP(S) API origins,
-not message-controlled destinations.
+Only authenticated administrators select the route's optional wake decision Agent.
+It runs on the same a13n Host using that Host's upstream API credential, with
+bounded authorized same-source context. CG passes neither route tokens nor origin
+handles. The decision does not broaden source, sender, read or reply authority.
+Agent-configured tools and capabilities remain authoritative; use a dedicated
+Agent without side-effect tools. No model-provider credentials are stored by CG.
+The [delivery contract](03-routing-and-delivery.md) owns failure and retry behavior.
 
 ## Authority model
 
 The baseline has one administrator role, verified platform sender allowlists,
-and host/conversation-scoped Agent capabilities. It does not provide full RBAC,
+and route/conversation-scoped Agent capabilities. It does not provide full RBAC,
 cross-channel identity linking, or general information-flow enforcement.
 
 | Credential                      | Authority                                                                   |
@@ -29,7 +27,6 @@ cross-channel identity linking, or general information-flow enforcement.
 | Weixin bot token                | Poll and send for one paired iLink bot account                              |
 | OneBot callback signing secret  | Verify incoming account event bytes                                         |
 | a13n workspace API key          | Submit input and read execution within the upstream principal's permissions |
-| CG host MCP key                 | Use MCP for enabled routes assigned to one Host                             |
 | CG route bearer token           | Use MCP for the enabled conversations selected by one configured route      |
 
 Private protocol reply contexts and pairing sessions are server-only state,
@@ -47,7 +44,7 @@ and the password 8-4096 characters. The same length constraint applies to
 local and remote deployments. Configuring only one or an invalid length
 refuses startup. Without either, management and login return HTTP 503 while
 health/status remain available. Legacy administrator bearer tokens and environment
-names are unsupported. MCP Host/route keys remain independent bearer credentials.
+names are unsupported. MCP route keys remain independent bearer credentials.
 
 `POST /api/v1/auth/login` accepts JSON `username` and `password` with
 `X-Channel-Gateway-Request: 1`. Password verification runs off the service event
@@ -135,7 +132,7 @@ tool-permission mode. Historical `access_mode` values are ignored; the managemen
 API rejects that removed field. Readable channel grants, source reply authority,
 and explicit [platform resource action grants](06-qq-platform.md#explicit-action-grants)
 remain enforced independently by CG. Resource grants are not Agent tool selection.
-Neither a route nor a Host key grants CG administrator access. QQ resource
+A route token grants no CG administrator access. QQ resource
 administration requires its separate, initially empty route grants and upstream
 permissions. Authorized source replies are sent automatically;
 there is no per-reply review or automatic-reply opt-in. Native platform reply
@@ -157,9 +154,17 @@ Authorization is checked at ingress, when advancing input delivery, during MCP
 access, and before sending a reply. Removing a legacy allowed sender blocks pending inputs from that sender and hides
 their messages from legacy source-scoped MCP reads. An explicit account-wide
 read grant continues to authorize those messages independently. Replies
-linked to such an input are blocked before sending. MCP-created replies have no
-source event link; their authority is the route credential and current route
-state, with the same automatic sending lifecycle.
+linked to such an input are blocked before sending. MCP-created replies retain their destination authority in the route credential
+and current route state. Supplying a gateway-issued `origin_context` additionally
+links the initiating source through private provenance, independently of the
+legacy `replies.event_id` passive anchor. The handle must belong to a submitted
+input on the same Host and a source authorized by the caller. A completed input
+also requires verified active coordinator or descendant work. Source
+revocation blocks attributed queued sends. Reads project requester/reason only
+under current source-read authority; restricted provenance conveys no private
+source fields. Unattributed clients keep their existing destination authority.
+See [session context and memory](09-session-context-and-memory.md) for memory and
+shared-environment boundaries.
 
 Disabling a route blocks new work and invalidates its MCP authority. It does not
 interrupt an external request already in flight, erase history, retract a sent
@@ -173,12 +178,12 @@ lists atomically. Wildcard grants continue to cover only currently present chann
 Other readable accounts remain authorized.
 
 `DELETE /api/v1/connections/{id}` requires an administrator session and CSRF token.
-For an Agent Host, it removes upstream credentials and the Host MCP key hash,
+For an Agent Host, it removes upstream credentials,
 disables every assigned route including concrete children, and blocks queued or
 submitted inputs and queued replies in the same short transaction. It does not
 remove channel accounts, cancel upstream runs, or retract external requests
 already in flight. Retained routes cannot regain authority while their Host is
-missing. Host and route MCP credentials are rechecked against current resources;
+missing. Route MCP credentials are rechecked against current resources;
 deleting the Host invalidates its key and disables route capabilities. Channel
 deletion has the [channel lifecycle](01-channel-adapters.md#account-binding).
 
@@ -203,31 +208,30 @@ and explicitly configured platform resource grants, never
 arbitrary send destinations or the right to manage configuration. [Agent tools](04-agent-tools.md) owns tool
 behavior and a13n connection binding.
 
-## Host capabilities
+## Route-only MCP credentials
 
-Creating an `a13n` or `mcp` Host reveals an independent random `mcp_key` once.
-`POST /connections/{id}/mcp-key` rotates it, invalidating the previous key. Only
-its SHA-256 hash is persisted in `host_keys`; ordinary connection views expose
-neither key nor hash. Existing Hosts gain a key by rotation without changing
-upstream credentials or route tokens.
+Only enabled-route tokens authenticate MCP. Host creation returns no `mcp_key`,
+and the removed `POST /connections/{id}/mcp-key` endpoint returns 404. No Host form
+contains a CGW MCP endpoint or credential-generation control. Startup removes the
+legacy `host_keys` table; previously issued Host keys cannot authenticate even
+before cleanup because no authentication path looks them up.
 
-A host key authorizes all currently enabled routes assigned to that Host, and
-requires explicit `route_id` for reads and replies. Readable channels are the union
-of explicit read grants on its currently enabled assigned configurations; legacy
-configurations retain source-scoped reads. Every invocation rechecks the
-credential, Host assignment, route status, and current sender policy. A key
-for another Host, an administrator session, or an upstream credential conveys no
-access. Route keys retain their own configured read grants and source reply scope.
-Read-only conversation handles never authorize sending.
-Host keys cannot configure routes or select arbitrary channel destinations.
+A route token grants only that configuration's current read grants, source reply
+authority and platform actions, including enabled concrete children. It cannot
+select another route merely because both share a Host, Agent or channel. Its
+explicit read grants can still authorize account-history handles outside its
+activation sources; those handles are read-only. A single concrete source may
+omit `route_id`; multi-source and wildcard tokens require an authorized concrete
+child. Every tool call and queued send rechecks current authority and resources.
 
-A Host represents one client trust boundary: issue separate Hosts and keys to
-clients that must not share conversations. Within that boundary, one MCP
-connection uses the Host key and selects authorized conversations by `route_id`.
-Adding conversations does not require more MCP connections or tools. An a13n
-Host key spans its assigned conversations; dedicated route credentials remain
-an optional narrower capability when a client must be conversation-isolated.
-Rotation does not cancel an operation already in flight.
+Generate/rotate tokens only through route creation or the route rotation action.
+Store only hashes, show the generated value once read-only and never accept
+user-selected capability values. Rotation invalidates the previous credential
+without cancelling an operation already in flight. Upgrades preserve existing
+route credentials and upstream API keys; operators must replace retired Host
+keys with route-issued credentials in their clients. Sharing a Host does not
+combine token permissions. Clients configured with multiple route connections
+have the combined authority explicitly granted to those connections.
 
 ## Privacy boundary
 

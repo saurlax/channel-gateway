@@ -54,7 +54,7 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
         embed: dict | None = None,
         ark: dict | None = None,
     ) -> dict:
-        """Queue a message. QQ defaults to proactive with message.proactive, including final-output routes; otherwise existing MCP routes default to passive. Explicit delivery overrides the default. Reactions and recall use separate tools."""
+        """Queue a message. QQ defaults to proactive with message.proactive; otherwise delivery is passive. Explicit delivery overrides the default. Reactions and recall use separate tools."""
         route, connection, delivery = await message_route(route_id, delivery)
         if not text and not embed and not ark:
             raise ValueError("A message requires content")

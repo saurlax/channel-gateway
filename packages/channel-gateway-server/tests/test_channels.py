@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from websockets.asyncio.server import serve
 
-from .test_bridge import send_tool
+from .test_bridge import remember_route_token, send_tool
 
 ADMIN = "test-native-administrator-password-012345"
 APP_SECRET = "test-qq-app-secret"
@@ -83,6 +83,7 @@ class Providers:
         self.fail_send = False
         self.weixin_send_receipt = {"ret": 0}
         self.qq_send_id = "qq-reply1"
+        self.run_status = "completed"
 
     def __call__(self, request):
         self.requests.append(request)
@@ -118,7 +119,7 @@ class Providers:
             return httpx.Response(
                 201, json={"thread": {"id": "thread1"}, "entry": {"id": "entry1"}, "run": {"id": "run1"}}
             )
-        return httpx.Response(200, json={"status": "completed", "output": "Agent reply"})
+        return httpx.Response(200, json={"status": self.run_status, "output": "Agent reply"})
 
 
 @pytest.fixture
@@ -180,6 +181,9 @@ def add_route(native, channel, *, group=False):
         "/api/v1/routes",
         json={
             "name": "Conversation",
+            "conversation_memory": False,
+            "session_idle_minutes": None,
+            "environment_scope": "session",
             "channel_id": channel["id"],
             "host_id": host["id"],
             "agent_id": "agt_test",
@@ -189,7 +193,7 @@ def add_route(native, channel, *, group=False):
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    return remember_route_token(client, response.json())
 
 
 def qq_hook(native, channel, event, *, valid=True):
@@ -304,6 +308,29 @@ def test_qq_signed_ingress_durable_host_delivery_and_reply(native, group):
     client.portal.call(app.state.bridge.tick)
     assert len([r for r in provider.requests if r.url.path.endswith("/messages")]) == 1
     assert configured["thread_id"] is None
+
+
+@pytest.mark.parametrize("group", [False, True])
+def test_qq_failure_notice_uses_triggering_message_context(native, group):
+    client, app, provider, _ = native
+    channel = add(client, kind="qq", transport="webhook", app_id="app1", app_secret=APP_SECRET)
+    add_route(native, channel, group=group)
+    provider.run_status = "failed"
+    qq_hook(native, channel, qq_event(group=group, mid="failed-source"))
+    client.portal.call(app.state.bridge.tick)
+    # Another observation must not replace the passive reply anchor for this failure.
+    client.portal.call(
+        app.state.store.set_channel_state,
+        channel["id"],
+        "context:" + ("group:group1" if group else "private:user1"),
+        {"sender_id": "user1", "message_id": "newer-message"},
+    )
+    client.portal.call(app.state.bridge.tick)
+    outgoing = [r for r in provider.requests if r.url.path.endswith("/messages")]
+    assert len(outgoing) == 1
+    assert json.loads(outgoing[0].content)["msg_id"] == "failed-source"
+    assert "failed" in json.loads(outgoing[0].content)["content"]
+    assert client.get("/api/v1/replies").json()[0]["state"] == "sent"
 
 
 def test_qq_callback_challenge_and_unknown_send(native):
@@ -900,6 +927,7 @@ def test_weixin_any_sender_full_access_replies_with_authorized_context(native):
             "sender_policy": "any",
         },
     ).json()
+    remember_route_token(client, parent)
     stored = client.portal.call(app.state.store.connection, channel["id"])
     message = weixin_message(wx_event(user="new-user"), stored)
     assert (

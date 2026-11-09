@@ -7,7 +7,7 @@ to act are separate concepts.
 
 This directory owns accepted technical contracts. The current implementation is
 a single-process OneBot v11, QQ official Bot, Weixin iLink, Slack, Lark and Discord bridge to a13n with conversation-scoped
-MCP tools, plus generic MCP Hosts with independent keys and authorized
+MCP tools, plus generic MCP Hosts with route-scoped tokens and authorized
 cross-channel route reads. The contracts below describe that supported baseline. They do not
 claim a complete RBAC system or access outside assigned routes.
 QQ includes guild/DM routing, media, structured messages, streaming, and scoped
@@ -17,6 +17,11 @@ Weixin is text-only. The API-configured [GitHub adapter](08-github.md) adds App 
 The [multi-platform integration design](07-channel-integration.md) specifies the
 target contract for additional adapters. Its implementation-progress section identifies the current adapter slice; all
 remaining transports and capabilities stay unimplemented until their release gates pass.
+The [session context and memory contract](09-session-context-and-memory.md)
+defines four conversation scopes, idle keepalive, independent context/environment
+settings, memory isolation, queued-message provenance and Host-owned subagent
+coordination. Its implementation status distinguishes protocol-tested behavior
+from live Host acceptance and Agent behavior.
 The dated [platform API reference](../docs/platform-api-reference.md) separates
 documented APIs, first-party implementations, reference integrations and
 unverified capabilities.
@@ -33,6 +38,7 @@ unverified capabilities.
 | [Images and reactions](05-images-and-reactions.md) | Image projection, authorized media reads/sends, and optional reactions |
 | [QQ platform](06-qq-platform.md) | Guild/DM identity, resource action grants, operation catalog, and action lifecycle |
 | [Multi-platform integration](07-channel-integration.md) | Target adapter expansion, channel/thread identity, capability evidence, five-tool mappings and release gates; not an implementation claim |
+| [Session context and memory](09-session-context-and-memory.md) | Session lifetime, environment selection, context assembly, memory scope, queued-message provenance and subagent follow-ups |
 
 Start with architecture; read the owning contract before changing its behavior.
 The generated [OpenAPI document](../README.md#run-from-source) describes management

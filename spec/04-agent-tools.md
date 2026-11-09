@@ -8,7 +8,7 @@ expansion requirements live in [Multi-platform channel integration](07-channel-i
 
 CG exposes official MCP Streamable HTTP at `/mcp/`, including the trailing slash.
 It uses stateless HTTP requests with JSON responses. Access requires the
-[host or route capability](02-identity-and-access.md#host-capabilities), independent of
+[route capability](02-identity-and-access.md#route-only-mcp-credentials), independent of
 administrator and upstream credentials. The tool transport does not create or
 wake an Agent run; the [Host delivery workflow](03-routing-and-delivery.md) owns
 that operation.
@@ -21,7 +21,7 @@ resource data and operation catalogs, never creates per-conversation tools.
 | --- | --- |
 | `discover(resource='conversations', route_id=None)` | List authorized handles, or inspect a selected handle's capabilities and operation schemas |
 | `read(resource, arguments=None, route_id=None, source=None)` | Read `messages`, `image`, `attachment`, `events`, or a registered `native` resource |
-| `send_message(content, route_id=None, delivery=None, reply_to=None, stream=None, native=None)` | Queue text, media, cards, or a stream fragment |
+| `send_message(content, route_id=None, delivery=None, reply_to=None, stream=None, native=None, origin_context=None)` | Queue text, media, cards, or a stream fragment |
 | `execute_action(action, arguments=None, route_id=None)` | Queue `reaction`, `recall`, `typing`, or a registered `native` mutation |
 | `get_operation(operation_id, route_id=None)` | Query this route's durable message, stream, or action status |
 
@@ -85,6 +85,19 @@ own admission and execution checks. Reads have read-only annotations; the generi
 action tool conservatively has destructive annotations because some actions are
 destructive. Annotations never replace per-operation grants.
 
+`send_message.origin_context` optionally names the opaque handle in the current
+Host input. It is bound to the initiating event and authenticated caller, grants
+no destination access and is not a public source ID. Valid handles attach verified
+source/requester/Thread/Run attribution to queued messages. A missing handle leaves
+provenance unavailable; forged, cross-Host, unauthorized or inactive handles fail. A completed root input remains usable only
+while public Host observation confirms active coordinator/descendant work.
+Confirmed outgoing gateway reads and automatic history expose `provenance` with
+`verified`, `restricted` or `unavailable` status. Verified fields include the
+initiating message excerpt, not a claim that the Agent's inferred reason is fact.
+Source identity and excerpt require current source-read authority. Agents must
+separately consider disclosure to the destination; reads do not authorize relaying
+private content. Stream fragments retain their action-ledger history limitations.
+
 All sends/actions return `operation_id` and `state`; existing `reply_id` or
 `action_id` fields identify the underlying unchanged ledger, and stream receipts
 also carry their handle. `get_operation` resolves either ledger by its persisted
@@ -95,7 +108,7 @@ send authority hides message results. Queued is not confirmed delivery, and
 outcomes are never automatically repeated. Polling does not create Agent work.
 
 This is a breaking MCP interface change. Clients must refresh their tool inventory,
-enable the five entry points, and update prompts/calls. Existing route/Host keys,
+enable the five entry points, and update prompts/calls. Existing route tokens,
 grants, conversation bindings, queues, and stored receipts require no rewrite.
 CG does not modify a13n connection tools or Agent instructions automatically.
 
@@ -104,7 +117,6 @@ handling, platform format differences, and reaction target checks. These actions
 inherit existing read/reply scopes and durable reply states. Listing includes
 channel capabilities; optional OneBot extensions are not universal capabilities.
 
-A host key requires explicit `route_id` obtained from `discover(resource='conversations')`.
 A specific route token may omit it for backward compatibility, or provide its own
 route ID. An all-conversation route token lists its enabled concrete children and
 requires an explicit child `route_id`; template routes are never send destinations.
@@ -128,8 +140,8 @@ resume state and Weixin `context_token`. Tool replies inherit the configured
 channel's [capability and reply constraints](01-channel-adapters.md).
 
 Tools accept only currently authorized route/conversation handles, never arbitrary
-account or conversation destinations. A host key can read across explicit readable
-channels granted by its enabled assigned route configurations; credentials and
+account or conversation destinations. A route token can read across explicit readable
+channels granted by its enabled configuration; credentials and
 current channel presence are checked on each invocation. QQ native resource and
 moderation operations require separate explicit grants under the
 [platform contract](06-qq-platform.md). Complete native history retrieval is not implemented.
@@ -189,18 +201,16 @@ the QQ application has obtained every upstream permission.
 
 ## a13n binding
 
-An Agent sharing one Host trust boundary uses one MCP connection authenticated
-with that Host's key. The tool inventory is fixed across conversations; each
-invocation selects an authorized `route_id`. Adding a group, private chat, or
-guild channel changes route data, not tool names, connection count, or Tool Search
-groups. Per-conversation Tool Search groups are not required. This shared
-connection supports exact, multi-source and wildcard route configurations.
-For an intentionally narrower capability, one concrete source can optionally bind
-one dedicated a13n MCP connection using its route token. The connection cannot be
-shared by two routes on a Host. No dedicated binding is required when using the
-Host key. Route read grants can exceed trigger sources. Without an MCP connection
-in the Agent's configuration, it cannot send channel messages; final output is
-never a substitute.
+An Agent uses a CGW MCP connection authenticated with its route's token. The fixed
+five-tool inventory applies to exact, multi-source and wildcard routes. Adding
+conversations inside that route does not require new tools or another connection;
+separate route configurations require separate credentials. A Host or Agent
+assignment never grants cross-route authority.
+
+One concrete source may optionally bind its dedicated a13n MCP connection ID;
+that connection must use the route token and cannot be bound to two routes.
+Route read grants may exceed activation sources. Without a configured route-token
+MCP connection, an Agent cannot send channel messages; final output is no substitute.
 
 CG always preserves the selected Agent's configured tools. Host submission bodies
 never set `options.overrides.connection_tools`. Configure enabled connections and

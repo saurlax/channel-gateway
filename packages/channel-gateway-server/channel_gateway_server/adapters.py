@@ -32,8 +32,6 @@ def onebot_message(event: dict, connection: dict) -> Message | None:
     if not isinstance(source, (list, str)):
         return None
     text, images = onebot_content(source)
-    if len(text) > 60000:
-        raise ValueError("Message exceeds the text size limit")
     if not text.strip() and not images:
         return None
     sender = event["user_id"]
@@ -137,14 +135,10 @@ def host_body(message: dict, route: dict, history: list[dict] | None = None) -> 
             "instruction": "Send every warranted channel answer, clarification or limitation through send_message with this route_id. Final output is private. If no reply is warranted, call no messaging tool.",
         },
     }
-    if route.get("coordinate_tasks"):
-        context["coordination"] = {
-            "instruction": "Act as the responsive conversation coordinator. Proactively delegate coding, media generation, research and other long work to configured asynchronous subagents. Keep the main thread available for new messages; send only relevant corrections or follow-ups to the responsible child. Reuse the current shared environment when the configured subagent edge supports it; use separate work directories to avoid conflicts. Track child results and blockers, and do not claim completion until the work and deliverables are verified. Do not treat a main-turn end as child completion. Tool permissions and the Agent's configured subagent roster remain authoritative.",
-        }
     if route.get("conversation_memory"):
         context["memory_scope"] = {
             "name": "conversation",
-            "instruction": "Use the conversation Memory Space for this source. Read its index and save confirmed agreements, decisions, deliverable references and unfinished work in global/MEMORY.md before ending. In this Space, global is scoped to this channel conversation, not all sources. Do not copy other conversations' private information into it.",
+            "instruction": "Use the conversation Memory Space for this source. Read its index and save confirmed agreements, decisions, deliverable references and unfinished work in global/MEMORY.md before ending. In this Space, global is scoped to this channel conversation, not all sources. Keep temporary roleplay in Session notes unless explicitly agreed as a lasting local preference. Global Memory Spaces are read-only; do not change the Agent-wide identity. Do not copy other conversations' private information into it.",
         }
     if direct_media and (context["image_count"] or context["attachments"]):
         context["media_access"] = {
@@ -186,31 +180,23 @@ class HttpAdapters:
     async def thread_environments(self, connection: dict, thread_id: str) -> list[dict]:
         """Use public desired mounts; never silently replace an unavailable environment."""
         page = await self.host(connection, "GET", resource_path("threads", thread_id) + "/environments")
-        items = page.get("items")
-        if not isinstance(items, list) or len(items) > 32 or page.get("next_cursor"):
-            raise AdapterError("Invalid Host environment list")
-        mounts = []
-        for item in items:
-            if not isinstance(item, dict) or not all(
-                isinstance(item.get(key), str) for key in ("name", "environment_id")
-            ):
-                raise AdapterError("Invalid Host environment mount")
-            directory = item.get("working_directory")
-            if directory is not None and not isinstance(directory, str):
-                raise AdapterError("Invalid Host environment directory")
-            mounts.append(
-                {"name": item["name"], "environment_id": item["environment_id"], "working_directory": directory}
-            )
-            if "permission_ceiling" in item:
-                if not isinstance(item["permission_ceiling"], dict):
-                    raise AdapterError("Invalid Host environment permissions")
-                mounts[-1]["permission_ceiling"] = item["permission_ceiling"]
-        return mounts
+        if page.get("next_cursor"):
+            raise AdapterError("Host environment list is incomplete")
+        return [
+            {
+                "name": item["name"],
+                "environment_id": item["environment_id"],
+                **{key: item[key] for key in ("working_directory", "permission_ceiling") if item.get(key) is not None},
+            }
+            for item in page["items"]
+        ]
 
     async def choices(self, connection: dict, resource: str, cursor: str | None = None) -> dict:
         params = {"limit": "50"}
         if resource == "agents":
             params["archived"] = "false"
+        elif resource == "memory-spaces":
+            params["enabled"] = "true"
         if cursor:
             params["cursor"] = cursor
         page = await self.host(connection, "GET", f"/{resource}?{urlencode(params)}")
@@ -222,10 +208,14 @@ class HttpAdapters:
         for item in page["items"]:
             if not isinstance(item, dict) or not isinstance(item.get("id"), str):
                 raise AdapterError("Invalid Host resource list")
-            if item.get("archived_at") or (resource == "agents" and not item.get("default_revision_id")):
+            if (
+                item.get("archived_at")
+                or (resource == "agents" and not item.get("default_revision_id"))
+                or (resource == "memory-spaces" and item.get("enabled") is False)
+            ):
                 continue
             labels = item.get("labels") or {}
-            name = item.get("name") if resource == "agents" else labels.get("name") or labels.get("title")
+            name = item.get("name") if resource != "threads" else labels.get("name") or labels.get("title")
             items.append({"id": item["id"], "name": name if isinstance(name, str) else item["id"]})
         return {"items": items, "next_cursor": page.get("next_cursor")}
 

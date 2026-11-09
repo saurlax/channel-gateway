@@ -320,10 +320,9 @@ def test_ingress_is_durable_deduplicated_and_has_fixed_tools(platform_gateway):
     assert len(rows) == 2
 
 
+@pytest.mark.parametrize("platform_gateway", ["slack", "lark"], indirect=True)
 def test_signed_callbacks_reject_forgery_expiry_and_cross_installation(platform_gateway):
     kind, client, _, provider, _, _ = platform_gateway
-    if kind == "discord":
-        pytest.skip("Discord authenticates the bot Gateway handshake")
     assert hook(platform_gateway, bad=True).status_code == 401
     assert hook(platform_gateway, expired=True).status_code == 401
     packet = provider.event()
@@ -822,7 +821,8 @@ def test_host_delivery_uses_media_handles_and_tool_reply(platform_gateway):
     tick(platform_gateway)
     assert len(host_requests) == 1
     content = json.loads(host_requests[0].content)["payload"]["content"]
-    assert [part["type"] for part in content] == ["text", "json"]
+    assert [part["type"] for part in content] == ["text", "json", "json"]
+    assert "origin_context" in content[-1]["value"]
     assert content[1]["value"] == {"channel_history": []}
     context = json.loads(content[0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
     assert context["source_message_id"] == MID[kind] and context["image_count"] == 1

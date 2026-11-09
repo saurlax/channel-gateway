@@ -31,7 +31,7 @@ bot credential.
 ## Configure one installation
 
 Use **Channels → Add channel** or authenticated `POST /api/v1/connections`.
-Credentials are write-only and stored separately from Host MCP keys. The API does
+Credentials are write-only and stored separately from route MCP tokens. The API does
 not return bot tokens, signing secrets, app secrets, or encryption keys.
 
 | Field | Slack | Feishu/Lark | Discord |

@@ -4,7 +4,7 @@ import { useLocale } from "@/i18n";
 import { isHost } from "@/hosts";
 import { duplicateSources, routeSources, singleSource } from "@/lib/route-sources";
 import { RouteSources } from "@/components/route-sources";
-import { HostResourceSelect } from "@/components/host-resource-select";
+import { HostResourceSelect, HostMemorySpaceSelect } from "@/components/host-resource-select";
 import { ConsoleLink } from "@/components/console-link";
 import { DeleteResource } from "@/components/delete-resource";
 import { ResetThreads } from "@/components/reset-threads";
@@ -54,12 +54,25 @@ export function RouteConfiguration({
   );
   const [host, setHost] = useState(route?.host_id ?? hosts[0]?.id ?? "");
   const [agent, setAgent] = useState(route?.agent_id ?? "");
-  const [threadPolicy, setThreadPolicy] = useState<ThreadPolicy>(route?.thread_policy ?? "window");
+  const [threadPolicy, setThreadPolicy] = useState<ThreadPolicy>(
+    route?.thread_policy ?? "conversation",
+  );
   const [historyLimit, setHistoryLimit] = useState(String(route?.history_limit ?? 30));
   const [busyPolicy, setBusyPolicy] = useState<BusyPolicy>(route?.busy_policy ?? "steer");
-  const [wakeProvider, setWakeProvider] = useState(route?.wake_provider_id ?? "none");
-  const [conversationMemory, setConversationMemory] = useState(route?.conversation_memory ?? false);
-  const [coordinateTasks, setCoordinateTasks] = useState(route?.coordinate_tasks ?? false);
+  const [wakeAgent, setWakeAgent] = useState(route?.wake_agent_id ?? "");
+  const [conversationMemory, setConversationMemory] = useState(
+    route?.conversation_memory ?? !route,
+  );
+  const [sessionIdle, setSessionIdle] = useState(
+    String(route ? (route.session_idle_minutes ?? "") : 60),
+  );
+  const [environmentScope, setEnvironmentScope] = useState<"global" | "conversation" | "session">(
+    route?.environment_scope ?? "conversation",
+  );
+  const [globalMemories, setGlobalMemories] = useState<string[]>(
+    route?.global_memory_space_ids ?? [],
+  );
+  const [sharedMemory, setSharedMemory] = useState(route?.shared_memory ?? false);
   const [fixedThread, setFixedThread] = useState(route?.fixed_thread_id ?? "");
   const [readChannels, setReadChannels] = useState<string[]>(() => {
     if (route?.read_channel_ids != null) return route.read_channel_ids;
@@ -126,9 +139,45 @@ export function RouteConfiguration({
       return;
     }
     if (!mcpOnly && (!/^\d+$/.test(historyLimit) || Number(historyLimit) > 100)) {
-      setTab("routing");
+      setTab("session");
       setValidation("Enter a history limit from 0 to 100.");
       return;
+    }
+    if (
+      !mcpOnly &&
+      threadPolicy !== "message" &&
+      sessionIdle !== "" &&
+      !/^\d+$/.test(sessionIdle)
+    ) {
+      setTab("session");
+      setValidation("Enter a non-negative idle timeout in minutes, or leave empty.");
+      return;
+    }
+    if (!mcpOnly && threadPolicy === "fixed") {
+      const sessionError =
+        fixedThread && sessionIdle !== ""
+          ? "Pinned threads require indefinite session retention"
+          : fixedThread && environmentScope !== "session"
+            ? "Pinned threads retain their existing memory and environment selection"
+            : environmentScope === "conversation" && (!dedicated || sources.length !== 1)
+              ? "Shared threads across conversations require global or session environments"
+              : "";
+      if (sessionError) {
+        setTab("session");
+        setValidation(sessionError);
+        return;
+      }
+      const memoryError =
+        fixedThread && conversationMemory
+          ? "Pinned threads retain their existing memory and environment selection"
+          : conversationMemory && !sharedMemory
+            ? "Fixed threads require explicit shared memory"
+            : "";
+      if (memoryError) {
+        setTab("memory");
+        setValidation(memoryError);
+        return;
+      }
     }
     const body = {
       name: name.trim(),
@@ -142,9 +191,12 @@ export function RouteConfiguration({
       thread_policy: mcpOnly ? "conversation" : threadPolicy,
       history_limit: Number(historyLimit),
       busy_policy: mcpOnly ? "steer" : busyPolicy,
-      wake_provider_id: mcpOnly || wakeProvider === "none" ? null : wakeProvider,
-      conversation_memory: !mcpOnly && threadPolicy === "window" && conversationMemory,
-      coordinate_tasks: !mcpOnly && coordinateTasks,
+      wake_agent_id: mcpOnly || !wakeAgent ? null : wakeAgent,
+      conversation_memory: !mcpOnly && conversationMemory,
+      session_idle_minutes: mcpOnly || sessionIdle === "" ? null : Number(sessionIdle),
+      environment_scope: mcpOnly ? "session" : environmentScope,
+      global_memory_space_ids: mcpOnly || !conversationMemory ? [] : globalMemories,
+      shared_memory: !mcpOnly && threadPolicy === "fixed" && sharedMemory,
       fixed_thread_id: !mcpOnly && threadPolicy === "fixed" ? fixedThread || null : null,
       read_channel_ids: readChannels,
       action_grants: actionGrants,
@@ -158,12 +210,16 @@ export function RouteConfiguration({
   }
   return (
     <form noValidate className="grid min-w-0 gap-6" onSubmit={submit}>
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList aria-label={t("Route configuration")}>
-          <TabsTrigger value="basic">{t("Basic information")}</TabsTrigger>
-          <TabsTrigger value="routing">{t("Routing")}</TabsTrigger>
-          <TabsTrigger value="connections">{t("Connections")}</TabsTrigger>
-        </TabsList>
+      <Tabs value={tab} onValueChange={setTab} className="min-w-0">
+        <div className="min-w-0 overflow-x-auto">
+          <TabsList aria-label={t("Route configuration")} className="w-max justify-start">
+            <TabsTrigger value="basic">{t("Basic")}</TabsTrigger>
+            <TabsTrigger value="routing">{t("Routing")}</TabsTrigger>
+            {!mcpOnly && <TabsTrigger value="session">{t("Session")}</TabsTrigger>}
+            {!mcpOnly && <TabsTrigger value="memory">{t("Memory")}</TabsTrigger>}
+            <TabsTrigger value="permissions">{t("Permissions and connections")}</TabsTrigger>
+          </TabsList>
+        </div>
         <TabsContent value="basic" className="mt-4 gap-4 data-[state=active]:grid">
           <FormField id="route-name" label={t("Name")}>
             <Input
@@ -184,6 +240,31 @@ export function RouteConfiguration({
               disabled={busy}
             />
           </FormField>
+          {route && (
+            <section
+              className="mt-2 grid gap-4 border-t pt-6"
+              aria-labelledby="route-danger-heading"
+            >
+              <h2 id="route-danger-heading" className="text-base font-medium">
+                {t("Danger zone")}
+              </h2>
+              <div className="flex flex-wrap gap-2">
+                <DeleteResource
+                  label={t("Delete route")}
+                  title={t("Delete route {name}?", { name: route.name })}
+                  description={t(
+                    "This removes the route and its conversation bindings, revokes its tokens, and blocks pending work. Message and reply history is retained. This cannot be undone.",
+                  )}
+                  path={`routes/${route.id}`}
+                  action={action}
+                  busy={busy}
+                  error={error}
+                  clearError={clearError}
+                  onDeleted={onSaved}
+                />
+              </div>
+            </section>
+          )}
         </TabsContent>
         <TabsContent value="routing" className="mt-4 gap-6 data-[state=active]:grid">
           <section className="grid min-w-0 gap-4" aria-labelledby="route-sources-heading">
@@ -201,212 +282,329 @@ export function RouteConfiguration({
             <h2 id="route-destination-heading" className="text-base font-medium">
               {t("Destination")}
             </h2>
-            <FormField id="route-host" label={t("Agent host")}>
-              <Choice
-                disabled={busy}
-                id="route-host"
-                value={host}
-                onChange={(value) => {
-                  setHost(value);
-                  setAgent("");
-                  setFixedThread("");
-                  setBinding("");
-                }}
-                items={hosts.map((c) => [c.id, c.name])}
-              />
-            </FormField>
-            {!mcpOnly && (
-              <FormField id="agent-id" label={t("Agent")}>
-                <HostResourceSelect
-                  key={`${host}-agents`}
-                  id="agent-id"
-                  host={host}
-                  resource="agents"
-                  value={agent}
-                  onChange={setAgent}
+            <div
+              className={`grid min-w-0 items-end gap-2 ${mcpOnly ? "grid-cols-1" : "grid-cols-2"}`}
+            >
+              <FormField id="route-host" label={t("Agent host")}>
+                <Choice
                   disabled={busy}
+                  id="route-host"
+                  value={host}
+                  onChange={(value) => {
+                    setHost(value);
+                    setAgent("");
+                    setWakeAgent("");
+                    setGlobalMemories([]);
+                    setFixedThread("");
+                    setBinding("");
+                  }}
+                  items={hosts.map((c) => [c.id, c.name])}
                 />
               </FormField>
-            )}
-            {!mcpOnly && (
-              <>
-                <FormField id="thread-policy" label={t("Conversation continuity")}>
-                  <Choice
-                    id="thread-policy"
-                    showSelectedDescription={false}
-                    value={threadPolicy}
-                    onChange={(value) => setThreadPolicy(value as ThreadPolicy)}
-                    disabled={busy}
-                    items={[
-                      [
-                        "window",
-                        t("Bounded history, shared environment"),
-                        t(
-                          "Join the active run. When idle, start a fresh thread with recent history and reuse this conversation's environments.",
-                        ),
-                      ],
-                      [
-                        "conversation",
-                        t("Continue each private chat or group"),
-                        t(
-                          "For ongoing conversations. Each private chat or group on a bot account keeps its own thread; group members share history.",
-                        ),
-                      ],
-                      [
-                        "sender",
-                        t("Keep each group member separate"),
-                        t(
-                          "For personal assistance in groups. Each member keeps separate history within that group, without sharing across groups or bot accounts.",
-                        ),
-                      ],
-                      [
-                        "message",
-                        t("Start fresh for every message"),
-                        t(
-                          "Each message starts a fresh thread with bounded channel history; a new environment may also be created.",
-                        ),
-                      ],
-                      [
-                        "fixed",
-                        t("Share context across all sources"),
-                        t(
-                          "For cross-source collaboration. All private chats and groups selected by this route share one thread and its history.",
-                        ),
-                      ],
-                    ]}
-                  />
-                </FormField>
-                <FormField id="history-limit" label={t("History message limit")}>
-                  <Input
-                    id="history-limit"
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={historyLimit}
-                    onChange={(event) => setHistoryLimit(event.target.value)}
+              {!mcpOnly && (
+                <FormField id="agent-id" label={t("Agent")}>
+                  <HostResourceSelect
+                    key={`${host}-agents`}
+                    id="agent-id"
+                    host={host}
+                    resource="agents"
+                    value={agent}
+                    onChange={setAgent}
                     disabled={busy}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    {t(
-                      "Previous incoming and sent messages. Default 30; 0 excludes history. Continuous threads retain upstream context.",
-                    )}
-                  </p>
                 </FormField>
-                <FormField id="wake-provider" label={t("Wake decision model")}>
-                  <Choice
-                    id="wake-provider"
-                    value={wakeProvider}
-                    onChange={setWakeProvider}
-                    disabled={busy}
-                    items={[
-                      ["none", t("Process every message")],
-                      ...(snapshot.model_providers ?? []).map((provider): [string, string] => [
-                        provider.id,
-                        provider.name,
-                      ]),
-                    ]}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t(
-                      "Filters unrelated messages before Host delivery, including during execution. Model failures retain normal delivery.",
-                    )}{" "}
-                    {t(
-                      "The provider receives this message and up to eight recent authorized messages.",
-                    )}
-                  </p>
-                </FormField>
-                {threadPolicy === "window" && (
-                  <FormField id="conversation-memory" label={t("Conversation memory")}>
-                    <Switch
-                      id="conversation-memory"
-                      checked={conversationMemory}
-                      onCheckedChange={setConversationMemory}
-                      disabled={busy}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {t(
-                        "Use a separate a13n Memory Space for each source conversation. Reuse it across fresh threads. Requires Host memory-space support.",
-                      )}
-                    </p>
-                  </FormField>
-                )}
-                <FormField id="coordinate-tasks" label={t("Coordinate long tasks")}>
-                  <Switch
-                    id="coordinate-tasks"
-                    checked={coordinateTasks}
-                    onCheckedChange={setCoordinateTasks}
-                    disabled={busy}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t(
-                      "Ask the Agent to delegate long work and keep the coordinator available. Requires configured asynchronous subagents; their tools and environment policy are preserved.",
-                    )}
-                  </p>
-                </FormField>
-                {threadPolicy !== "window" && (
-                  <FormField id="busy-policy" label={t("Messages during execution")}>
-                    <Choice
-                      id="busy-policy"
-                      showSelectedDescription={false}
-                      value={busyPolicy}
-                      onChange={(value) => setBusyPolicy(value as BusyPolicy)}
-                      disabled={busy}
-                      items={[
-                        [
-                          "steer",
-                          t("Join current execution"),
-                          t(
-                            "Submit immediately. The Host incorporates the message at the next safe boundary.",
-                          ),
-                        ],
-                        [
-                          "queue",
-                          t("Queue for the next run"),
-                          t(
-                            "Wait for the current execution to finish, then process messages in order.",
-                          ),
-                        ],
-                      ]}
-                    />
-                  </FormField>
-                )}
-                {threadPolicy === "fixed" && (
-                  <FormField id="fixed-thread" label={t("Shared thread")}>
-                    <HostResourceSelect
-                      key={`${host}-threads`}
-                      id="fixed-thread"
-                      host={host}
-                      resource="threads"
-                      value={fixedThread}
-                      onChange={setFixedThread}
-                      disabled={busy}
-                      allowCreate
-                    />
-                  </FormField>
-                )}
-              </>
-            )}
+              )}
+            </div>
           </section>
         </TabsContent>
-        <TabsContent value="connections" className="mt-4 gap-4 data-[state=active]:grid">
-          {!mcpOnly && dedicated && (
-            <>
-              <FormField id="mcp-connection" label={t("a13n MCP connection ID (optional)")}>
+        {!mcpOnly && (
+          <TabsContent value="session" className="mt-4 gap-6 data-[state=active]:grid">
+            <FormField id="wake-agent" label={t("Wake decision Agent")}>
+              <HostResourceSelect
+                key={`${host}-wake-agents`}
+                id="wake-agent"
+                host={host}
+                resource="agents"
+                value={wakeAgent}
+                onChange={setWakeAgent}
+                disabled={busy}
+                emptyLabel="Process every message"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "Optional. This Agent decides whether to wake the destination Agent. Decision failures process normally.",
+                )}
+              </p>
+            </FormField>
+            <section className="grid min-w-0 gap-4" aria-labelledby="route-context-heading">
+              <h2 id="route-context-heading" className="text-base font-medium">
+                {t("Context")}
+              </h2>
+              <FormField id="thread-policy" label={t("Conversation continuity")}>
+                <Choice
+                  id="thread-policy"
+                  showSelectedDescription={false}
+                  value={threadPolicy}
+                  onChange={(value) => setThreadPolicy(value as ThreadPolicy)}
+                  disabled={busy}
+                  items={[
+                    [
+                      "conversation",
+                      t("Continue each private chat or group"),
+                      t(
+                        "For ongoing conversations. Each private chat or group on a bot account keeps its own thread; group members share history.",
+                      ),
+                    ],
+                    [
+                      "sender",
+                      t("Keep each group member separate"),
+                      t(
+                        "For personal assistance in groups. Each member keeps separate history within that group, without sharing across groups or bot accounts.",
+                      ),
+                    ],
+                    [
+                      "message",
+                      t("Start fresh for every message"),
+                      t(
+                        "Each message starts a fresh session with bounded channel history. Environment scope is configured separately.",
+                      ),
+                    ],
+                    [
+                      "fixed",
+                      t("Share context across all sources"),
+                      t(
+                        "For cross-source collaboration. All private chats and groups selected by this route share one thread and its history.",
+                      ),
+                    ],
+                  ]}
+                />
+              </FormField>
+              {threadPolicy === "fixed" && (
+                <FormField id="fixed-thread" label={t("Shared thread")}>
+                  <HostResourceSelect
+                    key={`${host}-threads`}
+                    id="fixed-thread"
+                    host={host}
+                    resource="threads"
+                    value={fixedThread}
+                    onChange={setFixedThread}
+                    disabled={busy}
+                    allowCreate
+                  />
+                </FormField>
+              )}
+              {threadPolicy !== "message" && (
+                <FormField id="session-idle" label={t("Session idle timeout (minutes)")}>
+                  <Input
+                    id="session-idle"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={sessionIdle}
+                    onChange={(event) => setSessionIdle(event.target.value)}
+                    disabled={busy}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      "Default 60. Empty retains the session indefinitely; 0 starts fresh when idle. Active work keeps its session.",
+                    )}
+                  </p>
+                </FormField>
+              )}
+              <FormField id="history-limit" label={t("History message limit")}>
                 <Input
-                  id="mcp-connection"
-                  value={binding}
-                  onChange={(event) => setBinding(event.target.value)}
+                  id="history-limit"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={historyLimit}
+                  onChange={(event) => setHistoryLimit(event.target.value)}
                   disabled={busy}
                 />
                 <p className="text-xs text-muted-foreground">
                   {t(
-                    "Use a dedicated MCP connection for this route. You can bind it after creating the route.",
+                    "Previous incoming and sent messages. Default 30; 0 excludes history. Continuous threads retain upstream context.",
                   )}
                 </p>
               </FormField>
-            </>
-          )}
+              <FormField id="busy-policy" label={t("Messages during execution")}>
+                <Choice
+                  id="busy-policy"
+                  showSelectedDescription={false}
+                  value={busyPolicy}
+                  onChange={(value) => setBusyPolicy(value as BusyPolicy)}
+                  disabled={busy}
+                  items={[
+                    [
+                      "steer",
+                      t("Join current execution"),
+                      t(
+                        "Submit immediately. The Host incorporates the message at the next safe boundary.",
+                      ),
+                    ],
+                    [
+                      "queue",
+                      t("Queue for the next run"),
+                      t(
+                        "Wait for the current execution to finish, then process messages in order.",
+                      ),
+                    ],
+                  ]}
+                />
+              </FormField>
+            </section>
+            <section className="grid min-w-0 gap-4" aria-labelledby="route-environment-heading">
+              <h2 id="route-environment-heading" className="text-base font-medium">
+                {t("Execution environment")}
+              </h2>
+              <FormField id="environment-scope" label={t("Environment scope")}>
+                <Choice
+                  id="environment-scope"
+                  value={environmentScope}
+                  onChange={(value) => setEnvironmentScope(value as typeof environmentScope)}
+                  disabled={busy}
+                  items={[
+                    [
+                      "global",
+                      t("Global shared environment"),
+                      t(
+                        "Share files across participating routes and conversations for this Host and Agent.",
+                      ),
+                    ],
+                    [
+                      "conversation",
+                      t("One environment per conversation"),
+                      t(
+                        "Each group or private chat retains its environment across senders and sessions.",
+                      ),
+                    ],
+                    [
+                      "session",
+                      t("Follow session lifetime"),
+                      t("Each new session gets its own environment. Continuing runs reuse it."),
+                    ],
+                  ]}
+                />
+              </FormField>
+            </section>
+            {route &&
+              snapshot.connections.some(
+                (item) => item.id === route.host_id && item.kind === "a13n",
+              ) &&
+              route.thread_policy !== "message" &&
+              !route.fixed_thread_id && (
+                <section className="grid gap-4 border-t pt-6" aria-labelledby="route-reset-heading">
+                  <h2 id="route-reset-heading" className="text-base font-medium">
+                    {t("Session management")}
+                  </h2>
+                  <div className="flex flex-wrap gap-2">
+                    <ResetThreads
+                      routeId={route.id}
+                      action={action}
+                      busy={busy}
+                      error={error}
+                      clearError={clearError}
+                      onReset={() => setThreadsReset(true)}
+                    />
+                  </div>
+                  {threadsReset && (
+                    <p role="status" className="text-sm text-muted-foreground">
+                      {t("Route conversations reset. Future messages start new Agent threads.")}
+                    </p>
+                  )}
+                </section>
+              )}
+          </TabsContent>
+        )}
+        {!mcpOnly && (
+          <TabsContent value="memory" className="mt-4 gap-4 data-[state=active]:grid">
+            <FormField id="conversation-memory" label={t("Conversation memory")}>
+              <Switch
+                id="conversation-memory"
+                checked={conversationMemory}
+                onCheckedChange={setConversationMemory}
+                disabled={busy}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "Use a separate a13n Memory Space for each source conversation. Reuse it across fresh threads. Requires Host memory-space support.",
+                )}
+              </p>
+            </FormField>
+            {!conversationMemory && (
+              <p className="text-xs text-muted-foreground">
+                {t("Host memory selection applies, including its write permissions.")}
+              </p>
+            )}
+            {conversationMemory && (
+              <>
+                <FormField id="global-memories" label={t("Global Memory Spaces")}>
+                  <HostMemorySpaceSelect
+                    key={`${host}-memory-spaces`}
+                    id="global-memories"
+                    host={host}
+                    values={globalMemories}
+                    onChange={setGlobalMemories}
+                    disabled={busy}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t("Selected Spaces are read-only. Scoped memory remains writable.")}
+                  </p>
+                </FormField>
+                {threadPolicy === "fixed" && (
+                  <FormField id="shared-memory" label={t("Shared memory across sources")}>
+                    <Switch
+                      id="shared-memory"
+                      checked={sharedMemory}
+                      onCheckedChange={setSharedMemory}
+                      disabled={busy}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        "Required for scoped memory in a shared thread. Source memories are not merged.",
+                      )}
+                    </p>
+                  </FormField>
+                )}
+              </>
+            )}
+          </TabsContent>
+        )}
+        <TabsContent value="permissions" className="mt-4 gap-6 data-[state=active]:grid">
+          <fieldset className="grid gap-3">
+            <legend className="mb-3 text-sm font-medium">{t("Readable channels")}</legend>
+            <div className="flex items-center gap-3">
+              <Checkbox
+                id="read-all-channels"
+                checked={readChannels.includes("*")}
+                onCheckedChange={(checked) => setReadChannels(checked === true ? ["*"] : [])}
+                disabled={busy}
+              />
+              <label htmlFor="read-all-channels" className="text-sm">
+                {t("All channels")}
+              </label>
+            </div>
+            {channels.map((channel) => (
+              <div key={channel.id} className="flex min-w-0 items-center gap-3">
+                <Checkbox
+                  id={`read-channel-${channel.id}`}
+                  checked={readChannels.includes("*") || readChannels.includes(channel.id)}
+                  onCheckedChange={(checked) =>
+                    setReadChannels((current) =>
+                      checked === true
+                        ? [...current, channel.id]
+                        : current.filter((id) => id !== channel.id),
+                    )
+                  }
+                  disabled={busy || readChannels.includes("*")}
+                />
+                <label htmlFor={`read-channel-${channel.id}`} className="min-w-0 break-all text-sm">
+                  {channel.name}
+                </label>
+              </div>
+            ))}
+          </fieldset>
           <fieldset className="grid gap-3">
             <legend className="mb-3 text-sm font-medium">
               {t("Platform action authorization")}
@@ -452,39 +650,45 @@ export function RouteConfiguration({
               </div>
             ))}
           </fieldset>
-          <fieldset className="grid gap-3">
-            <legend className="mb-3 text-sm font-medium">{t("Readable channels")}</legend>
-            <div className="flex items-center gap-3">
-              <Checkbox
-                id="read-all-channels"
-                checked={readChannels.includes("*")}
-                onCheckedChange={(checked) => setReadChannels(checked === true ? ["*"] : [])}
-                disabled={busy}
-              />
-              <label htmlFor="read-all-channels" className="text-sm">
-                {t("All channels")}
-              </label>
-            </div>
-            {channels.map((channel) => (
-              <div key={channel.id} className="flex min-w-0 items-center gap-3">
-                <Checkbox
-                  id={`read-channel-${channel.id}`}
-                  checked={readChannels.includes("*") || readChannels.includes(channel.id)}
-                  onCheckedChange={(checked) =>
-                    setReadChannels((current) =>
-                      checked === true
-                        ? [...current, channel.id]
-                        : current.filter((id) => id !== channel.id),
-                    )
-                  }
-                  disabled={busy || readChannels.includes("*")}
+          {!mcpOnly && dedicated && (
+            <>
+              <FormField id="mcp-connection" label={t("a13n MCP connection ID (optional)")}>
+                <Input
+                  id="mcp-connection"
+                  value={binding}
+                  onChange={(event) => setBinding(event.target.value)}
+                  disabled={busy}
                 />
-                <label htmlFor={`read-channel-${channel.id}`} className="min-w-0 break-all text-sm">
-                  {channel.name}
-                </label>
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    "Use a dedicated MCP connection for this route. You can bind it after creating the route.",
+                  )}
+                </p>
+              </FormField>
+            </>
+          )}
+          {route && (
+            <section className="grid gap-4 border-t pt-6" aria-labelledby="route-token-heading">
+              <h2 id="route-token-heading" className="text-base font-medium">
+                {t("Route token")}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "Rotating the token revokes the previous token. Update clients that use this route's credential.",
+                )}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void action(`routes/${route.id}/token`)}
+                >
+                  {t("Rotate token")}
+                </Button>
               </div>
-            ))}
-          </fieldset>
+            </section>
+          )}
         </TabsContent>
       </Tabs>
       {validation && (
@@ -492,56 +696,13 @@ export function RouteConfiguration({
           <AlertDescription>{message(validation)}</AlertDescription>
         </Alert>
       )}
-      {threadsReset && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {t("Route conversations reset. Future messages start new Agent threads.")}
-        </p>
-      )}
+
       <div className="flex flex-wrap justify-end gap-2">
-        {route && (
-          <>
-            <DeleteResource
-              label={t("Delete route")}
-              title={t("Delete route {name}?", { name: route.name })}
-              description={t(
-                "This removes the route and its conversation bindings, revokes its tokens, and blocks pending work. Message and reply history is retained. This cannot be undone.",
-              )}
-              path={`routes/${route.id}`}
-              action={action}
-              busy={busy}
-              error={error}
-              clearError={clearError}
-              onDeleted={onSaved}
-            />
-            {snapshot.connections.some(
-              (item) => item.id === route.host_id && item.kind === "a13n",
-            ) &&
-              route.thread_policy !== "message" &&
-              !route.fixed_thread_id && (
-                <ResetThreads
-                  routeId={route.id}
-                  action={action}
-                  busy={busy}
-                  error={error}
-                  clearError={clearError}
-                  onReset={() => setThreadsReset(true)}
-                />
-              )}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={() => void action(`routes/${route.id}/token`)}
-            >
-              {t("Rotate token")}
-            </Button>
-          </>
-        )}
         <Button asChild variant="outline" disabled={busy}>
           <ConsoleLink href="/routes">{t("Cancel")}</ConsoleLink>
         </Button>
         <Button type="submit" disabled={busy}>
-          {busy ? t("Saving…") : route ? t("Save route") : t("Create route")}
+          {busy ? t("Saving…") : t("Save")}
         </Button>
       </div>
     </form>

@@ -1,48 +1,91 @@
 export const chinese = {
+  "A valid route token is required": "需要有效的路由令牌",
+  "Route MCP token": "路由 MCP 令牌",
+  "{name}: Route MCP token": "{name}：路由 MCP 令牌",
+  "a13n workspace API key": "a13n 工作空间 API Key",
+  "Paste an API key issued by a13n. Leave empty to keep the saved key.":
+    "粘贴由 a13n 签发的 API Key，留空保留原凭据。",
+  "Replacement a13n API key (optional)": "替换 a13n API Key（可选）",
+  "a13n API URL": "a13n API 地址",
+  "Rotating the token revokes the previous token. Update clients that use this route's credential.":
+    "轮换后旧令牌立即失效，请更新使用此路由凭证的客户端。",
+  "Route token": "路由令牌",
+  "Session management": "会话管理",
+  "Danger zone": "危险操作",
+  "Route management": "路由管理",
+  "Permissions and connections": "权限与连接",
+  "Execution environment": "执行环境",
+  Context: "上下文",
+  Memory: "记忆",
+  Session: "会话",
+  Basic: "基本",
+  "Read only": "只读",
+  "Choose Memory Spaces": "选择记忆空间",
+  "Selected Spaces are read-only. Scoped memory remains writable.":
+    "选中的空间只读，当前作用域记忆可写。",
+  "Remove {name}": "移除 {name}",
+  "Scoped memory requires read-only standalone Agent memory mounts":
+    "作用域记忆要求 Agent 的独立记忆挂载为只读",
+  "Scoped memory requires pinned named subagent revisions":
+    "作用域记忆要求固定具名子智能体的修订版本",
+  "Scoped memory requires an accessible published Agent revision":
+    "作用域记忆需要可访问的已发布 Agent 修订版本",
+  "Host did not return the Agent memory configuration": "宿主未返回 Agent 的记忆配置",
+  "Host did not return the Agent subagent configuration": "宿主未返回 Agent 的子智能体配置",
+  "Existing threads require indefinite retention and their current memory and environment selection.":
+    "已有会话需要持续保留，并使用原记忆与环境选择。",
+  "Host memory selection applies, including its write permissions.":
+    "使用宿主的记忆选择及其写入权限。",
+  "Session idle timeout (minutes)": "会话空闲超时（分钟）",
+  "Default 60. Empty retains the session indefinitely; 0 starts fresh when idle. Active work keeps its session.":
+    "默认 60 分钟。留空持续保留；0 表示空闲后新建。活动任务保留原会话。",
+  "Environment scope": "环境作用域",
+  "Global shared environment": "全局共享环境",
+  "Share files across participating routes and conversations for this Host and Agent.":
+    "此宿主与 Agent 的参与路由和聊天共享文件。",
+  "One environment per conversation": "每个聊天一个环境",
+  "Each group or private chat retains its environment across senders and sessions.":
+    "每个群或私聊跨发送者和会话保留同一环境。",
+  "Follow session lifetime": "跟随会话生命周期",
+  "Each new session gets its own environment. Continuing runs reuse it.":
+    "新会话使用独立环境，续接执行复用原环境。",
+  "Global Memory Spaces": "全局记忆空间",
+  "Shared memory across sources": "跨来源共享记忆",
+  "Required for scoped memory in a shared thread. Source memories are not merged.":
+    "共享会话使用作用域记忆时须开启。不会合并已有来源记忆。",
+  "Each message starts a fresh session with bounded channel history. Environment scope is configured separately.":
+    "每条消息新建会话并附带限定历史，环境作用域独立配置。",
+  "Enter a non-negative idle timeout in minutes, or leave empty.":
+    "请输入非负的空闲超时分钟数，或留空。",
+  "Pinned threads retain their existing memory and environment selection":
+    "固定绑定的已有会话保留原记忆与环境选择",
+  "Pinned threads require indefinite session retention": "固定绑定的已有会话需要持续保留",
+  "Fixed threads require explicit shared memory": "共享会话需要明确启用共享记忆",
+  "Shared threads across conversations require global or session environments":
+    "跨聊天共享会话需要使用全局环境或跟随会话的环境",
+  "Invalid session, memory or environment policy": "会话、记忆或环境策略无效",
+  "Global Memory Spaces require scoped memory": "全局记忆空间需要启用作用域记忆",
+  "Choose distinct global Memory Spaces": "请选择不重复的全局记忆空间",
+  "Origin permission revoked": "发起来源权限已撤销",
+  "Origin context is unavailable or inactive": "发起上下文不可用或已结束",
+
   Model: "模型",
   "API key": "API 密钥",
   Save: "保存",
-  "Model providers": "模型提供方",
-  "Search model providers…": "搜索模型提供方…",
-  "Add model provider": "添加模型提供方",
-  "Edit model provider": "编辑模型提供方",
-  "Text model": "文本模型",
-  "Decision model": "决策模型",
-  "No model providers configured.": "暂无模型提供方",
-  "Use text model": "使用文本模型",
-  "OpenAI-compatible API. Keys are stored on the server and never returned. Routes explicitly select their decision provider.":
-    "兼容 OpenAI 的 API。密钥仅保存在服务端，不会返回。决策提供方由路由选择。",
-  "Test saved models": "测试已保存模型",
-  "Model connection verified": "模型连接已验证",
-  "Delete provider": "删除提供方",
-  "Delete this provider?": "删除此提供方？",
-  "Remove the provider and its saved key. Assigned routes must be updated first.":
-    "删除提供方及其密钥。请先更新引用它的路由。",
-  "New API key (optional)": "新 API 密钥（可选）",
-  "Optional. Uses the text model when omitted.": "可选，留空时使用文本模型。",
-  "Wake decision model": "唤醒决策模型",
+  "Wake decision Agent": "唤醒决策 Agent",
   "Process every message": "处理每条消息",
-  "Filters unrelated messages before Host delivery, including during execution. Model failures retain normal delivery.":
-    "投递前筛选无关消息，执行期间同样生效。模型失败时保持正常投递。",
-  "The provider receives this message and up to eight recent authorized messages.":
-    "提供方会收到当前消息及最多八条近期已授权消息。",
+  "Optional. This Agent decides whether to wake the destination Agent. Decision failures process normally.":
+    "可选。由此 Agent 判断是否唤醒目标 Agent；决策失败时正常唤醒。",
   "Conversation memory": "会话记忆",
   "Use a separate a13n Memory Space for each source conversation. Reuse it across fresh threads. Requires Host memory-space support.":
     "每个来源会话使用独立的 a13n 记忆空间，新建会话时复用。需要宿主支持记忆空间。",
-  "Coordinate long tasks": "协调长任务",
-  "Ask the Agent to delegate long work and keep the coordinator available. Requires configured asynchronous subagents; their tools and environment policy are preserved.":
-    "要求 Agent 委派长任务并保持协调入口可响应。需要已配置异步子智能体，保留其工具与环境策略。",
-  "Model provider is unavailable": "模型提供方不可用",
-  "Model request failed; check the provider and model configuration":
-    "模型请求失败，请检查提供方和模型配置",
-  "Model response exceeds the size limit": "模型响应超过大小限制",
-  "Model provider not found": "未找到模型提供方",
-  "Enter a model API key": "请输入模型 API 密钥",
-  "This provider is assigned to a route": "此提供方已被路由引用",
-  "Choose an existing model provider": "请选择已有模型提供方",
-  "Model decisions and conversation context require an a13n Host":
-    "模型决策和会话上下文需要 a13n 宿主",
-  "Conversation memory requires bounded-history delivery": "会话记忆需要有界历史投递策略",
+  "Agent decisions and conversation context require an a13n Host":
+    "Agent 决策和会话上下文需要 a13n 宿主",
+  "Decision Agent unavailable; processing normally": "决策 Agent 不可用，正常处理消息",
+  "Decision Agent failed; processing normally": "决策 Agent 执行失败，正常处理消息",
+  "Invalid Agent wake decision; processing normally": "Agent 唤醒决策无效，正常处理消息",
+  "Decision Agent input was not executed; processing normally":
+    "决策 Agent 未执行输入，正常处理消息",
   filtered: "已筛选",
   "New private key (optional)": "新私钥（可选）",
   "Reset conversations": "重置会话",
@@ -199,8 +242,8 @@ export const chinese = {
   "All channels includes channels added later.": "全部渠道包含以后新增的渠道。",
   "Delete agent host": "删除 Agent 宿主",
   "Delete agent host {name}?": "删除 Agent 宿主 {name}？",
-  "This removes the host and its credentials, revokes its MCP key, disables assigned routes, and blocks pending work. Message and reply history is retained. This cannot be undone.":
-    "删除宿主及其凭据，撤销 MCP Key，禁用关联路由，并阻止待处理任务。消息和回复历史会保留，此操作无法撤销。",
+  "This removes the host and its credentials, disables assigned routes, and blocks pending work. Message and reply history is retained. This cannot be undone.":
+    "删除宿主及其凭据，禁用关联路由，并阻止待处理任务。消息和回复历史会保留，此操作无法撤销。",
   "Delete route": "删除路由",
   "Delete route {name}?": "删除路由 {name}？",
   "This removes the route and its conversation bindings, revokes its tokens, and blocks pending work. Message and reply history is retained. This cannot be undone.":
@@ -274,14 +317,11 @@ export const chinese = {
   Password: "密码",
   "Restoring session…": "正在恢复登录…",
 
-  "{name}: MCP key": "{name}：MCP Key",
   "Update allowed sender IDs for this client’s conversation.": "更新此客户端会话的允许发送者 ID。",
   "Host type": "宿主类型",
   "a13n API + MCP": "a13n API + MCP",
   "Generic MCP": "通用 MCP",
   "MCP URL": "MCP URL",
-  "MCP key": "MCP Key",
-  "Rotate MCP key": "轮换 MCP Key",
   "Client pulls through MCP": "客户端通过 MCP 读取",
   "Add a channel and an agent host first.": "请先添加渠道和 Agent 宿主。",
   "Choose API + MCP for a13n, or generic MCP for clients such as Codex.":
@@ -290,10 +330,6 @@ export const chinese = {
     "通过 API 投递消息，并可按需接入 MCP 工具。",
   "The client reads authorized conversations through MCP. This does not wake an idle client.":
     "客户端通过 MCP 读取授权会话。此方式不会唤醒空闲客户端。",
-  "Use this host’s MCP key as the bearer credential. It grants access to all enabled routes assigned to this host.":
-    "使用此宿主的 MCP Key 作为 Bearer 凭证，可访问分配给该宿主的所有已启用路由。",
-  "This MCP key is shown once. It identifies the host and grants access to its enabled routes. Store it in your client’s secret configuration.":
-    "此 MCP Key 仅显示一次，用于识别宿主并访问其已启用路由。请保存在客户端的密钥配置中。",
   "Available to client": "可供客户端读取",
 
   "Bot account": "机器人账号",
@@ -535,8 +571,7 @@ export const diagnostics: Record<string, string> = {
   "a13n routes require an agent ID": "a13n 路由需要填写 Agent ID",
   "MCP hosts require MCP replies without a13n bindings":
     "通用 MCP 宿主使用 MCP 回复，无需 a13n 绑定",
-  "MCP hosts use a gateway-issued key and no upstream credentials":
-    "通用 MCP 宿主使用网关生成的 Key，无需上游凭证",
+  "MCP hosts do not use upstream credentials": "通用 MCP 宿主不使用上游凭据",
 
   "Channel connection failed; check credentials and network": "渠道连接失败，请检查凭据和网络",
   "Invalid channel event was ignored": "已忽略无效渠道事件",
@@ -597,8 +632,6 @@ export const diagnostics: Record<string, string> = {
   "Route permission revoked": "路由权限已撤销",
   "a13n did not accept the inbox entry": "a13n 未接受此收件箱消息",
   "Agent run ended without a completed result": "Agent 运行已结束，未产生完整结果",
-  "No supported text reply (or output exceeds 16000 characters)":
-    "没有支持的文本回复，或输出超过 16000 个字符",
   "Route is disabled": "路由已停用",
   "Source permission could not be confirmed": "无法确认来源权限",
   "Delivery not confirmed; verify in the channel before resending":

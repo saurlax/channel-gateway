@@ -127,7 +127,7 @@ history remains available to the administrator. Existing upstream runs and
 messages already sent are unaffected. Adding the account again requires new
 credentials and routes.
 
-The [bridge guide](onebots-a13n.md#mcp-tools-in-a13n) covers the shared MCP
+The [bridge guide](onebots-a13n.md#mcp-tools-in-a13n) covers route-token MCP
 binding, conversation tokens, input retry, and reply diagnostics for all channel types.
 Channel credentials and reply context tokens are not sent to the Agent. Native
 sending retains the same rule: no automatic retry when delivery may have happened.

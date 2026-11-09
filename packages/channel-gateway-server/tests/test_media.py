@@ -113,6 +113,9 @@ def configure(service, kind="onebots", *, read_channel_ids=None, conversation="1
         "/api/v1/routes",
         json={
             "name": "Conversation",
+            "conversation_memory": False,
+            "session_idle_minutes": None,
+            "environment_scope": "session",
             "channel_id": channel["id"],
             "conversation_kind": "group",
             "conversation_id": conversation,
@@ -516,25 +519,11 @@ def test_reactions_require_known_source_messages_and_platform_emoji_ids(service,
         "https://multimedia.nt.qq.com:444/image",
         "https://gchat.qpic.cn/image#secret",
         "https://gchat.qpic.cn\\@127.0.0.1/image",
+        "https://@media.example.test/image",
+        "https://media.example.test/image\n",
     ],
 )
 def test_invalid_media_download_urls_are_rejected(url):
-    assert image_url(url) is None
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        "https://grouptalk.c2c.qq.com:8443/file",
-        "https://user:secret@grouptalk.c2c.qq.com/file",
-        "https://@grouptalk.c2c.qq.com/file",
-        "https://grouptalk.c2c.qq.com/file#fragment",
-        "https://grouptalk.c2c.qq.com/file\n",
-        "https://gzc-download.ftn.qq.com:8443/file",
-        "https://user:secret@gzc-download.ftn.qq.com/file",
-    ],
-)
-def test_media_urls_reject_credentials_fragments_and_nonstandard_ports(url):
     assert image_url(url) is None
 
 

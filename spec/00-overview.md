@@ -38,13 +38,10 @@ the lifecycle that starts an idle Agent run.
 
 ## Management surface
 
-Administrator-managed model providers are exposed at `/api/v1/model-providers`
-and in the `/model-providers` console page. Create and edit inputs accept a secret
-API key; responses expose only `has_api_key`. The provider names a text model and
-an optional decision model, falling back to the text model for decisions.
-`POST /model-providers/{id}/test` tests the saved models with bounded inference.
-Deletion refuses providers assigned to routes. The optional wake policy belongs
-to [routing and delivery](03-routing-and-delivery.md).
+Optional wake decisions call a selected Agent on the route's a13n Host. There
+is no model-provider resource or direct inference credential in CG. The wake
+policy and durable decision lifecycle belong to
+[routing and delivery](03-routing-and-delivery.md).
 
 The current management API uses `/api/v1`. Channel accounts and Agent Hosts share
 a connection resource with channel `kind: onebots`, `qq`, or `weixin`, and Host
@@ -64,8 +61,8 @@ redirected. API and MCP endpoints retain their own routing and authentication.
 | API group                                      | Operations                                                               |
 | ---------------------------------------------- | ------------------------------------------------------------------------ |
 | `/auth/login`, `/auth/session`, `/auth/logout` | Administrator login, session restoration, and revocation                 |
-| `/connections`                                 | List/create/delete connections, replace credentials, rotate Host MCP keys       |
-| `/connections/{id}/host-resources/{resource}` | List a13n Agent/thread choices with server-side credentials |
+| `/connections`                                 | List/create/delete connections, replace upstream credentials       |
+| `/connections/{id}/host-resources/{resource}` | List a13n Agent/thread/Memory Space choices with server-side credentials |
 | `/routes`                                      | List/create/delete routes, update access/binding, and rotate route tokens       |
 | `/events`                                      | List accepted messages and retry failed input delivery                   |
 | `/history`                                     | Read chronological received/reply history for one account conversation |

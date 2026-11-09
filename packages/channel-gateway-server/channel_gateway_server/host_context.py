@@ -8,6 +8,8 @@ from .adapters import AdapterError, HttpAdapters, resource_path
 from .storage import Store
 
 MEMORY_GUIDE = """This Memory Space belongs only to one Channel Gateway conversation and Agent binding.
+Temporary roleplay and persona changes belong to Session notes unless explicitly agreed as lasting
+preferences for this conversation. Never change Agent-wide identity or write to global read-only Spaces.
 Keep confirmed preferences, agreements, decisions, deliverable references and unfinished-work references
 in global/MEMORY.md, with source message IDs where useful. Here global means this conversation only.
 Use session notes for temporary execution details. Never copy private information from other conversations
@@ -25,6 +27,8 @@ async def memory_space(store: Store, adapters: HttpAdapters, host: dict, route: 
         route["conversation_id"],
         message["sender_id"] if route.get("thread_policy") == "sender" else None,
     ]
+    if route.get("thread_policy") == "fixed":
+        identity = [route.get("parent_route_id") or route["id"], host["id"], route["agent_id"], "shared"]
     scope = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
     saved = await store.conversation_memory(scope)
     if saved:
@@ -41,25 +45,21 @@ async def memory_space(store: Store, adapters: HttpAdapters, host: dict, route: 
             host,
             "POST",
             "/memory-spaces",
-            body={"name": "CGW " + scope[:16], "labels": {"cgw-scope": scope}, "guide": MEMORY_GUIDE},
+            body={"name": "CGW " + scope[:16], "labels": {"cgw-scope": scope}, "guidance": {"custom": MEMORY_GUIDE}},
         )
-    if not isinstance(space.get("id"), str) or not space["id"].startswith("mspace_"):
-        raise AdapterError("Invalid conversation Memory Space")
     await store.remember_conversation_memory(scope, space["id"])
     return space["id"]
 
 
-async def active_work(adapters: HttpAdapters, host: dict, thread: dict, *, children: bool) -> bool:
+async def active_work(adapters: HttpAdapters, host: dict, thread: dict) -> bool:
     if thread.get("current_run_id"):
         return True
-    if not children:
-        return False
     session_id = thread.get("session_id")
     if not isinstance(session_id, str):
         raise AdapterError("Host did not return the coordinator session")
     threads: list[dict] = []
     cursor = None
-    for _ in range(20):
+    while True:
         params = {"session_id": session_id, "limit": "100"}
         if cursor:
             params["cursor"] = cursor
@@ -70,9 +70,6 @@ async def active_work(adapters: HttpAdapters, host: dict, thread: dict, *, child
         cursor = page.get("next_cursor")
         if not cursor:
             break
-    else:
-        # An incomplete view cannot establish idleness.
-        raise AdapterError("Host child thread list exceeds the size limit")
     lineage = {thread["id"]}
     for _ in range(len(threads)):
         descendants = {item["id"] for item in threads if item.get("origin_thread_id") in lineage}
@@ -89,3 +86,49 @@ async def active_work(adapters: HttpAdapters, host: dict, thread: dict, *, child
     # A child result may have started the coordinator during the preceding reads.
     latest = await adapters.host(host, "GET", resource_path("threads", thread["id"]))
     return bool(latest.get("current_run_id"))
+
+
+class MemoryPolicyError(AdapterError):
+    """A fixed, credential-free diagnostic for an incompatible Agent definition."""
+
+
+async def memory_safe_revision(adapters: HttpAdapters, host: dict, agent_id: str) -> str:
+    """Reject default standalone writes; empty initial mounts do not suppress them.
+
+    Named children must pin revisions so a later default edit cannot introduce
+    writable standalone memory between this observation and their first run.
+    """
+    agent = await adapters.host(host, "GET", resource_path("agents", agent_id))
+    revision_id = agent.get("default_revision_id")
+    if agent.get("id") != agent_id or agent.get("archived_at") or not isinstance(revision_id, str):
+        raise MemoryPolicyError("Scoped memory requires an accessible published Agent revision")
+    pending = [(agent_id, revision_id)]
+    observed: set[tuple[str, str]] = set()
+    while pending:
+        current_agent, revision = pending.pop()
+        if (current_agent, revision) in observed:
+            continue
+        observed.add((current_agent, revision))
+        value = await adapters.host(
+            host, "GET", resource_path("agents", current_agent) + resource_path("revisions", revision)
+        )
+        config = value.get("config")
+        if not isinstance(config, dict) or not isinstance(config.get("memory_mounts", []), list):
+            raise MemoryPolicyError("Host did not return the Agent memory configuration")
+        if any(
+            not isinstance(mount, dict) or mount.get("access", "write") != "read"
+            for mount in config.get("memory_mounts", [])
+        ):
+            raise MemoryPolicyError("Scoped memory requires read-only standalone Agent memory mounts")
+        subagents = config.get("subagents", {})
+        if not isinstance(subagents, dict) or not isinstance(subagents.get("named", {}), dict):
+            raise MemoryPolicyError("Host did not return the Agent subagent configuration")
+        for child in subagents.get("named", {}).values():
+            if (
+                not isinstance(child, dict)
+                or not isinstance(child.get("agent_id"), str)
+                or not isinstance(child.get("revision_id"), str)
+            ):
+                raise MemoryPolicyError("Scoped memory requires pinned named subagent revisions")
+            pending.append((child["agent_id"], child["revision_id"]))
+    return revision_id

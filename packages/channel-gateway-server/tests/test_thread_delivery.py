@@ -39,7 +39,11 @@ def deliver(gateway, index, *, user=7, conversation=123):
 
 
 def submissions(gateway):
-    return [r for r in gateway[2].requests if r.method == "POST" and not r.url.path.endswith("send_msg")]
+    return [
+        r
+        for r in gateway[2].requests
+        if r.method == "POST" and (r.url.path == "/api/v1/threads" or r.url.path.endswith("/inbox"))
+    ]
 
 
 @pytest.mark.parametrize("policy", ["conversation", "sender", "fixed", "message"])
@@ -311,3 +315,51 @@ def test_fixed_thread_cannot_be_used_with_another_policy_or_generic_host(gateway
         ).status_code
         == 422
     )
+
+
+def test_memory_space_choices_are_scoped_paginated_and_projected(gateway, monkeypatch):
+    import httpx
+
+    client, app, upstream, channel, host = gateway
+    original = type(upstream).__call__
+
+    def catalog(self, request):
+        if request.url.path == "/api/v1/memory-spaces":
+            self.requests.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "mspace_team",
+                            "name": "Team knowledge",
+                            "enabled": True,
+                            "memory_id": "private-store",
+                            "guidance": {"custom": "private instructions"},
+                        },
+                        {"id": "mspace_disabled", "name": "Disabled", "enabled": False},
+                    ],
+                    "next_cursor": "spaces:next&opaque",
+                },
+            )
+        return original(self, request)
+
+    monkeypatch.setattr(type(upstream), "__call__", catalog)
+    path = f"/api/v1/connections/{host['id']}/host-resources/memory-spaces"
+    response = client.get(path, params={"cursor": "spaces:current&opaque"})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "items": [{"id": "mspace_team", "name": "Team knowledge"}],
+        "next_cursor": "spaces:next&opaque",
+    }
+    request = upstream.requests[-1]
+    assert request.url.params["cursor"] == "spaces:current&opaque"
+    assert request.url.params["enabled"] == "true" and request.url.params["limit"] == "50"
+    saved = client.portal.call(app.state.store.connection, host["id"])
+    assert request.headers["authorization"] == "Bearer " + saved["token"]
+    assert "private" not in response.text
+    assert client.get(f"/api/v1/connections/{channel['id']}/host-resources/memory-spaces").status_code == 422
+    before = len(upstream.requests)
+    client.cookies.clear()
+    assert client.get(path).status_code == 401
+    assert len(upstream.requests) == before

@@ -230,12 +230,20 @@ class Bridge:
                 import secrets
 
                 handle = secrets.token_urlsafe(32)
+                continuation = bool(
+                    active_thread
+                    and await self.store.rows(
+                        "SELECT 1 FROM context_positions WHERE thread_id=? AND route_id=?",
+                        (active_thread, route["id"]),
+                    )
+                )
                 body = host_body(
                     message,
                     route,
                     history,
                     origin_context=handle,
                     history_complete=not (active_thread and len(history) == 100),
+                    continuation=continuation,
                 )
                 if route.get("conversation_memory"):
                     from .host_context import memory_safe_revision

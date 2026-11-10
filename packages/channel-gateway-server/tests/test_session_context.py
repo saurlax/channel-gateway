@@ -147,6 +147,41 @@ def test_incremental_context_recovers_chatter_without_repeating_inputs(gateway):
     assert context(submissions(gateway)[2])["history"] == []
 
 
+def test_sixty_minute_thread_receives_bootstrap_once_then_only_message_delta(gateway):
+    configure(gateway, read_channel_ids=["*"], session_idle_minutes=60)
+    gateway[2].unique_threads = True
+    webhook(gateway, message_id=1, text="First")
+    finish(gateway)
+    first = context(submissions(gateway)[0])
+    assert first["instructions"] and first["channel"] == "onebots"
+    for index in (2, 3):
+        webhook(gateway, message_id=index, text=f"Follow-up {index}")
+        finish(gateway)
+        request = submissions(gateway)[index - 1]
+        assert request.url.path == "/api/v1/threads/thread_1/inbox"
+        current = context(request)
+        assert not {"instructions", "channel", "connection_id", "conversation_kind", "channel_history"} & current.keys()
+        assert current["route_id"] == first["route_id"] and current["conversation_id"] == first["conversation_id"]
+        assert current["source_message_id"] == str(index)
+        assert current["origin_context"] != first["origin_context"]
+    expire(gateway)
+    webhook(gateway, message_id=4, text="New window")
+    finish(gateway)
+    assert submissions(gateway)[-1].url.path == "/api/v1/threads"
+    assert context(submissions(gateway)[-1])["instructions"]
+
+
+def test_fixed_thread_keeps_source_account_identity_on_continuation(gateway):
+    configure(gateway, thread_policy="fixed", conversation_memory=False, environment_scope="session")
+    for index, conversation in enumerate([123, 124, 123], start=1):
+        webhook(gateway, message_id=index, conversation=conversation)
+        finish(gateway)
+    current = context(submissions(gateway)[-1])
+    assert "instructions" not in current
+    assert current["conversation_id"] == "123" and current["channel"] == "onebots"
+    assert current["connection_id"] == gateway[3]["id"]
+
+
 def test_memory_uses_scoped_write_and_explicit_read_only_global_spaces(gateway):
     configure(gateway, conversation_memory=True, global_memory_space_ids=["mspace_global"], session_idle_minutes=0)
     webhook(gateway, message_id=1, text="Act as a catgirl")

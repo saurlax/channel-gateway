@@ -28,7 +28,10 @@ hint, not additional route or reply authority.
 Messages project bounded text, images, audio, video, files, received cards, and
 quoted/nested message content. The verified outer author is authoritative.
 Attachments retain private source URLs and expose opaque indices and safe metadata
-in history. Native Host URL parts carry supported attachments; MCP can retrieve
+in history. Native Host URL parts carry images; non-image attachments remain
+message/index references until explicitly read through MCP. This avoids eager
+video/file downloads during Host input acceptance, including generic `file`
+attachments whose filename is a video. MCP can retrieve
 bounded attachment bytes separately. Private authentication fields are removed
 from structured projections. Unsupported packets remain in the private raw journal.
 Direct and quoted group files use the same attachment projection, including
@@ -38,8 +41,9 @@ provider domain; they follow the shared public-media URL validation and
 credential-free, bounded download rules. Empty direct or quoted text must not
 discard a supported attachment.
 Verified Host context includes each attachment's index, kind, media type, and
-filename. A Host can place video and documents in its sandbox for command-based
-parsing without passing their raw binary contents to the primary model. A generic
+filename. An Agent can obtain the temporary source URL for configured media tools
+or download a file into an available sandbox on demand. The primary model's video
+support is not assumed. A generic
 CDN Content-Type must not replace a more specific authenticated attachment type
 in MCP reads. UTF-8 text attachments return text resources rather than binary
 model input; other attachments retain typed native resources.

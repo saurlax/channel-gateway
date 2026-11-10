@@ -51,11 +51,21 @@ Old database backups may still contain retired model credentials.
 ## Input presentation
 
 CG submits the current message, bounded channel history and source metadata
-together as one contextual input. Images and files retain their media parts.
+together as one contextual input. Images retain their media parts. Videos, audio
+and files are lightweight attachment references; use `read` to obtain their source
+URLs or contents when needed. They are not eagerly downloaded by the Host before
+the Agent can respond.
 Large snapshots use one structured input rather than dropping history or adding
 separate supplemental instructions. Messages arriving during execution still
 follow **Messages during execution**; Host tool-completion notifications are
 independent of initial input packaging.
+
+The first input for a source in a Thread includes brief setup instructions. While
+the Thread is retained, subsequent inputs carry only current message identifiers,
+media references and history collected since the previous accepted input. Setup,
+memory policy and execution provenance are not repeated. A fresh Thread after
+idle rollover or reset receives setup again. Subagent Run/Session identifiers
+come from the Host's delegation tools, not the channel message envelope.
 
 ## Keep memory across sessions
 

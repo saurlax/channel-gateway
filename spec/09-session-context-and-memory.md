@@ -177,12 +177,25 @@ one contextual content part. Within that part, distinguish the current message
 from untrusted historical and structured data. Use one text part within the Host's
 65,536-character limit, or one JSON part for a larger complete snapshot; never
 split context into supplemental instructions or silently truncate it. Media keeps
-its native URL parts. This changes input presentation, not the independent
+its native URL parts for images. Non-image attachments use message/index references
+and are fetched only on demand. This changes input presentation, not the independent
 steer/queue policy or Host-owned tool-completion notifications. Frozen submissions
 keep their original representation and idempotency key across upgrades and retries.
 Retain existing chronological ordering, media projection, exact
 source scope and current read checks. A message-count bound is not a token bound
 or proof that the supplied history is complete.
+
+Only the first gateway input accepted for a concrete source in a Thread includes
+the brief bootstrap instructions and static channel/account/kind identifiers.
+Continuations retain the current route, conversation, sender, message and opaque
+initiating-context handle, with current media references and newly collected
+history only. Empty history and media fields are omitted. Fixed shared Threads
+retain account/channel/kind identifiers on every source message. Existing pinned
+Threads receive the bootstrap on their first CG input; reset and idle rollover
+start a new bootstrap. Host-owned memory guidance and delegation tools supply
+memory policy and child execution identifiers rather than repeating them in each
+message. Automatic history omits ledger IDs and verbose Run/Thread/Session
+provenance; full provenance remains available through authorized MCP history reads.
 
 For continuation, attach only authorized channel records not previously accepted
 into that Session's context. This includes intervening collected messages and

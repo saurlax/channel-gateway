@@ -48,6 +48,11 @@ are never rewritten on retry. Generic MCP Hosts use `read(resource='image')`. Im
 messages use a compact `[Image]` activity summary and enter the same route workflow
 as text. Image bytes are not fetched or stored inside an ingestion transaction.
 
+Non-image attachments are delivered as compact message/index references, not
+native Host URL parts. Video, audio and file contents are read only when requested
+through the existing attachment tools. Their download or parsing errors do not
+prevent the initial text/reference input from reaching the Agent.
+
 ## Agent tools and authority
 
 `discover(resource='conversations')` includes channel capability information, distinguishing

@@ -118,8 +118,9 @@ a URL-based gateway send avoids reuploading that local copy but does not disable
 the CLI download. Verify the installed CLI/server response rather than inventing
 an artifact URL or a fixed expiry time.
 
-Inbound QQ media also reaches a13n as URL parts without a CG download. a13n may
-fetch the URL to supply model content or a sandbox file. For direct QQ → media
+Inbound QQ images reach a13n as native URL parts without a CG download. Non-image
+attachments reach it as message/index references, avoiding eager video or file
+downloads before the Agent starts. For direct QQ → media
 service processing, use `read` for the original received image/attachment with
 `representation: "url"`, then pass that private source URL to the service. This
 does not guarantee that another service can fetch QQ's expiring CDN links.
@@ -203,11 +204,11 @@ arguments={"source_message_id": "ID", "attachment_index": 0}, route_id=...)` ret
 resource, at most 16 MiB. UTF-8 text files return text resources. Generic binary
 CDN headers are resolved using the authenticated attachment type, common media
 signatures, and filename. Reads recheck current authority after download and
-never accept arbitrary source URLs. a13n receives native URL and JSON input parts;
-its model and outbound endpoint policy determine how these are consumed.
-For video and documents, let a13n place the delivered attachment in the Agent's
-sandbox. Use sandbox commands to inspect files, extract video frames, and parse
-documents. A video-specific model is optional; an image-capable primary model
+never accept arbitrary source URLs. a13n receives images as native URL parts and
+other media as attachment references in the contextual input.
+For video and documents, obtain the source URL for configured media tools or
+download the file into an available sandbox. Sandbox commands can inspect files,
+extract video frames, and parse documents. An image-capable primary model
 can inspect extracted frames. a13n's configured media-understanding models are
 used by its file tools, not an automatic fallback for arbitrary MCP binary output.
 Do not call `read(resource="attachment")` with an unsupported binary type directly into a

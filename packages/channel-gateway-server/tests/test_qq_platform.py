@@ -681,7 +681,7 @@ def test_qq_full_message_mentions_reach_history_and_host(platform, kind, mention
     assert message.bot_mentioned is expected
     parts = host_body(message.model_dump(mode="json"), route)["payload"]["content"]
     context = json.loads(parts[0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
-    assert context["bot_mentioned"] is expected
+    assert context.get("bot_mentioned") is expected
     history = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"]
     actual = next(item for item in history if item["source_message_id"] == packet["d"]["id"])
     assert actual["bot_mentioned"] is expected
@@ -709,7 +709,7 @@ def test_qq_sticker_image_reaches_host_with_readable_label(platform, mime):
     parts = host_body(message.model_dump(mode="json"), route)["payload"]["content"]
     assert parts[1:] == [{"type": "url", "url": CDN}]
     context = json.loads(parts[0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
-    assert context["image_count"] == 1 and "sticker artwork" in context["media_access"]["instruction"]
+    assert context["image_count"] == 1 and "Read media" in context["instructions"]
     assert not platform[2].uploads
 
 
@@ -759,6 +759,52 @@ def test_qq_attachment_url_read_reuses_source_without_downloading(platform):
         resource="attachment",
         arguments={"source_message_id": "source1", "representation": "url"},
     ).get("isError")
+
+
+@pytest.mark.parametrize(
+    "mime,filename", [("video/mp4", "large.mp4"), ("file", "large.mp4"), ("audio/wav", "large.wav")]
+)
+def test_large_media_is_a_host_reference_with_lazy_url_access(platform, mime, filename):
+    client, _, provider, *_ = platform
+    host = client.post(
+        "/api/v1/connections",
+        json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "host-token"},
+    ).json()
+    route = configure(platform, "private", host_id=host["id"], agent_id="agent1")
+    incoming(
+        platform,
+        "private",
+        content="Please inspect this file",
+        attachments=[
+            {
+                "content_type": mime,
+                "filename": filename,
+                "url": CDN,
+                "size": 50 * 1024 * 1024,
+            }
+        ],
+    )
+    tick(platform)
+    request = next(r for r in provider.requests if r.url.host == "host.test" and r.method == "POST")
+    parts = json.loads(request.content)["payload"]["content"]
+    assert len(parts) == 1 and parts[0]["type"] == "text"
+    assert CDN not in parts[0]["text"] and filename in parts[0]["text"]
+    assert not provider.uploads
+    result = decoded(
+        call(
+            platform,
+            route,
+            "read",
+            resource="attachment",
+            arguments={
+                "source_message_id": "source1",
+                "attachment_index": 0,
+                "representation": "url",
+            },
+        )
+    )
+    assert result["url"] == CDN and result["temporary"] is True
+    assert not provider.uploads
 
 
 @pytest.mark.parametrize("kind", ["group", "private"])
@@ -948,7 +994,7 @@ def test_qq_group_file_cdn_reaches_history_attachment_reads_and_host(platform, q
     tick(platform)
     request = next(r for r in provider.requests if r.url.host == "host.test" and r.method == "POST")
     body = json.loads(request.content)
-    assert body["payload"]["content"][1] == {"type": "url", "url": url}
+    assert len(body["payload"]["content"]) == 1
     context = json.loads(body["payload"]["content"][0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
     assert context["attachments"] == history["attachments"]
 
@@ -988,7 +1034,7 @@ def test_qq_private_video_file_reaches_console_mcp_and_host_without_a_domain_all
     tick(platform)
     request = next(r for r in provider.requests if r.url.host == "host.test" and r.method == "POST")
     body = json.loads(request.content)
-    assert body["payload"]["content"][1] == {"type": "url", "url": url}
+    assert len(body["payload"]["content"]) == 1
     context = json.loads(body["payload"]["content"][0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
     assert context["attachments"] == history[0]["attachments"]
 
@@ -1374,7 +1420,8 @@ def test_only_proactive_tool_send_publishes_and_final_output_is_ignored(platform
     tick(platform)
     submission = next(r for r in platform[2].requests if r.url.host == "host.test" and r.method == "POST")
     context_text = json.loads(submission.content)["payload"]["content"][0]["text"]
-    assert "reply_source" not in context_text and '"default_delivery": "proactive"' in context_text
+    assert "reply_source" not in context_text and "default_delivery" not in context_text
+    assert "Reply via send_message" in context_text
     bodies = [json.loads(r.content) for r in sent_messages(platform)]
     assert len(bodies) == 1
     assert (

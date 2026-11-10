@@ -824,10 +824,9 @@ def test_host_delivery_uses_media_handles_and_tool_reply(platform_gateway):
     assert [part["type"] for part in content] == ["text"]
     context = json.loads(content[0]["text"].split("\n", 1)[1].split("\n\nMessage:", 1)[0])
     assert context["origin_context"]
-    assert context["channel_history"] == []
+    assert "channel_history" not in context
     assert context["source_message_id"] == MID[kind] and context["image_count"] == 1
-    assert context["media_access"]["tool"] == "read"
-    assert context["media_access"]["source"] == "gateway"
+    assert "Read media" in context["instructions"]
     assert "files.slack.com" not in content[0]["text"] and "lark-resource:" not in content[0]["text"]
     assert not tool(platform_gateway, "send_message", content=[{"type": "text", "text": "Explicit reply"}]).get(
         "isError"

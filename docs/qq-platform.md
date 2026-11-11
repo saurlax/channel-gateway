@@ -198,6 +198,10 @@ including on `grouptalk.c2c.qq.com`. Received media URLs have no domain allowlis
 public HTTPS addresses are accepted under the shared URL and download limits.
 Attachment-only messages appear in Messages and activate matching routes.
 
+Received QQ chat records and quotes appear in Messages and Agent context.
+Nested entries are indented when QQ includes their contents in the event.
+If QQ supplies only a preview, the gateway displays the available text.
+
 `read(resource="messages")` exposes image and attachment indices and sanitized card data.
 `read(resource="image")` returns image pixels; `read(resource="attachment",
 arguments={"source_message_id": "ID", "attachment_index": 0}, route_id=...)` returns native MCP audio or an embedded file

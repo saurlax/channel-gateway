@@ -27,6 +27,10 @@ hint, not additional route or reply authority.
 
 Messages project bounded text, images, audio, video, files, received cards, and
 quoted/nested message content. The verified outer author is authoritative.
+QQ chat records (`message_type: 102`) are labeled in projected text, with
+descendants from `msg_elements` indented in source order. The gateway expands
+the contents supplied in the event. Expansion is limited to 32 levels of
+elements and 60,000 projected text characters, with markers for truncation.
 Attachments retain private source URLs and expose opaque indices and safe metadata
 in history. Native Host URL parts carry images; non-image attachments remain
 message/index references until explicitly read through MCP. This avoids eager

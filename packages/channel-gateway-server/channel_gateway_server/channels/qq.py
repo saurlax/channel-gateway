@@ -29,6 +29,7 @@ QQ_API = "https://api.sgroup.qq.com"
 QQ_TOKEN = "https://bots.qq.com/app/getAppAccessToken"
 QQ_INTENTS = sum(1 << bit for bit in (0, 10, 12, 25, 26, 27, 30))
 QQ_ALL_INTENTS = sum(1 << bit for bit in (0, 1, 9, 10, 12, 18, 19, 25, 26, 27, 28, 29, 30))
+QQ_NESTED_MESSAGE_DEPTH = 32
 
 
 def face_text(text: str) -> str:
@@ -149,24 +150,35 @@ def qq_message(event: dict, connection: dict) -> Message | None:
     if isinstance(data.get("ark_data"), dict):
         structured["card"] = safe_result(data["ark_data"])
 
-    def nested(items, depth=0):
-        if depth > 4 or not isinstance(items, list):
+    def nested(items: object, depth: int = 0) -> list[str]:
+        if not isinstance(items, list):
             raise ValueError("Invalid nested QQ message")
+        indent = "  " * depth
+        if depth >= QQ_NESTED_MESSAGE_DEPTH:
+            return [indent + "[Nested messages truncated]"]
         output = []
         for item in items:
             if not isinstance(item, dict):
                 continue
-            if isinstance(item.get("content"), str):
-                output.append(face_text(item["content"]))
+            content = item.get("content")
+            children = item.get("msg_elements")
+            if item.get("message_type") == 102:
+                output.append(indent + "[Chat history]")
+            if isinstance(content, str) and content.strip():
+                output.extend(indent + line for line in face_text(content).split("\n"))
             raw_attachments.extend(item.get("attachments") or [])
-            if item.get("msg_elements"):
-                output.extend(nested(item["msg_elements"], depth + 1))
+            if children:
+                output.extend(nested(children, depth + 1))
         return output
 
     if data.get("msg_elements"):
         quoted = nested(data["msg_elements"])
         if quoted:
-            text += "\n[Quoted content]\n" + "\n".join(quoted)
+            label = "[Chat history]" if data.get("message_type") == 102 else "[Quoted content]"
+            text = (text + "\n" if text else "") + label + "\n" + "\n".join(quoted)
+            if len(text) > 60000:
+                marker = "\n[Message truncated]"
+                text = text[: 60000 - len(marker)] + marker
     images = image_attachments(
         [
             item.get("url")
@@ -195,6 +207,8 @@ def qq_message(event: dict, connection: dict) -> Message | None:
                     filename=item.get("filename") or "attachment",
                 )
             )
+            if len(attachments) == 16:
+                break
     if not text.strip() and not images and not attachments and not structured:
         return None
     reference_id = None

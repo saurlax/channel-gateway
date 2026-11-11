@@ -730,6 +730,68 @@ def test_qq_face_labels_do_not_invent_images_and_preserve_quoted_stickers(platfo
     assert len(message.images) == 1
 
 
+def test_qq_nested_chat_history_reaches_console_mcp_and_host(platform):
+    client, _, provider, channel, _ = platform
+    host = client.post(
+        "/api/v1/connections",
+        json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "host-token"},
+    ).json()
+    route = configure(platform, host_id=host["id"], agent_id="agent1")
+    element = {
+        "content": "Deep message",
+        "attachments": [
+            {"content_type": "image/png", "url": CDN},
+            {"content_type": "file", "url": CDN, "filename": "notes.txt"},
+        ],
+        "author": {"member_openid": "inner"},
+    }
+    for _ in range(6):
+        element = {"message_type": 102, "msg_elements": [element]}
+    incoming(platform, content=" ", message_type=102, msg_elements=[element, {"content": "Next message"}])
+    expected = "\n".join(
+        [
+            "[Chat history]",
+            *("  " * depth + "[Chat history]" for depth in range(6)),
+            "            Deep message",
+            "Next message",
+        ]
+    )
+    history = client.get(
+        "/api/v1/history",
+        params={"channel_id": channel["id"], "conversation_kind": "group", "conversation_id": "123"},
+    ).json()["messages"]
+    assert history[0]["text"] == expected
+    message = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"][0]
+    assert message["text"] == expected and message["sender_id"] == "7"
+    assert len(message["images"]) == 1 and message["attachments"][0]["filename"] == "notes.txt"
+    tick(platform)
+    request = next(r for r in provider.requests if r.url.host == "host.test" and r.method == "POST")
+    parts = json.loads(request.content)["payload"]["content"]
+    assert parts[0]["text"].endswith("\n\nMessage:\n" + expected)
+    assert parts[1:] == [{"type": "url", "url": CDN}]
+    assert not provider.uploads
+
+
+def test_qq_oversized_nested_history_keeps_outer_message_and_later_siblings(platform):
+    element = {"content": "Beyond the depth limit"}
+    for _ in range(40):
+        element = {"msg_elements": [element]}
+    packet = incoming(platform, msg_elements=[element, {"content": "Sibling"}])
+    message = qq_message(packet, {"id": "account"})
+    assert message.text.startswith("Hello\n[Quoted content]\n")
+    assert message.text.endswith("[Nested messages truncated]\nSibling")
+
+    packet["d"]["msg_elements"] = [
+        {
+            "content": "x" * 60000,
+            "attachments": [{"content_type": "file", "url": CDN, "filename": "notes.txt"}] * 17,
+        }
+    ]
+    message = qq_message(packet, {"id": "account"})
+    assert len(message.text) == 60000 and message.text.endswith("[Message truncated]")
+    assert len(message.attachments) == 16
+
+
 def test_qq_attachment_url_read_reuses_source_without_downloading(platform):
     route = configure(platform)
     incoming(platform, attachments=[{"content_type": "video/mp4", "filename": "clip.mp4", "url": CDN}])

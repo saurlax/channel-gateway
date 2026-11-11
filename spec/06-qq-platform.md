@@ -31,6 +31,14 @@ QQ chat records (`message_type: 102`) are labeled in projected text, with
 descendants from `msg_elements` indented in source order. The gateway expands
 the contents supplied in the event. Expansion is limited to 32 levels of
 elements and 60,000 projected text characters, with markers for truncation.
+QQ can also supply a flattened chat record in `content`. For a record marked
+`message_type: 102`, formatted image attachment lines with a signed
+`https://multimedia.nt.qq.com.cn/download` URL are rendered as image markers.
+The gateway projects those URLs through the normal private image path in source
+order, after structured images, skipping duplicates and using the remaining
+image slots. QQ download URLs in these lines are also hidden when their query
+parameters are unsupported. Ordinary links in the record remain text. A text-only preview
+without image attachment data cannot supply images.
 Attachments retain private source URLs and expose opaque indices and safe metadata
 in history. Native Host URL parts carry images; non-image attachments remain
 message/index references until explicitly read through MCP. This avoids eager

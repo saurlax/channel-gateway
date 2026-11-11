@@ -772,6 +772,59 @@ def test_qq_nested_chat_history_reaches_console_mcp_and_host(platform):
     assert not provider.uploads
 
 
+def test_qq_flattened_chat_history_delivers_nested_image(platform):
+    client, _, provider, channel, _ = platform
+    host = client.post(
+        "/api/v1/connections",
+        json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "host-token"},
+    ).json()
+    route = configure(platform, kind="private", host_id=host["id"], agent_id="agent1")
+    url = "https://multimedia.nt.qq.com.cn/download?appid=1&fileid=image&rkey=signature&spec=0"
+    other_url = "https://example.test/download?appid=1&fileid=image&rkey=signature&spec=0"
+    attachment = "    [附件1] 类型:图片 文件名:photo.jpg 尺寸:887x1920 大小:127.6KB URL:"
+    preview = (
+        "[QQ用户的聊天记录]\n=== 消息 1 ===\n[消息内容] Nested message\n[发送者] QQ用户\n"
+        "[消息类型] 聊天记录\n[关联消息]\n--- 第1条 ---\n    [发送者] QQ用户\n"
+    )
+    incoming(
+        platform,
+        kind="private",
+        message_type=102,
+        content=preview + attachment + url + "\n" + attachment + url + "&extra=1\n" + attachment + other_url,
+    )
+    history = client.get(
+        "/api/v1/history",
+        params={"channel_id": channel["id"], "conversation_kind": "private", "conversation_id": "7"},
+    ).json()["messages"][0]
+    assert history["text"] == preview + "    [Image]\n    [Image unavailable]\n" + attachment + other_url
+    message = decoded(call(platform, route, "read", resource="messages", arguments={}))["messages"][0]
+    assert message["text"] == history["text"]
+    assert message["images"] == [{"index": 0}]
+    tick(platform)
+    request = next(r for r in provider.requests if r.url.host == "host.test" and r.method == "POST")
+    parts = json.loads(request.content)["payload"]["content"]
+    assert url not in parts[0]["text"]
+    assert parts[1:] == [{"type": "url", "url": url}]
+
+
+def test_qq_flattened_chat_history_uses_remaining_image_slots(platform):
+    url = "https://multimedia.nt.qq.com.cn/download?appid=1&fileid={}&rkey=signature"
+    attachment = "[附件1] 类型:图片 文件名:photo.jpg 尺寸:1x1 大小:50B URL:"
+    packet = incoming(
+        platform,
+        message_type=102,
+        attachments=[{"content_type": "image/png", "url": url.format(0)}],
+        content="\r\n".join(attachment + url.format(index) for index in (0, 1, 1, 2, 3, 4, 5)),
+    )
+    message = qq_message(packet, {"id": "account"})
+    assert [image.url for image in message.images] == [url.format(index) for index in range(4)]
+    assert message.text.splitlines() == ["[Image]"] * 7
+
+    packet["d"]["message_type"] = 0
+    direct = qq_message(packet, {"id": "account"})
+    assert len(direct.images) == 1 and direct.text == packet["d"]["content"]
+
+
 def test_qq_oversized_nested_history_keeps_outer_message_and_later_siblings(platform):
     element = {"content": "Beyond the depth limit"}
     for _ in range(40):

@@ -18,6 +18,13 @@ Host delivery, agent-facing tools, and process lifecycle separate.
 `spec/` owns accepted technical contracts; `docs/` owns user instructions.
 Keep proposals and unresolved decisions in Issues, not specifications. Do not
 turn a planned transport or integration into an implemented-feature claim.
+Specifications contain durable, project-wide contracts. Keep local paths,
+temporary diagnostics, session transcripts, and private environment details out
+of `spec/`.
+
+Track only project source, tests and synthetic fixtures, shared configuration,
+and project documentation. Keep credentials, real user data, local artifacts,
+and personal operations such as private deployments outside the repository.
 
 ## Changes
 
@@ -29,6 +36,10 @@ Keep the core independent of FastAPI, a13n, and individual channel SDKs.
 Run checks for the affected surface and report actual outcomes. Local editing does
 not authorize commits, pushes, GitHub writes, deployments, or releases. Carry out
 those stages only when the user has authorized them.
+
+When work is ready to commit, have a subagent review the complete intended diff,
+including tests and documentation. Address actionable findings and have material
+fixes reviewed before committing.
 
 ## Console management interfaces
 

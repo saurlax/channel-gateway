@@ -9,8 +9,8 @@ Images do not add trigger sources, read grants, or reply destinations.
 
 Normalized images retain a private download URL. Management and MCP history expose
 only a zero-based image index, never that URL. Original packets remain in the
-private event journal. Only image attachments explicitly received from an
-authenticated channel are readable; tools accept no arbitrary download URL.
+private event journal. Only image references projected from an authenticated
+channel event are readable. Tools accept no arbitrary download URL.
 PNG, JPEG, GIF, and WebP are readable through MCP, bounded to 4 MiB per image. Attachments are
 not eagerly downloaded during ingestion. Expired, oversized, unsupported, or
 unavailable images produce a tool error without losing the original message.
@@ -27,14 +27,17 @@ already returned; expiry is controlled by the channel and no renewal is promised
 
 ## Projection and Host delivery
 
-QQ projects image `attachments`; OneBot projects `image` segments from arrays or
-CQ strings. Received HTTP URLs are upgraded to HTTPS. Public media URLs have no
-provider domain allowlist. Embedded credentials, fragments, nonstandard ports,
+QQ projects image `attachments` and the formatted image references described in
+the [QQ chat record contract](06-qq-platform.md#conversation-identity-and-ingestion).
+OneBot projects `image` segments from arrays or CQ strings. Received HTTP URLs
+are upgraded to HTTPS. Structured media URLs have no provider domain allowlist.
+Embedded credentials, fragments, nonstandard ports,
 local hostnames, and non-global IP literals are rejected. Local paths and base64
 input segments are not downloadable attachments. Unsupported attachments remain
-in the raw journal. More than four supported images invalidates projection rather
-than silently dropping content. Ordinary OneBot `face` segments project as
-`[face:ID]` text; sending faces and reacting to an existing message are distinct.
+in the raw journal. More than four structured images invalidates projection.
+QQ chat record image references use the remaining slots. Ordinary OneBot `face`
+segments project as `[face:ID]` text; sending faces and reacting to an existing
+message are distinct.
 QQ `faceType` markers render as readable emoji/sticker labels, including in quoted
 content. They never suppress accompanying image attachments or invent pixels for
 an emoji that has no attachment. JPEG and GIF sticker attachments use the same

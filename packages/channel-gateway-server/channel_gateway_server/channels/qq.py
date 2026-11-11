@@ -9,16 +9,16 @@ import time
 from contextlib import suppress
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
-from channel_gateway_core import Attachment, ChannelAddress, Message
+from channel_gateway_core import Attachment, ChannelAddress, ImageAttachment, Message
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from websockets.exceptions import ConnectionClosed
 
 from ..adapters import AdapterError
-from ..media import decode_media, image_attachments, image_url
+from ..media import MAX_MESSAGE_IMAGES, decode_media, image_attachments, image_url
 from ..storage import Store
 from .common import OperationRejected, SendBlocked, identifier, response_object
 from .ingress import ProjectionError, begin_event, event_type, ingest_parsed
@@ -30,6 +30,35 @@ QQ_TOKEN = "https://bots.qq.com/app/getAppAccessToken"
 QQ_INTENTS = sum(1 << bit for bit in (0, 10, 12, 25, 26, 27, 30))
 QQ_ALL_INTENTS = sum(1 << bit for bit in (0, 1, 9, 10, 12, 18, 19, 25, 26, 27, 28, 29, 30))
 QQ_NESTED_MESSAGE_DEPTH = 32
+QQ_HISTORY_IMAGE = re.compile(
+    r"^([ \t]*)\[附件[1-9][0-9]*\] 类型:图片 文件名:[^\r\n]+?"
+    r" 尺寸:[0-9]+x[0-9]+ 大小:[0-9]+(?:\.[0-9]+)?(?:B|KB|MB|GB) URL:(https://\S+)(?=\r?$)",
+    re.MULTILINE,
+)
+
+
+def chat_history_images(text: str, urls: dict[str, None]) -> str:
+    """Extract the QQ download URLs serialized in a chat record's attachment lines."""
+
+    def replace(match: re.Match[str]) -> str:
+        url = image_url(match[2])
+        if url is None:
+            return match[0]
+        parsed = urlsplit(url)
+        if parsed.hostname != "multimedia.nt.qq.com.cn" or parsed.path != "/download":
+            return match[0]
+        if parsed.query.count("&") >= 4:
+            return match[1] + "[Image unavailable]"
+        query = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=4)
+        if not {"appid", "fileid", "rkey"} <= query.keys() <= {"appid", "fileid", "rkey", "spec"} or any(
+            len(values) != 1 or not values[0] for values in query.values()
+        ):
+            return match[1] + "[Image unavailable]"
+        if len(urls) < MAX_MESSAGE_IMAGES:
+            urls.setdefault(url, None)
+        return match[1] + "[Image]"
+
+    return QQ_HISTORY_IMAGE.sub(replace, text)
 
 
 def face_text(text: str) -> str:
@@ -144,6 +173,9 @@ def qq_message(event: dict, connection: dict) -> Message | None:
     text = data.get("content") or ""
     if not isinstance(text, str):
         raise ValueError("Invalid QQ message text")
+    history_image_urls: dict[str, None] = {}
+    if data.get("message_type") == 102:
+        text = chat_history_images(text, history_image_urls)
     text = face_text(re.sub(r"<@!?" + re.escape(str(connection.get("self_id") or "")) + r">", "", text)).strip()
     raw_attachments = list(data.get("attachments") or [])
     structured = {}
@@ -164,6 +196,8 @@ def qq_message(event: dict, connection: dict) -> Message | None:
             children = item.get("msg_elements")
             if item.get("message_type") == 102:
                 output.append(indent + "[Chat history]")
+                if isinstance(content, str):
+                    content = chat_history_images(content, history_image_urls)
             if isinstance(content, str) and content.strip():
                 output.extend(indent + line for line in face_text(content).split("\n"))
             raw_attachments.extend(item.get("attachments") or [])
@@ -186,6 +220,9 @@ def qq_message(event: dict, connection: dict) -> Message | None:
             if isinstance(item, dict) and str(item.get("content_type", "")).startswith("image/")
         ]
     )
+    structured_image_urls = {image.url for image in images}
+    history_images = [ImageAttachment(url=url) for url in history_image_urls if url not in structured_image_urls]
+    images += tuple(history_images[: MAX_MESSAGE_IMAGES - len(images)])
     attachments = []
     for item in raw_attachments:
         if not isinstance(item, dict):

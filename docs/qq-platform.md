@@ -200,7 +200,10 @@ Attachment-only messages appear in Messages and activate matching routes.
 
 Received QQ chat records and quotes appear in Messages and Agent context.
 Nested entries are indented when QQ includes their contents in the event.
-If QQ supplies only a preview, the gateway displays the available text.
+The gateway also extracts supported QQ image references from formatted attachment
+lines in flattened chat records, up to the message's four-image limit.
+If QQ supplies a text preview without image data, send the image directly to
+make it available to the Agent.
 
 `read(resource="messages")` exposes image and attachment indices and sanitized card data.
 `read(resource="image")` returns image pixels; `read(resource="attachment",

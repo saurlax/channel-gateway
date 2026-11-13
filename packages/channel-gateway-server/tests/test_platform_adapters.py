@@ -791,7 +791,7 @@ def test_discord_resume_advances_only_after_durable_ingress(platform_gateway, mo
         await runtime.run(resume)
         assert resume.sent[0]["op"] == 6 and resume.sent[0]["d"]["seq"] == 2
 
-        async def fail(*_args):
+        async def fail(*_args, **_kwargs):
             raise OSError("disk unavailable")
 
         with monkeypatch.context() as patch:

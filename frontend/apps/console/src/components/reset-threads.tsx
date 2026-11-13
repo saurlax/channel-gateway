@@ -51,7 +51,7 @@ export function ResetThreads({
           <AlertDialogTitle>{t("Reset this route's conversations?")}</AlertDialogTitle>
           <AlertDialogDescription>
             {t(
-              "All conversation and sender threads on this route will be reset. Future messages start new Agent threads. Message history is retained. Pending messages must finish first.",
+              "This immediately resets all conversation and sender threads on this route. New deliveries start fresh threads. Active runs can still reply. Message history is retained.",
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>

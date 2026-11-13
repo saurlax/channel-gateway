@@ -935,14 +935,18 @@ class Store:
         bindings = {row["binding_key"]: row["thread_id"] for row in await self.rows("SELECT * FROM thread_bindings")}
         work = await self.rows("""SELECT rowid AS sequence,id,route_id,state,thread_id,target,
             json_extract(message,'$.sender_id') AS sender_id,
-            body IS NOT NULL AS frozen,json_extract(body,'$.delivery') AS delivery
+            body IS NOT NULL AS frozen,json_extract(body,'$.delivery') AS delivery,
+            EXISTS(SELECT 1 FROM event_thread_bindings WHERE event_id=events.id) AS attached
             FROM events WHERE state IN ('queued','submitted') ORDER BY rowid""")
         scopes: dict[tuple, list[dict]] = {}
         for event in work:
             route = routes.get(event["route_id"])
             if not route:
                 continue
-            key = thread_binding_key(route, {"sender_id": event["sender_id"]})
+            # Detached creation retries have no Thread ID yet. Keep them out of
+            # the new binding's queue, while frozen inbox requests use their target.
+            detached = event["frozen"] and not event["attached"]
+            key = None if detached else thread_binding_key(route, {"sender_id": event["sender_id"]})
             target = event["target"] or ""
             pinned = (
                 unquote(target[len("/threads/") : -len("/inbox")])
@@ -950,7 +954,7 @@ class Store:
                 else None
             )
             thread = event["thread_id"] or pinned
-            if not thread:
+            if not thread and not detached:
                 thread = bindings.get(key) if key else None
                 if route.get("thread_policy", "conversation") == "fixed":
                     thread = route.get("fixed_thread_id") or thread
@@ -1386,7 +1390,7 @@ class Store:
 
     async def prepare_delivery(
         self, event: dict, route: dict, body: dict, *, active_thread_id: str | None = None
-    ) -> str:
+    ) -> str | None:
         """Freeze a target, payload and binding scope before any external request."""
         key = thread_binding_key(route, json.loads(event["message"]))
         owner = route.get("parent_route_id") or route["id"]
@@ -1396,6 +1400,18 @@ class Store:
             if saved and saved[0]:
                 return saved[0]
             thread_id = active_thread_id
+            if thread_id:
+                # Reset can commit after the worker's last route read, including
+                # for sender/fixed bindings that have no route-level Thread ID.
+                async with db.execute(
+                    "SELECT COALESCE(json_extract(r.value,'$.fixed_thread_id'), b.thread_id, "
+                    "CASE WHEN NOT ? THEN r.thread_id END) FROM routes r "
+                    "LEFT JOIN thread_bindings b ON b.binding_key=? WHERE r.id=?",
+                    (bool(route.get("conversation_memory")), key, route["id"]),
+                ) as cursor:
+                    current = await cursor.fetchone()
+                if not current or current[0] != thread_id:
+                    return None
             target = "/threads/" + quote(thread_id, safe="") + "/inbox" if thread_id else "/threads"
             if thread_id:
                 body.pop("session", None)
@@ -1474,17 +1490,15 @@ class Store:
                 raise ValueError("Choose a new fixed thread in route settings")
             if route["thread_policy"] == "message":
                 raise ValueError("This route already creates a new thread for each message")
+            # An automatically created fixed Thread belongs to the entire
+            # parent route, even when reset is requested through one child.
+            scope_id = route["parent_route_id"] if route["thread_policy"] == "fixed" else None
+            scope_id = scope_id or route_id
             async with db.execute(
-                "SELECT id FROM routes WHERE id=? OR json_extract(value,'$.parent_route_id')=?", (route_id, route_id)
+                "SELECT id FROM routes WHERE id=? OR json_extract(value,'$.parent_route_id')=?", (scope_id, scope_id)
             ) as cursor:
                 scope = tuple(item[0] for item in await cursor.fetchall())
             placeholders = ",".join("?" for _ in scope)
-            async with db.execute(
-                f"SELECT 1 FROM events WHERE route_id IN ({placeholders}) AND state IN ('queued','submitted') LIMIT 1",
-                scope,
-            ) as cursor:
-                if await cursor.fetchone():
-                    raise RouteConflict("Wait for this route's pending messages to finish before resetting its threads")
             await db.execute(
                 f"DELETE FROM thread_bindings WHERE route_id IN ({placeholders}) OR binding_key IN "
                 "(SELECT b.binding_key FROM event_thread_bindings b JOIN events e ON e.id=b.event_id "

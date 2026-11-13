@@ -140,12 +140,15 @@ Frozen deliveries retain their original requests. No upstream environment,
 Thread or memory is deleted or automatically cleaned during migration.
 
 To clear a route's Agent context, open **Routes → Edit → Session → Reset conversations**
-and confirm. Wait for all of that route's pending inputs to finish first.
+and confirm. The reset takes effect immediately, even while an Agent is running.
 This resets every conversation and sender thread on the route, including
-automatically created conversation children. Future messages start fresh a13n
-threads and sessions; gateway history, scoped memory and previous upstream threads
-remain available. Global/conversation environments are retained; Session-scoped
-environments are replaced for the next Session. Other routes are unaffected. An explicitly selected fixed shared
+automatically created conversation children. New deliveries start fresh a13n
+threads and sessions. Inputs already prepared for a thread keep their original
+destination, and active runs can still use tools and reply. Gateway history,
+scoped memory and previous upstream threads remain available. Global/conversation
+environments are retained; their initial provisioning must still be confirmed
+before reuse. Session-scoped environments are replaced for the next Session.
+Other routes are unaffected. An explicitly selected fixed shared
 thread must instead be changed in the destination selector; per-message
 delivery already starts fresh. A new Agent revision applies to new runs even in
 an existing thread, so resetting is for clearing history rather than publishing

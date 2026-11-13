@@ -449,8 +449,6 @@ def create_app(
     async def reset_thread(route_id: str, _admin: None = Depends(admin)) -> dict:
         try:
             result = await store.reset_thread(route_id)
-        except RouteConflict as error:
-            raise HTTPException(409, str(error)) from None
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
         if result is None:

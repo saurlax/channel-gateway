@@ -289,6 +289,9 @@ class Bridge:
                 return
             if not target:
                 target = await self.store.prepare_delivery(event, route, body, active_thread_id=active_thread)
+                if target is None:
+                    self.wake.set()
+                    return
             receipt = await self.adapters.host(
                 connection, "POST", target, body=body, key=event["delivery_key"] or event["id"]
             )

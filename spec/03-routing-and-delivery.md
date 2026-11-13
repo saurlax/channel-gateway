@@ -151,12 +151,16 @@ Administrator-only `POST /api/v1/routes/{id}/reset-thread` detaches the current
 thread bindings of an a13n route and all its concrete children. Conversation
 policy resets every source conversation's thread; sender policy resets all
 sender threads within those conversations. An automatically created shared fixed
-thread is also detached. The operation is atomic and returns 409 while any input
-for the route or a child is queued or submitted. The next new input in each scope
-creates a fresh thread and session. Route identity, credentials, access, other
-routes, channel message history, and upstream threads remain unchanged. No historical input is replayed. Failed
-historical requests retain their frozen destination when explicitly retried but
-cannot restore a detached binding. Resetting before the first message is harmless.
+thread is also detached across its parent and all siblings when reset through a
+concrete child. The operation atomically detaches bindings without
+waiting for queued inputs or running Agents. The next unfrozen input in each
+scope creates a fresh thread and session, independently of old thread queues.
+Shared environment provisioning retains its independent reconciliation rules.
+Frozen requests keep their original destination and idempotency key; their
+receipts cannot restore a detached binding. Active runs retain their tool access
+and reply context. Route identity, credentials, access, other routes, channel
+message history, and upstream threads remain unchanged. No historical input is
+replayed. Resetting before the first message is harmless.
 The console exposes **Reset conversations** with confirmation on the route edit
 page. Confirmation identifies the route-wide scope, including all conversations
 and senders. Generic MCP routes are rejected; explicitly pinned fixed-thread

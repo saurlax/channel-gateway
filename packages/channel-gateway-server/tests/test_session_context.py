@@ -248,6 +248,30 @@ def test_cross_chat_send_recovers_verified_origin_and_respects_source_read_grant
     assert outgoing[0]["provenance"] == {"status": "restricted"}
 
 
+def test_running_agent_can_reply_with_its_original_context_after_reset(gateway):
+    configured = configure(gateway, busy_policy="queue")
+    client, _, upstream, *_ = gateway
+    upstream.unique_threads = True
+    upstream.run_status = "running"
+    webhook(gateway, message_id=1)
+    tick(gateway)
+    first = client.get("/api/v1/events").json()[0]
+    handle = origin_handle(submissions(gateway)[0])
+
+    assert client.post(f"/api/v1/routes/{configured['id']}/reset-thread").status_code == 200
+    webhook(gateway, message_id=2)
+    tick(gateway)
+    latest = client.get("/api/v1/events").json()[0]
+    assert latest["thread_id"] != first["thread_id"]
+    assert latest["state"] == "submitted"
+
+    result = send(gateway, first["route_id"], handle)
+    assert not result.get("isError"), result
+    tick(gateway)
+    outgoing = [m for m in read(gateway, first["route_id"]) if m.get("direction") == "outgoing"]
+    assert outgoing[0]["provenance"]["status"] == "verified"
+
+
 def test_forged_or_completed_origin_context_is_rejected(gateway):
     configure(gateway)
     webhook(gateway)

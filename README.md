@@ -140,8 +140,8 @@ during execution** independently selects safe-boundary steering or FIFO queueing
 The [session setup guide](docs/onebots-a13n.md#thread-delivery) explains defaults,
 shared-file scope and compatibility with existing routes.
 You can reset a route's retained Agent threads from **Routes → Edit → Session → Reset
-conversations** after pending inputs finish. Future messages start fresh while
-gateway history is preserved. Modal forms keep
+conversations**. The reset takes effect immediately for new deliveries. Active
+runs can still use tools and reply, and gateway history is preserved. Modal forms keep
 one field per row at every width. Sign in
 with the account and password you configured. Follow the
 [OneBots and a13n setup guide](docs/onebots-a13n.md) or the

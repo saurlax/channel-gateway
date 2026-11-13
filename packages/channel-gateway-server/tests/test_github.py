@@ -96,6 +96,21 @@ def test_policy_stable_ids_and_explicit_actions():
     assert "token" not in public_connection(connection())
 
 
+def test_signed_malformed_callback_is_archived_before_parsing(gateway):  # noqa: F811
+    client, app, *_ = gateway
+    channel = client.post("/api/v1/connections", json=CONFIG).json()
+    raw = b'{"broken":'
+    signature = "sha256=" + hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    response = client.post(
+        f"/api/v1/hooks/github/{channel['id']}",
+        content=raw,
+        headers={"X-GitHub-Event": "issue_comment", "X-Hub-Signature-256": signature},
+    )
+    assert response.status_code == 422
+    rows = client.portal.call(app.state.store.rows, "SELECT payload,state,event_type FROM channel_events")
+    assert rows == [{"payload": raw, "state": "invalid", "event_type": "issue_comment"}]
+
+
 def test_inline_positions():
     files = [{"filename": "a.py", "patch": "@@ -1,2 +1,2 @@\n same\n-old\n+new"}]
     validate_position(files, {"path": "a.py", "line": 2, "side": "RIGHT", "body": "Fix"})

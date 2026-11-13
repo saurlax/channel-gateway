@@ -12,6 +12,8 @@ from channel_gateway_core import ChannelAddress, Message
 
 from .media import image_attachments
 
+MAX_HOST_IMAGE_PARTS = 4
+
 
 class AdapterError(Exception):
     """A safe operational message without upstream response bodies or credentials."""
@@ -160,8 +162,12 @@ def host_body(
         )
     if message.get("bot_mentioned") is not None:
         context["bot_mentioned"] = message["bot_mentioned"]
-    if message.get("images"):
-        context["image_count"] = len(message["images"])
+    images = message.get("images", [])
+    if images:
+        context["image_count"] = len(images)
+        if platform in {"qq", "onebots"} and len(images) > MAX_HOST_IMAGE_PARTS:
+            context["inline_image_count"] = MAX_HOST_IMAGE_PARTS
+            context["image_read_instruction"] = "Read remaining images by source_message_id and zero-based image_index."
     if message.get("attachments"):
         context["attachments"] = [
             {"index": index, **{key: item[key] for key in ("kind", "media_type", "filename")}}
@@ -197,7 +203,7 @@ def host_body(
         "payload": {
             "content": [initial]
             + (
-                [{"type": "url", "url": image["url"]} for image in message.get("images", [])]
+                [{"type": "url", "url": image["url"]} for image in images[:MAX_HOST_IMAGE_PARTS]]
                 if platform in {"qq", "onebots"}
                 else []
             )

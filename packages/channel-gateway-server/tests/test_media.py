@@ -143,6 +143,7 @@ def ingest(service, channel, *, mid="1", sender="7", conversation="123", message
                 "timestamp": "2026-10-10T12:00:00+08:00",
                 "content": "",
                 "attachments": [{"content_type": "image/png", "url": CDN}],
+                **(message or {}),
             },
         }
         raw = json.dumps(event).encode()
@@ -596,10 +597,40 @@ def test_onebot_cq_images_faces_and_escaped_text():
     message = onebot_message({**event, "message": cq}, {"id": "account", "self_id": "99"})
     assert message and message.images[0].url == "https://gchat.qpic.cn/image?a=1&b=2"
     assert message.text == "[face:76][hello]"
-    with pytest.raises(ValueError, match="image count"):
-        onebot_message(
-            {**event, "message": [{"type": "image", "data": {"url": CDN}}] * 5}, {"id": "account", "self_id": "99"}
-        )
+
+
+@pytest.mark.parametrize("kind", ["onebots", "qq"])
+def test_many_images_keep_text_and_readable_references_with_bounded_host_input(service, kind):
+    client, app, provider = service
+    host = client.post(
+        "/api/v1/connections",
+        json={"name": "a13n", "kind": "a13n", "api_url": "https://host.test/api/v1", "token": "private-host-token"},
+    ).json()
+    channel, route, _ = configure(service, kind, host=host)
+    urls = [f"{CDN}&image={index}" for index in range(9)]
+    caption = "Caption between images"
+    if kind == "qq":
+        message = {"content": caption, "attachments": [{"content_type": "image/png", "url": url} for url in urls]}
+    else:
+        message = [{"type": "image", "data": {"url": url}} for url in urls]
+        message.insert(4, {"type": "text", "data": {"text": caption}})
+    ingest(service, channel, message=message)
+    archived = client.portal.call(app.state.store.rows, "SELECT state,payload FROM channel_events")
+    assert [row["state"] for row in archived] == ["accepted"]
+    assert urls[-1].encode() in archived[0]["payload"]
+    history = result_json(call(service, route, "read", resource="messages", arguments={}))["messages"][0]
+    assert history["text"] == caption
+    assert history["images"] == [{"index": index} for index in range(9)]
+    image = call(service, route, "read", resource="image", arguments={"source_message_id": "1", "image_index": 8})
+    assert image["content"][0]["type"] == "image"
+    assert provider.downloads[-1].url == urls[-1]
+
+    client.portal.call(app.state.bridge.tick)
+    parts = json.loads(provider.requests[0].content)["payload"]["content"]
+    assert parts[1:] == [{"type": "url", "url": url} for url in urls[:4]]
+    assert '"image_count": 9' in parts[0]["text"]
+    assert '"inline_image_count": 4' in parts[0]["text"]
+    assert caption in parts[0]["text"]
 
 
 def test_qq_http_cdn_urls_are_upgraded_and_nonimages_are_ignored():

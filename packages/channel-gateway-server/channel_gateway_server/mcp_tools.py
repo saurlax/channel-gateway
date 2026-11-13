@@ -207,7 +207,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
     @operations.register
     async def read_image(
         source_message_id: Annotated[str, Field(min_length=1, max_length=1024)],
-        image_index: Annotated[int, Field(ge=0, le=3)] = 0,
+        image_index: Annotated[int, Field(ge=0)] = 0,
         route_id: str | None = None,
         representation: Literal["content", "url"] = "content",
     ) -> Image | dict:

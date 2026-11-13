@@ -40,19 +40,23 @@ def event_type(event: dict) -> str:
     return "unknown"
 
 
-async def begin_event(store: Store, connection: dict, raw: object) -> tuple[str | None, dict]:
+async def begin_event(
+    store: Store, connection: dict, raw: object, *, native_event_type: str | None = None
+) -> tuple[str | None, dict]:
     payload = raw if isinstance(raw, bytes) else raw.encode() if isinstance(raw, str) else json.dumps(raw).encode()
     if len(payload) > MAX_EVENT_BYTES:
         raise ProjectionError("Event exceeds the size limit")
-    identifier = await store.archive_channel_event(connection, payload)
+    identifier = await store.archive_channel_event(connection, payload, event_type=native_event_type)
     try:
         event = event_object(payload)
     except PROJECTION_ERRORS:
         if identifier:
-            await store.finish_channel_event(identifier, "invalid", error="Invalid channel event object")
+            await store.finish_channel_event(
+                identifier, "invalid", event_type=native_event_type, error="Invalid channel event object"
+            )
         raise ProjectionError("Invalid channel event object") from None
     if identifier:
-        await store.finish_channel_event(identifier, "received", event_type=event_type(event))
+        await store.finish_channel_event(identifier, "received", event_type=native_event_type or event_type(event))
     return identifier, event
 
 

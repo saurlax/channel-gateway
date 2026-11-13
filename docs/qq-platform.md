@@ -118,7 +118,8 @@ a URL-based gateway send avoids reuploading that local copy but does not disable
 the CLI download. Verify the installed CLI/server response rather than inventing
 an artifact URL or a fixed expiry time.
 
-Inbound QQ images reach a13n as native URL parts without a CG download. Non-image
+The first four inbound QQ images reach a13n as native URL parts without a CG
+download. Additional images are available through MCP by image index. Non-image
 attachments reach it as message/index references, avoiding eager video or file
 downloads before the Agent starts. For direct QQ → media
 service processing, use `read` for the original received image/attachment with
@@ -211,8 +212,8 @@ arguments={"source_message_id": "ID", "attachment_index": 0}, route_id=...)` ret
 resource, at most 16 MiB. UTF-8 text files return text resources. Generic binary
 CDN headers are resolved using the authenticated attachment type, common media
 signatures, and filename. Reads recheck current authority after download and
-never accept arbitrary source URLs. a13n receives images as native URL parts and
-other media as attachment references in the contextual input.
+never accept arbitrary source URLs. a13n receives the first four images as
+native URL parts. Other media use attachment references in the contextual input.
 For video and documents, obtain the source URL for configured media tools or
 download the file into an available sandbox. Sandbox commands can inspect files,
 extract video frames, and parse documents. An image-capable primary model

@@ -18,7 +18,7 @@ from .adapters import AdapterError, HttpAdapters, onebot_message, verified_signa
 from .auth import AdministratorAuth
 from .bridge import Bridge
 from .channels.common import event_object
-from .channels.ingress import ProjectionError, begin_event, event_type, ingest_event
+from .channels.ingress import ProjectionError, begin_event, event_type, ingest_event, ingest_parsed
 from .channels.manager import ChannelManager, capabilities, transport
 from .channels.platforms.common import CHANNEL_KINDS
 from .channels.platforms.lark import lark_message
@@ -527,10 +527,13 @@ def create_app(
         if not verify(connection, raw, request.headers.get("x-hub-signature-256", "")):
             raise HTTPException(401, "Invalid GitHub callback signature")
         try:
-            return await ingest_event(
+            native_event_type = request.headers.get("x-github-event", "")[:128]
+            archive_id, packet = await begin_event(store, connection, raw, native_event_type=native_event_type or None)
+            return await ingest_parsed(
                 store,
                 connection,
-                {"event": request.headers.get("x-github-event", ""), "payload": event_object(raw)},
+                archive_id,
+                {"event": native_event_type, "payload": packet},
                 bridge.ingest,
                 lambda p: project(p, connection),
             )
@@ -549,14 +552,23 @@ def create_app(
         ):
             raise HTTPException(401, "Invalid Slack callback signature")
         try:
-            packet = event_object(raw)
+            archive_id, packet = await begin_event(store, connection, raw)
             if packet.get("type") == "url_verification":
                 challenge = packet.get("challenge")
                 if not isinstance(challenge, str) or len(challenge) > 4096:
+                    if archive_id:
+                        await store.finish_channel_event(archive_id, "invalid", event_type="url_verification")
                     raise ValueError("Invalid challenge")
+                if archive_id:
+                    await store.finish_channel_event(archive_id, "validation", event_type="url_verification")
                 return {"challenge": challenge}
-            await ingest_event(
-                store, connection, raw, bridge.ingest, lambda value: (slack_message(value, connection), None)
+            await ingest_parsed(
+                store,
+                connection,
+                archive_id,
+                packet,
+                bridge.ingest,
+                lambda value: (slack_message(value, connection), None),
             )
         except (ProjectionError, ValueError, KeyError, TypeError):
             raise HTTPException(422, "Invalid Slack event") from None
@@ -576,14 +588,24 @@ def create_app(
             )
         except (ValueError, KeyError, TypeError):
             raise HTTPException(401, "Invalid Lark callback signature or encryption") from None
-        if packet.get("type") == "url_verification":
-            challenge = packet.get("challenge")
-            if not isinstance(challenge, str) or len(challenge) > 4096:
-                raise HTTPException(422, "Invalid Lark challenge")
-            return {"challenge": challenge}
         try:
-            await ingest_event(
-                store, connection, packet, bridge.ingest, lambda value: (lark_message(value, connection), None)
+            archive_id, _ = await begin_event(store, connection, raw)
+            if packet.get("type") == "url_verification":
+                challenge = packet.get("challenge")
+                if not isinstance(challenge, str) or len(challenge) > 4096:
+                    if archive_id:
+                        await store.finish_channel_event(archive_id, "invalid", event_type="url_verification")
+                    raise ValueError("Invalid challenge")
+                if archive_id:
+                    await store.finish_channel_event(archive_id, "validation", event_type="url_verification")
+                return {"challenge": challenge}
+            await ingest_parsed(
+                store,
+                connection,
+                archive_id,
+                packet,
+                bridge.ingest,
+                lambda value: (lark_message(value, connection), None),
             )
         except (ProjectionError, ValueError, KeyError, TypeError):
             raise HTTPException(422, "Invalid Lark event") from None
@@ -618,8 +640,6 @@ def create_app(
             archive_id, event = await begin_event(store, connection, raw)
             if archive_id is not None:
                 await record_notification(store, connection, event, channels.qq(connection))
-            from .channels.ingress import ingest_parsed
-
             await ingest_parsed(
                 store, connection, archive_id, event, bridge.ingest, lambda value: (qq_message(value, connection), None)
             )

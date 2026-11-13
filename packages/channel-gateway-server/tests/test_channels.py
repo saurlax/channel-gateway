@@ -243,7 +243,7 @@ def test_qq_archive_failure_does_not_advance_gateway_resume(native, monkeypatch)
     stored = client.portal.call(app.state.store.connection, channel["id"])
 
     async def scenario():
-        async def archive_failed(*args):
+        async def archive_failed(*args, **kwargs):
             raise sqlite3.OperationalError("Disk unavailable")
 
         class Socket:

@@ -7,7 +7,9 @@ for image-only input; it does not preview image pixels.
 
 ## Receive and read images
 
-For a13n API Hosts, CG sends native URL attachment parts alongside the message.
+For a13n API Hosts, CG sends the first four images as native URL attachment
+parts alongside the message. The Agent can read additional images by index
+through MCP. The message retains its text and all supported image references.
 The Host must allow the QQ CDN endpoints in its outbound endpoint policy and
 use a model/configuration supporting image input. Temporary QQ download links
 can expire; send the image again if the Host can no longer fetch it.
@@ -32,8 +34,7 @@ read grant; read access never adds activation sources or reply authority. A
 specific route token may omit `route_id`; a multi-source route token or account-history handle
 requires it. History never exposes signed image URLs.
 
-Up to four images per message are projected. MCP downloads accept PNG, JPEG,
-GIF, and WebP, at most 4 MiB each, from public HTTPS addresses without a domain
+MCP downloads accept PNG, JPEG, GIF, and WebP, at most 4 MiB each, from public HTTPS addresses without a domain
 allowlist. Received HTTP URLs are upgraded to HTTPS. Embedded credentials,
 fragments, nonstandard ports, local hostnames, non-global IP literals, local file
 paths, redirects, unsupported formats, and expired links are refused. These

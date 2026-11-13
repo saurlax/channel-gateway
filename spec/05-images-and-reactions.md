@@ -2,7 +2,7 @@
 
 ## Scope and compatibility
 
-QQ official C2C/group/guild/DM and OneBot v11 messages support text and up to four image
+QQ official C2C/group/guild/DM and OneBot v11 messages support text and image
 attachments, including image-only input. Existing text envelopes, route policies,
 deduplication, and final-text output remain compatible. Weixin remains text-only.
 Images do not add trigger sources, read grants, or reply destinations.
@@ -34,8 +34,9 @@ are upgraded to HTTPS. Structured media URLs have no provider domain allowlist.
 Embedded credentials, fragments, nonstandard ports,
 local hostnames, and non-global IP literals are rejected. Local paths and base64
 input segments are not downloadable attachments. Unsupported attachments remain
-in the raw journal. More than four structured images invalidates projection.
-QQ chat record image references use the remaining slots. Ordinary OneBot `face`
+in the raw journal. QQ and OneBot retain all supported image references in
+bounded incoming packets. QQ chat record image references follow structured
+images, excluding duplicates. Ordinary OneBot `face`
 segments project as `[face:ID]` text; sending faces and reacting to an existing
 message are distinct.
 QQ `faceType` markers render as readable emoji/sticker labels, including in quoted
@@ -44,9 +45,11 @@ an emoji that has no attachment. JPEG and GIF sticker attachments use the same
 image projection and Host URL parts as ordinary pictures.
 
 An a13n submission includes the verified channel context, source message ID,
-image count, and text, followed by native `type: url` content parts. The authorized
-Host receives the image URLs for its own bounded attachment ingestion, under its
-endpoint and model policies. URLs may expire before execution; frozen submissions
+total image count, and text, followed by native `type: url` content parts for
+the first four QQ or OneBot images. If more images are available, the context
+includes the inline image count and instructions to read the rest by index. The
+authorized Host ingests the inline images under its endpoint and model policies.
+URLs may expire before execution; frozen submissions
 are never rewritten on retry. Generic MCP Hosts use `read(resource='image')`. Image-only
 messages use a compact `[Image]` activity summary and enter the same route workflow
 as text. Image bytes are not fetched or stored inside an ingestion transaction.

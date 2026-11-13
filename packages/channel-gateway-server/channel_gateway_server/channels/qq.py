@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from websockets.exceptions import ConnectionClosed
 
 from ..adapters import AdapterError
-from ..media import MAX_MESSAGE_IMAGES, decode_media, image_attachments, image_url
+from ..media import decode_media, image_attachments, image_url
 from ..storage import Store
 from .common import OperationRejected, SendBlocked, identifier, response_object
 from .ingress import ProjectionError, begin_event, event_type, ingest_parsed
@@ -54,8 +54,7 @@ def chat_history_images(text: str, urls: dict[str, None]) -> str:
             len(values) != 1 or not values[0] for values in query.values()
         ):
             return match[1] + "[Image unavailable]"
-        if len(urls) < MAX_MESSAGE_IMAGES:
-            urls.setdefault(url, None)
+        urls.setdefault(url, None)
         return match[1] + "[Image]"
 
     return QQ_HISTORY_IMAGE.sub(replace, text)
@@ -221,8 +220,7 @@ def qq_message(event: dict, connection: dict) -> Message | None:
         ]
     )
     structured_image_urls = {image.url for image in images}
-    history_images = [ImageAttachment(url=url) for url in history_image_urls if url not in structured_image_urls]
-    images += tuple(history_images[: MAX_MESSAGE_IMAGES - len(images)])
+    images += tuple(ImageAttachment(url=url) for url in history_image_urls if url not in structured_image_urls)
     attachments = []
     for item in raw_attachments:
         if not isinstance(item, dict):

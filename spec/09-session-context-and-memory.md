@@ -177,8 +177,9 @@ one contextual content part. Within that part, distinguish the current message
 from untrusted historical and structured data. Use one text part within the Host's
 65,536-character limit, or one JSON part for a larger complete snapshot; never
 split context into supplemental instructions or silently truncate it. Media keeps
-its native URL parts for images. Non-image attachments use message/index references
-and are fetched only on demand. This changes input presentation, not the independent
+its native URL parts for the first four QQ or OneBot images. Additional images
+and non-image attachments use message/index references and are fetched only on
+demand. This changes input presentation, not the independent
 steer/queue policy or Host-owned tool-completion notifications. Frozen submissions
 keep their original representation and idempotency key across upgrades and retries.
 Retain existing chronological ordering, media projection, exact

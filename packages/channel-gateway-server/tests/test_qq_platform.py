@@ -807,7 +807,7 @@ def test_qq_flattened_chat_history_delivers_nested_image(platform):
     assert parts[1:] == [{"type": "url", "url": url}]
 
 
-def test_qq_flattened_chat_history_uses_remaining_image_slots(platform):
+def test_qq_flattened_chat_history_preserves_unique_images_after_structured_images(platform):
     url = "https://multimedia.nt.qq.com.cn/download?appid=1&fileid={}&rkey=signature"
     attachment = "[附件1] 类型:图片 文件名:photo.jpg 尺寸:1x1 大小:50B URL:"
     packet = incoming(
@@ -817,7 +817,7 @@ def test_qq_flattened_chat_history_uses_remaining_image_slots(platform):
         content="\r\n".join(attachment + url.format(index) for index in (0, 1, 1, 2, 3, 4, 5)),
     )
     message = qq_message(packet, {"id": "account"})
-    assert [image.url for image in message.images] == [url.format(index) for index in range(4)]
+    assert [image.url for image in message.images] == [url.format(index) for index in range(6)]
     assert message.text.splitlines() == ["[Image]"] * 7
 
     packet["d"]["message_type"] = 0

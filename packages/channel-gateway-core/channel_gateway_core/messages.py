@@ -45,7 +45,7 @@ class Message(BaseModel):
     source_message_id: str = Field(min_length=1)
     sender_id: str = Field(min_length=1)
     text: str = Field(default="", max_length=60000)
-    images: tuple[ImageAttachment, ...] = Field(default=(), max_length=4)
+    images: tuple[ImageAttachment, ...] = ()
     attachments: tuple[Attachment, ...] = Field(default=(), max_length=16)
     structured: dict = Field(default_factory=dict)
     guild_id: str | None = Field(default=None, max_length=128)

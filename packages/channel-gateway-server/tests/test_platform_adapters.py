@@ -321,6 +321,19 @@ def test_ingress_is_durable_deduplicated_and_has_fixed_tools(platform_gateway):
 
 
 @pytest.mark.parametrize("platform_gateway", ["slack", "lark"], indirect=True)
+def test_verified_challenges_are_archived(platform_gateway):
+    _, client, app, _, _, _ = platform_gateway
+    for challenge, status in [("challenge", 200), (False, 422)]:
+        response = hook(platform_gateway, {"type": "url_verification", "challenge": challenge})
+        assert response.status_code == status
+    archived = client.portal.call(app.state.store.rows, "SELECT event_type,state FROM channel_events ORDER BY rowid")
+    assert archived == [
+        {"event_type": "url_verification", "state": "validation"},
+        {"event_type": "url_verification", "state": "invalid"},
+    ]
+
+
+@pytest.mark.parametrize("platform_gateway", ["slack", "lark"], indirect=True)
 def test_signed_callbacks_reject_forgery_expiry_and_cross_installation(platform_gateway):
     kind, client, _, provider, _, _ = platform_gateway
     assert hook(platform_gateway, bad=True).status_code == 401

@@ -11,7 +11,6 @@ import httpx
 from channel_gateway_core import ImageAttachment
 
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
-MAX_MESSAGE_IMAGES = 4
 MAX_IMAGE_BASE64 = 4 * ((MAX_IMAGE_BYTES + 2) // 3)
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_MEDIA_BYTES = 16 * 1024 * 1024
@@ -89,10 +88,7 @@ def image_url(value: object) -> str | None:
 
 
 def image_attachments(urls: list[object]) -> tuple[ImageAttachment, ...]:
-    images = tuple(ImageAttachment(url=url) for value in urls if (url := image_url(value)))
-    if len(images) > MAX_MESSAGE_IMAGES:
-        raise ValueError("Message exceeds the image count limit")
-    return images
+    return tuple(ImageAttachment(url=url) for value in urls if (url := image_url(value)))
 
 
 def image_type(data: bytes) -> str:

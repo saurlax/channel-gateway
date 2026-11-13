@@ -220,6 +220,11 @@ ID. Recording does not require a route or an allowed sender. OneBot socket
 receipts and notices, QQ protocol/control frames, and individual Weixin update
 items use the same retention boundary. Repeated arrivals create separate journal
 rows while normalized messages and Agent submissions remain deduplicated.
+Signed Slack and verified Lark validation challenges are retained before
+responding. GitHub callbacks retain the signed request body and the event type
+header before JSON parsing.
+Lark callbacks retain the original encrypted envelope after signature, token,
+and application verification.
 
 Non-text content, attachments, bot/self messages, account-mismatched payloads,
 unsupported events, and malformed bounded packets remain in this journal even

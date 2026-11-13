@@ -350,7 +350,9 @@ class Store:
         async with self.transaction() as db:
             await db.execute("DELETE FROM channel_state WHERE connection_id=?", (connection_id,))
 
-    async def archive_channel_event(self, connection: dict, payload: bytes) -> str | None:
+    async def archive_channel_event(
+        self, connection: dict, payload: bytes, *, event_type: str | None = None
+    ) -> str | None:
         """Retain each authenticated arrival before projection or route selection."""
         identifier = new_id("recv")
         mode = (
@@ -371,8 +373,8 @@ class Store:
             if not same_connection(current, connection):
                 return None
             await db.execute(
-                "INSERT INTO channel_events(id,channel_id,transport,payload) VALUES (?,?,?,?)",
-                (identifier, connection["id"], mode, payload),
+                "INSERT INTO channel_events(id,channel_id,transport,payload,event_type) VALUES (?,?,?,?,?)",
+                (identifier, connection["id"], mode, payload, event_type),
             )
         return identifier
 

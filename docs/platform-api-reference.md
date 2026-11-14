@@ -24,7 +24,7 @@ Some vendor pages returned empty content, generic navigation or HTTP 429; those
 limitations are recorded rather than treated as proof of unsupported behavior.
 
 At repository base `34bc569cb7824f50a12ae4575ae7a10021f0fdf1`, CG has QQ official,
-OneBot v11 and text-only Weixin iLink. The working tree also has the five-tool
+OneBot v11 and text-only Weixin iLink. The working tree also has the shared
 consolidation; it is not a new-platform implementation or deployment. Current
 schemas and migration are in the [Agent tool guide](agent-tools.md).
 

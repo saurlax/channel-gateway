@@ -315,7 +315,14 @@ def test_ingress_is_durable_deduplicated_and_has_fixed_tools(platform_gateway):
     assert history["messages"][0]["images"] == [{"index": 0}]
     assert "private" not in json.dumps(history["messages"][0].get("images"))
     tools = rpc(client, route["agent_token"], "tools/list", {}).json()["result"]["tools"]
-    assert {item["name"] for item in tools} == {"discover", "read", "send_message", "execute_action", "get_operation"}
+    assert {item["name"] for item in tools} == {
+        "discover",
+        "read",
+        "send_message",
+        "execute_action",
+        "get_operation",
+        "prepare_media_upload",
+    }
     rows = client.portal.call(app.state.store.rows, "SELECT * FROM channel_events")
     assert len(rows) == 2
 

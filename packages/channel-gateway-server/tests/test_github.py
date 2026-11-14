@@ -369,7 +369,7 @@ def test_native_pr_tools_publish_bounded_code(gateway):  # noqa: F811
     client.post("/api/v1/hooks/github/" + channel["id"], content=raw, headers=headers)
     token = configured["agent_token"]
     tools = rpc(client, token, "tools/list", {}).json()["result"]["tools"]
-    assert len(tools) == 5
+    assert len(tools) == 6
 
     def tool(name, args):
         result = rpc(client, token, "tools/call", {"name": name, "arguments": args}).json()["result"]

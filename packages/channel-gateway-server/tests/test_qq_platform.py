@@ -26,6 +26,7 @@ class Platform:
         self.on_request = None
         self.on_upload = None
         self.failure = None
+        self.pending_upload_parts = 0
         self.counter = 0
         self.host_output = "Automatic reply"
         self.media_data = b"RIFFwave-audio"
@@ -63,11 +64,14 @@ class Platform:
                             "presigned_url": f"https://bucket.cos.ap-guangzhou.myqcloud.com/upload?signature=private&part={i}",
                             "block_size": str(block),
                         }
-                        for i in range(math.ceil(int(body["file_size"]) / block))
+                        for i in range(1, math.ceil(int(body["file_size"]) / block) + 1)
                     ],
                 },
             )
         if path.endswith("/upload_part_finish"):
+            if self.pending_upload_parts:
+                self.pending_upload_parts -= 1
+                return httpx.Response(400, json={"code": 40093001, "message": "part pending"})
             return httpx.Response(204)
         if path.endswith("/files"):
             return httpx.Response(200, json={"file_info": "private-file-info"})
@@ -1020,6 +1024,150 @@ def test_large_inline_media_uses_credential_free_multipart_upload(platform):
     assert encoded not in platform[0].get("/api/v1/replies").text
 
 
+def prepare_direct_upload(platform, route, content):
+    return call(
+        platform,
+        route,
+        "prepare_media_upload",
+        media_kind="file",
+        media_type="application/octet-stream",
+        filename="example.bin",
+        size=len(content),
+        md5=hashlib.md5(content).hexdigest(),
+        sha1=hashlib.sha1(content).hexdigest(),
+        md5_10m=hashlib.md5(content[:10_002_432]).hexdigest(),
+    )
+
+
+def direct_upload_content(plan, content):
+    return [
+        {
+            "type": "file",
+            "media_type": "application/octet-stream",
+            "filename": "example.bin",
+            "upload": {
+                "id": plan["upload_id"],
+                "parts": [
+                    {
+                        "index": part["index"],
+                        "length": part["length"],
+                        "md5": hashlib.md5(content[part["offset"] : part["offset"] + part["length"]]).hexdigest(),
+                    }
+                    for part in plan["parts"]
+                ],
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize(("scene", "size"), [("private", 1024**2), ("group", 10 * 1024**2)])
+def test_agent_prepares_and_sends_envd_direct_qq_upload(platform, scene, size):
+    client, app, provider, _, _ = platform
+    route = configure(platform, scene)
+    other = configure(platform, scene, conversation="other")
+    incoming(platform, scene)
+    content = b"x" * size
+    plan = decoded(prepare_direct_upload(platform, route, content))
+    assert plan["upload_id"].startswith("upload_") and "private-upload" not in json.dumps(plan)
+    assert plan["route_id"] == route["id"] and plan["delivery"] == "passive"
+    assert len(plan["parts"]) == math.ceil(size / (2 * 1024**2))
+    assert sum(part["length"] for part in plan["parts"]) == size
+    assert all(part["put_url"].startswith("https://") for part in plan["parts"])
+    assert not provider.uploads
+    assert not any(request.url.path.endswith("/messages") for request in provider.requests)
+
+    message = direct_upload_content(plan, content)
+    assert call(platform, other, "send_message", content=message).get("isError")
+    wrong_parts = direct_upload_content(plan, content)
+    wrong_parts[0]["upload"]["parts"][0]["length"] -= 1
+    assert call(platform, route, "send_message", content=wrong_parts).get("isError")
+    persisted = client.portal.call(app.state.store.rows, "SELECT plan FROM qq_media_uploads")
+    assert "signature=" not in persisted[0]["plan"]
+    # Model the client making each PUT outside CGW's transport.
+    uploaded = []
+    with httpx.Client(transport=httpx.MockTransport(lambda req: (uploaded.append(req), httpx.Response(200))[1])) as cos:
+        for part in plan["parts"]:
+            offset = part["offset"]
+            assert cos.put(part["put_url"], content=content[offset : offset + part["length"]]).is_success
+    assert b"".join(request.content for request in uploaded) == content
+
+    sent = decoded(call(platform, route, "send_message", content=message))
+    assert decoded(call(platform, route, "send_message", content=message))["operation_id"] == sent["operation_id"]
+    conflicting = direct_upload_content(plan, content)
+    conflicting[0]["upload"]["parts"][0]["md5"] = "0" * 32
+    assert call(platform, route, "send_message", content=conflicting).get("isError")
+    tick(platform)
+    status = decoded(call(platform, route, "get_operation", operation_id=sent["operation_id"]))
+    assert status["state"] == "sent"
+    assert decoded(call(platform, route, "send_message", content=message))["state"] == "sent"
+    assert not provider.uploads
+    requests = provider.requests
+    expected = ["upload_prepare"] + ["upload_part_finish"] * len(uploaded) + ["files", "messages"]
+    assert [r.url.path.rsplit("/", 1)[1] for r in requests if r.url.path.startswith("/v2/")] == expected
+    assert all(b"file_data" not in r.content and b"signature=" not in r.content for r in requests)
+    assert json.loads(requests[-2].content) == {"upload_id": "private-upload", "srv_send_msg": False}
+    assert json.loads(requests[-1].content)["media"] == {"file_info": "private-file-info"}
+
+
+def test_direct_qq_upload_expiry_and_finalize_failure(platform):
+    client, app, provider, _, _ = platform
+    route = configure(platform)
+    incoming(platform)
+    content = b"example"
+    plan = decoded(prepare_direct_upload(platform, route, content))
+
+    async def expire():
+        async with app.state.store.transaction() as db:
+            await db.execute("UPDATE qq_media_uploads SET expires_at=0")
+
+    client.portal.call(expire)
+    assert call(platform, route, "send_message", content=direct_upload_content(plan, content)).get("isError")
+    plan = decoded(prepare_direct_upload(platform, route, content))
+    sent = decoded(call(platform, route, "send_message", content=direct_upload_content(plan, content)))
+    provider.failure = "timeout"
+    tick(platform)
+    status = decoded(call(platform, route, "get_operation", operation_id=sent["operation_id"]))
+    assert status["state"] == "failed"
+    assert status["error"] == "QQ media upload could not be finalized"
+    assert not any(request.url.path.endswith("/messages") for request in provider.requests)
+
+
+def test_direct_qq_upload_rechecks_route_token_after_admission(platform):
+    client, _, provider, _, _ = platform
+    route = configure(platform)
+    incoming(platform)
+    content = b"example"
+    plan = decoded(prepare_direct_upload(platform, route, content))
+    sent = decoded(call(platform, route, "send_message", content=direct_upload_content(plan, content)))
+    rotated = client.post(f"/api/v1/routes/{route['id']}/token").json()["agent_token"]
+    tick(platform)
+    status = decoded(
+        call(platform, {**route, "agent_token": rotated}, "get_operation", operation_id=sent["operation_id"])
+    )
+    assert status["state"] == "blocked"
+    assert not any(r.url.path.endswith(("/upload_part_finish", "/files", "/messages")) for r in provider.requests)
+
+
+def test_direct_qq_upload_retries_part_pending_before_sending(platform):
+    route = configure(platform)
+    incoming(platform)
+    content = b"example"
+    plan = decoded(prepare_direct_upload(platform, route, content))
+    sent = decoded(call(platform, route, "send_message", content=direct_upload_content(plan, content)))
+    provider = platform[2]
+    provider.pending_upload_parts = 1
+    tick(platform)
+    assert decoded(call(platform, route, "get_operation", operation_id=sent["operation_id"]))["state"] == "sent"
+    assert len([r for r in provider.requests if r.url.path.endswith("/upload_part_finish")]) == 2
+    assert len([r for r in provider.requests if r.url.path.endswith("/messages")]) == 1
+
+
+def test_direct_qq_upload_rejects_guild_before_provider_call(platform):
+    route = configure(platform, "guild")
+    assert prepare_direct_upload(platform, route, b"example").get("isError")
+    assert not platform[2].requests
+
+
 def test_guild_image_uses_native_multipart_and_never_group_uploads(platform):
     route = configure(platform, "guild")
     incoming(platform, "guild")
@@ -1431,7 +1579,14 @@ def test_tool_annotations_and_catalog_keep_mutation_and_read_surfaces_separate(p
     by_name = {tool["name"]: tool for tool in tools}
     assert by_name["read"]["annotations"]["readOnlyHint"] is True
     assert by_name["execute_action"]["annotations"]["destructiveHint"] is True
-    assert set(by_name) == {"discover", "read", "send_message", "execute_action", "get_operation"}
+    assert set(by_name) == {
+        "discover",
+        "read",
+        "send_message",
+        "execute_action",
+        "get_operation",
+        "prepare_media_upload",
+    }
     assert "native" in by_name["send_message"]["inputSchema"]["properties"]
     catalog = decoded(call(platform, route, "discover", resource="operations"))["native"]
     operations = {item["name"].removeprefix("qq."): item for item in catalog}
@@ -1806,15 +1961,15 @@ def test_proactive_image_rechecks_grant_after_upload(platform):
     assert platform[0].get("/api/v1/replies").json()[0]["state"] == "blocked"
 
 
-def test_five_tool_inventory_is_constant_across_conversations_and_keys(platform):
+def test_tool_inventory_is_constant_across_conversations_and_keys(platform):
     client, _, _, _, _host = platform
     routes = [configure(platform, conversation=str(500 + i)) for i in range(4)]
     routes.append(configure(platform, "guild"))
-    expected = {"discover", "read", "send_message", "execute_action", "get_operation"}
+    expected = {"discover", "read", "send_message", "execute_action", "get_operation", "prepare_media_upload"}
     for key in [route["agent_token"] for route in routes]:
         tools = rpc(client, key, "tools/list", {}).json()["result"]["tools"]
         assert {tool["name"] for tool in tools} == expected
-        assert len(tools) == 5
+        assert len(tools) == 6
     assert client.get("/api/v1/replies").json() == []
     assert client.get("/api/v1/actions").json() == []
 

@@ -45,7 +45,7 @@ their scope and require the provider's optional compatible extension.
 
 ## Message creation
 
-Use the fixed [five MCP tools](agent-tools.md). `send_message.content` contains
+Use the shared [MCP tools](agent-tools.md). `send_message.content` contains
 a text part (`type: "text"`, `text`, optional `format: "markdown"`) and optionally
 one media part. `reply_to` quotes a locally known message. QQ-only keyboards,
 Embed, and ARK use `native: {"qq": {"keyboard": ..., "embed": ..., "ark": ...}}`.
@@ -76,7 +76,7 @@ consume budget even if a claimed attempt fails. Explicit rejection is `failed`;
 uncertain delivery is `unknown`. Neither is automatically retried.
 
 A media content part has `type` (`image`, `audio`, `video`, or `file`),
-`media_type`, `filename`, and exactly one of `data_base64` or `url`. An accompanying
+`media_type`, `filename`, and one media source (base64, HTTPS URL, or direct upload). An accompanying
 plain-text part becomes its caption for images. Audio, video, and file messages
 require separate text and media calls: combining a nonempty caption with one of
 these types fails before queuing or uploading. CG does not silently discard text
@@ -87,6 +87,22 @@ delegates download to QQ under QQ's own size limits. CG accepts no local file pa
 Media cannot combine with Markdown, native options, quotes, or stream options;
 unsupported combinations fail before queuing. Presigned part uploads carry no
 bot token or cookies. Upload tickets remain private.
+
+### Upload a file directly to QQ
+
+For a file already in an execution environment, enable `prepare_media_upload`
+on the Agent's gateway MCP connection and check
+`discover(resource="capabilities").send.direct_media_upload`. The Agent calls
+the tool with the file metadata, then instructs the environment to PUT each
+requested byte range directly to its signed Tencent COS URL. Pass the signed
+URLs privately and omit them from command output and user messages.
+
+After all PUTs succeed, call `send_message` using the route and delivery mode
+from preparation. Keep the same media kind, MIME type and filename. Set the media
+source to `upload: {"id": "<upload_id>", "parts": [...]}` with an `index`,
+`length` and hexadecimal `md5` per part. Poll `get_operation` for the outcome.
+For the preparation arguments and upload limits, see the
+[QQ direct upload contract](../spec/06-qq-platform.md#direct-media-uploads).
 
 ### Reuse generated-media links
 

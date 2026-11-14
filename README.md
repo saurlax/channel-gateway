@@ -28,7 +28,7 @@ to empty; application permissions and invitation restrictions still apply.
 QQ routes can combine passive final-text replies with proactive message/media
 tools under an explicit `message.proactive` grant and persistent send budgets.
 See the [QQ platform guide and operation inventory](docs/qq-platform.md).
-The [five Agent tools](docs/agent-tools.md) provide discovery, reads, message
+The [Agent tools](docs/agent-tools.md) provide discovery, reads, message
 creation, non-message actions, and unified operation status. Platform options use
 validated parameters; adding conversations does not add tools.
 OneBot image tools and optional NapCat-compatible reactions remain supported.

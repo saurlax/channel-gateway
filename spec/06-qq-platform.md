@@ -85,9 +85,48 @@ ID is saved atomically with input. Replies use `event_id`, not a fabricated
 entries cannot be targets for message recall or reactions.
 Duplicate interaction events do not deliberately issue another acknowledgement.
 
+## Direct media uploads
+
+An Agent calls `prepare_media_upload` under its route MCP credential with
+`route_id` (or the authorized default), optional `delivery`, `media_kind`,
+`media_type`, `filename`, `size` in bytes, and hexadecimal `md5`, `sha1` and
+`md5_10m`. The last hash covers the first 10,002,432 bytes or the entire file
+if shorter. The operation requires existing QQ message authority for an exact
+private or group destination and the selected delivery mode. The gateway asks
+QQ to prepare the upload and returns a gateway `upload_id`, the resolved
+`route_id` and `delivery`, `expires_at` as Unix seconds, and `parts` with
+one-based `index`, byte `offset`, byte `length` and HTTPS `put_url`.
+Direct upload limits are 30 MiB for images, 20 MiB for audio, and 100 MiB
+for video and other files. QQ can reject a request under its own size, format
+or quota rules.
+
+The Agent instructs the environment holding the file to PUT each byte range
+directly to its signed URL and report the successful parts. Each URL carries
+temporary upload authority and belongs in private tool execution context. It
+must be excluded from progress, command output and channel messages. The
+gateway stores the plan metadata and private provider ID and returns the signed
+URLs only in the preparation response. The gateway admission window is 15
+minutes. QQ's URL validity is independent.
+
+Once all PUTs succeed, the Agent calls `send_message` on the same route and
+delivery with matching media metadata and `upload: {id, parts}`. Each part
+contains `index`, `length` and the part's hexadecimal `md5`. Every index and
+length must agree with the prepared plan. The original credential, bot account
+and destination must match. Within the admission window, identical submissions
+reuse the same operation. A changed submission for an already claimed upload
+is rejected.
+
+The message worker rechecks authority, confirms the parts and completes the
+upload with QQ before sending the returned `file_info`. When QQ reports a part
+is pending, the worker retries that confirmation with a bounded delay. A
+finalization failure stops delivery before the send. After the message request starts, an uncertain
+outcome follows the existing message delivery contract. A successful COS PUT
+by itself confirms only receipt of those bytes. Use `get_operation` to check
+message acceptance.
+
 ## MCP design
 
-QQ uses the fixed five-tool inventory in [Agent tools](04-agent-tools.md).
+QQ uses the shared tool inventory in [Agent tools](04-agent-tools.md).
 `send_message` handles text, Markdown, media, cards, and ordered C2C stream
 fragments. `execute_action` handles reactions, recall, typing, and registered
 resource mutations. `read` handles received images/attachments, sanitized events,

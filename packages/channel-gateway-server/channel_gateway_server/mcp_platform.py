@@ -2,21 +2,54 @@
 
 import base64
 import json
+import time
 from typing import Annotated, Literal
 from urllib.parse import quote
 
 from mcp.types import AudioContent, BlobResourceContents, EmbeddedResource, TextResourceContents
-from pydantic import AnyUrl, Field
+from pydantic import AnyUrl, BaseModel, ConfigDict, Field
 
 from .channels.actions import known_message, message_delivery, reaction_authority, tool_message_allowed
+from .channels.common import SendBlocked
 from .channels.emoji import Emoji, validate_platform_emoji
+from .channels.manager import capabilities
 from .channels.platforms.common import PLATFORMS
+from .channels.qq import MAX_UPLOAD_PARTS, QQ_HASH_PREFIX_BYTES, qq_upload_destination
 from .channels.qq_operations import OPERATIONS, applicable, check_json, execute_operation, require_grant, safe_result
 from .media import MAX_MEDIA_BYTES, attachment_media_type, decode_media, image_type, public_media_url
 from .models import route_allows_sender
+from .storage import token_hash
+
+type MediaKind = Literal["image", "audio", "video", "file"]
+type MD5 = Annotated[str, Field(pattern=r"^[a-fA-F0-9]{32}$")]
+
+QQ_DIRECT_UPLOAD_LIMITS = {"image": 30 * 1024**2, "audio": 20 * 1024**2, "video": 100 * 1024**2, "file": 100 * 1024**2}
+QQ_UPLOAD_TTL_SECONDS = 15 * 60
 
 
-def install_platform_operations(operations, store, bridge, media, authorized_route, readable_route):
+class UploadedPart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    index: int = Field(ge=1, le=MAX_UPLOAD_PARTS)
+    length: int = Field(gt=0, le=max(QQ_DIRECT_UPLOAD_LIMITS.values()))
+    md5: MD5
+
+
+class PreparedUpload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^upload_[a-f0-9]{32}$")
+    parts: list[UploadedPart] = Field(min_length=1, max_length=MAX_UPLOAD_PARTS)
+
+
+def validate_media_metadata(media_kind: str, media_type: str, filename: str) -> None:
+    if any(c in filename for c in ("/", "\\", "\r", "\n", "\0")):
+        raise ValueError("Use a plain file name")
+    if media_kind != "file" and not media_type.startswith(
+        {"image": "image/", "audio": "audio/", "video": "video/"}[media_kind]
+    ):
+        raise ValueError("Media kind and type do not match")
+
+
+def install_platform_operations(operations, store, bridge, media, authorized_route, readable_route, current_token):
     async def qq_route(route_id):
         route = await authorized_route(route_id)
         connection = await store.connection(route["channel_id"])
@@ -96,12 +129,74 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
         return {"reply_id": reply["id"], "state": reply["state"]}
 
     @operations.register
+    async def prepare_media_upload(
+        media_kind: MediaKind,
+        media_type: Annotated[str, Field(min_length=1, max_length=128)],
+        filename: Annotated[str, Field(min_length=1, max_length=255)],
+        size: Annotated[int, Field(gt=0, le=max(QQ_DIRECT_UPLOAD_LIMITS.values()))],
+        md5: MD5,
+        sha1: Annotated[str, Field(pattern=r"^[a-fA-F0-9]{40}$")],
+        md5_10m: MD5,
+        route_id: str | None = None,
+        delivery: Literal["passive", "proactive", "wakeup"] | None = None,
+    ) -> dict:
+        route, connection, delivery = await message_route(route_id, delivery)
+        channels = bridge.channels
+        if connection["kind"] != "qq" or route["conversation_kind"] not in {"private", "group"} or channels is None:
+            raise ValueError("Direct media upload requires a writable QQ private or group route")
+        validate_media_metadata(media_kind, media_type, filename)
+        if media_kind == "image" and media_type not in capabilities(connection)["image_send_types"]:
+            raise ValueError("Image format is not supported by this channel")
+        if size > QQ_DIRECT_UPLOAD_LIMITS[media_kind]:
+            raise ValueError("File exceeds the QQ direct upload size limit")
+        if size <= QQ_HASH_PREFIX_BYTES and md5.lower() != md5_10m.lower():
+            raise ValueError("md5_10m must match md5 for files at or below 10002432 bytes")
+        token = current_token.get()
+        owner = await store.route_for_token(token)
+        if not owner or not owner["enabled"]:
+            raise SendBlocked("Channel access is disabled or revoked")
+        await channels.check_action_access(connection, route)
+        provider_id, parts = await channels.qq(connection).prepare_media_upload(
+            route,
+            filename,
+            media_kind,
+            size,
+            {"md5": md5.lower(), "sha1": sha1.lower(), "md5_10m": md5_10m.lower()},
+        )
+        await authorized_route(route["id"])
+        await channels.check_action_access(connection, route)
+        expires_at = int(time.time()) + QQ_UPLOAD_TTL_SECONDS
+        upload_id = await store.save_qq_media_upload(
+            owner["id"],
+            token_hash(token),
+            route["id"],
+            {
+                "destination": qq_upload_destination(route, connection),
+                "provider_id": provider_id,
+                "lengths": [part["length"] for part in parts],
+                "media_kind": media_kind,
+                "media_type": media_type,
+                "filename": filename,
+                "delivery": delivery,
+            },
+            expires_at,
+        )
+        return {
+            "upload_id": upload_id,
+            "route_id": route["id"],
+            "delivery": delivery,
+            "expires_at": expires_at,
+            "parts": parts,
+        }
+
+    @operations.register
     async def send_media(
-        media_kind: Literal["image", "audio", "video", "file"],
+        media_kind: MediaKind,
         media_type: Annotated[str, Field(min_length=1, max_length=128)],
         filename: Annotated[str, Field(min_length=1, max_length=255)],
         data_base64: Annotated[str, Field(max_length=4 * ((MAX_MEDIA_BYTES + 2) // 3))] | None = None,
         url: Annotated[str, Field(max_length=4096)] | None = None,
+        upload: PreparedUpload | None = None,
         caption: Annotated[str, Field(max_length=16000)] = "",
         route_id: str | None = None,
         delivery: Literal["passive", "proactive", "wakeup"] | None = None,
@@ -115,20 +210,15 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
                 "QQ audio/video/file captions are not supported. Nothing was queued or uploaded. "
                 "Send the text and media in separate send_message calls and check each operation."
             )
-        if bool(data_base64) == bool(url):
-            raise ValueError("Choose exactly one media URL or base64 data")
-        if any(c in filename for c in ("/", "\\", "\r", "\n", "\0")):
-            raise ValueError("Use a plain file name")
+        if sum(source is not None for source in (data_base64, url, upload)) != 1:
+            raise ValueError("Choose exactly one media URL, base64 data, or prepared upload")
+        validate_media_metadata(media_kind, media_type, filename)
         if url:
             public_media_url(url)
         if data_base64:
             data = decode_media(data_base64)
             if media_kind == "image" and image_type(data) != media_type:
                 raise ValueError("Image media type does not match its signature")
-        if media_kind != "file" and not media_type.startswith(
-            {"image": "image/", "audio": "audio/", "video": "video/"}[media_kind]
-        ):
-            raise ValueError("Media kind and type do not match")
         if route["conversation_kind"] in {"guild", "guild_dm"} and media_kind != "image":
             raise ValueError(
                 "The documented guild send API supports image attachments; use guild audio operations for playback"
@@ -147,7 +237,26 @@ def install_platform_operations(operations, store, bridge, media, authorized_rou
             "caption": caption,
             "delivery": delivery,
         }
-        reply = await store.queue_reply(route, caption or f"[{media_kind.title()}]", payload=payload)
+        claim = None
+        if upload:
+            credential_hash = token_hash(current_token.get())
+            plan = await store.qq_media_upload(upload.id, credential_hash, route["id"])
+            if plan["destination"] != qq_upload_destination(route, connection) or any(
+                plan[key] != payload[key] for key in ("media_kind", "media_type", "filename", "delivery")
+            ):
+                raise ValueError("Media and destination must match the prepared upload")
+            parts = sorted(upload.parts, key=lambda part: part.index)
+            if [(part.index, part.length) for part in parts] != list(enumerate(plan["lengths"], start=1)):
+                raise ValueError("Uploaded parts must match the prepared part indexes and lengths")
+            payload["direct_upload"] = {
+                "provider_id": plan["provider_id"],
+                "destination": plan["destination"],
+                "credential_hash": credential_hash,
+                "owner_id": plan["owner_id"],
+                "parts": [{**part.model_dump(), "md5": part.md5.lower()} for part in parts],
+            }
+            claim = (upload.id, credential_hash)
+        reply = await store.queue_reply(route, caption or f"[{media_kind.title()}]", payload=payload, upload=claim)
         bridge.wake.set()
         return {"reply_id": reply["id"], "state": reply["state"]}
 

@@ -2,7 +2,7 @@
 
 ## MCP surface
 
-The implemented five-tool surface is defined here. The first Slack/Lark/Discord
+The implemented MCP surface is defined here. The first Slack/Lark/Discord
 slice adds typed reactions, explicit threads and native history. Remaining
 expansion requirements live in [Multi-platform channel integration](07-channel-integration.md).
 
@@ -13,7 +13,7 @@ administrator and upstream credentials. The tool transport does not create or
 wake an Agent run; the [Host delivery workflow](03-routing-and-delivery.md) owns
 that operation.
 
-The public inventory contains exactly five tools for every credential and channel.
+The public inventory contains six tools for every credential and channel.
 No legacy tool aliases are registered. Adding conversations or adapters changes
 resource data and operation catalogs, never creates per-conversation tools.
 
@@ -21,6 +21,7 @@ resource data and operation catalogs, never creates per-conversation tools.
 | --- | --- |
 | `discover(resource='conversations', route_id=None)` | List authorized handles, or inspect a selected handle's capabilities and operation schemas |
 | `read(resource, arguments=None, route_id=None, source=None)` | Read `messages`, `image`, `attachment`, `events`, or a registered `native` resource |
+| `prepare_media_upload` | Prepare a client-side direct upload for an authorized QQ private or group conversation |
 | `send_message(content, route_id=None, delivery=None, reply_to=None, stream=None, native=None, origin_context=None)` | Queue text, media, cards, or a stream fragment |
 | `execute_action(action, arguments=None, route_id=None)` | Queue `reaction`, `recall`, `typing`, or a registered `native` mutation |
 | `get_operation(operation_id, route_id=None)` | Query this route's durable message, stream, or action status |
@@ -57,7 +58,7 @@ handling contract in [images and reactions](05-images-and-reactions.md).
 `send_message.content` is a typed array containing at most one text part and one
 media part. Text has `type: 'text'`, `text`, and optional `format` (`text` or
 `markdown`). Media has `type` (`image`, `audio`, `video`, `file`), `media_type`,
-`filename`, and exactly one of `data_base64` or `url`. QQ supports text plus one
+`filename`, and one media source. QQ supports text plus one
 media item, with guild media restricted to images; OneBot supports inline images;
 Weixin supports text only. Slack/Lark/Discord accept inline image/audio/video/file
 parts under their [declared restrictions](../docs/slack-lark-discord.md).
@@ -85,6 +86,10 @@ own admission and execution checks. Reads have read-only annotations; the generi
 action tool conservatively has destructive annotations because some actions are
 destructive. Annotations never replace per-operation grants.
 
+For official QQ, a media part can also supply `upload: {id, parts}` as its source.
+See [QQ direct media uploads](06-qq-platform.md#direct-media-uploads) for upload
+admission, part receipts and the subsequent message lifecycle.
+
 `send_message.origin_context` optionally names the opaque handle in the current
 Host input. It is bound to the initiating event and authenticated caller, grants
 no destination access and is not a public source ID. Valid handles attach verified
@@ -108,7 +113,7 @@ send authority hides message results. Queued is not confirmed delivery, and
 outcomes are never automatically repeated. Polling does not create Agent work.
 
 This is a breaking MCP interface change. Clients must refresh their tool inventory,
-enable the five entry points, and update prompts/calls. Existing route tokens,
+enable the applicable entry points, and update prompts/calls. Existing route tokens,
 grants, conversation bindings, queues, and stored receipts require no rewrite.
 CG does not modify a13n connection tools or Agent instructions automatically.
 
@@ -202,7 +207,7 @@ the QQ application has obtained every upstream permission.
 ## a13n binding
 
 An Agent uses a CGW MCP connection authenticated with its route's token. The fixed
-five-tool inventory applies to exact, multi-source and wildcard routes. Adding
+shared tool inventory applies to exact, multi-source and wildcard routes. Adding
 conversations inside that route does not require new tools or another connection;
 separate route configurations require separate credentials. A Host or Agent
 assignment never grants cross-route authority.
@@ -237,7 +242,7 @@ ordinary thread context rather than a secret credential mechanism.
 
 ## Adapter extensions
 
-New adapters retain exactly five public tools. `discover` includes platform-read
+New adapters use the shared tool inventory. `discover` includes platform-read
 schemas, actual text/upload bounds, support versus unknown upstream availability,
 and unsupported features. `read(source='platform')` reads history or a cached
 history asset; received gateway assets continue to use the gateway source.
@@ -256,4 +261,4 @@ adapters fail before any publication is queued.
 
 ## GitHub native operations
 
-The [GitHub contract](08-github.md) adds finite native PR reads, comment/review message options and draft PR actions under the same five tools. Channel actions and current caller context are checked independently; discovery never grants authority. Agent final output remains private.
+The [GitHub contract](08-github.md) adds finite native PR reads, comment/review message options and draft PR actions under the shared tool inventory. Channel actions and current caller context are checked independently; discovery never grants authority. Agent final output remains private.

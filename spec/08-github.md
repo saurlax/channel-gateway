@@ -57,7 +57,7 @@ Polling honors the server's minimum interval and rate-reset/cooldown headers.
 
 ## Agent operations
 
-The public five-tool inventory does not change. `discover` adds finite schemas:
+The adapter uses the shared tool inventory. `discover` adds finite schemas:
 
 - `read` native `github.pull_request`: current bound PR head/base SHA and changed
   files/patches, under the channel's `read` capability and invocation scope.

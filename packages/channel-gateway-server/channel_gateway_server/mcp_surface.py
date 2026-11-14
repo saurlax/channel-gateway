@@ -1,4 +1,4 @@
-"""Five stable, platform-independent MCP entry points."""
+"""Agent-facing MCP entry points."""
 
 import json
 from typing import Annotated, Literal
@@ -11,6 +11,7 @@ from .channels.manager import capabilities
 from .channels.platforms.common import PLATFORMS
 from .channels.qq_operations import OPERATIONS, applicable, check_json
 from .mcp_github import GitHubMessage
+from .mcp_platform import MD5, QQ_DIRECT_UPLOAD_LIMITS, MediaKind, PreparedUpload
 from .media import MAX_MEDIA_BYTES
 from .storage import verified_origin
 
@@ -38,10 +39,12 @@ class MediaPart(BaseModel):
     data_base64: str | None = Field(default=None, min_length=1, max_length=4 * ((MAX_MEDIA_BYTES + 2) // 3))
     url: str | None = Field(default=None, min_length=1, max_length=4096)
 
+    upload: PreparedUpload | None = None
+
     @model_validator(mode="after")
     def source(self):
-        if bool(self.data_base64) == bool(self.url):
-            raise ValueError("Choose exactly one media URL or base64 data")
+        if sum(source is not None for source in (self.data_base64, self.url, self.upload)) != 1:
+            raise ValueError("Choose exactly one media URL, base64 data, or prepared upload")
         if any(c in self.filename for c in ("/", "\\", "\r", "\n", "\0")):
             raise ValueError("Use a plain file name")
         return self
@@ -159,6 +162,13 @@ def install_tools(server, operations, store, authorized_route, readable_route, a
                 if platform
                 else [],
                 "max_media_bytes": adapter.get("max_media_bytes", MAX_MEDIA_BYTES if kind == "qq" else 4 * 1024 * 1024),
+                "direct_media_upload": {
+                    "supported": kind == "qq" and scene in {"private", "group"},
+                    "authorized": can_send and kind == "qq" and scene in {"private", "group"},
+                    "max_bytes_by_kind": QQ_DIRECT_UPLOAD_LIMITS
+                    if kind == "qq" and scene in {"private", "group"}
+                    else {},
+                },
                 "native_options_schema": QQMessageOptions.model_json_schema()
                 if kind == "qq"
                 else GitHubMessage.model_json_schema()
@@ -281,7 +291,7 @@ def install_tools(server, operations, store, authorized_route, readable_route, a
         stream: StreamOptions | None = None,
         native: dict | None = None,
     ) -> dict:
-        """Queue content: text plus at most one media part. QQ audio/video/file cannot include text: send text and media in separate calls; combinations fail before queuing/uploading. Text has text/format; media has type, media_type, filename and exactly one of data_base64/url. QQ cards/keyboards use native={'qq': {...}}. Poll get_operation; queued is not delivery."""
+        """Queue content: text plus at most one media part. QQ audio/video/file cannot include text: send text and media in separate calls; combinations fail before queuing/uploading. Text has text/format; media has type, media_type, filename and exactly one of data_base64, url, or QQ upload. QQ cards/keyboards use native={'qq': {...}}. Poll get_operation; queued is not delivery."""
         check_json(native or {})
         github_route = await authorized_route(route_id)
         github_connection = await store.connection(github_route["channel_id"])
@@ -319,6 +329,8 @@ def install_tools(server, operations, store, authorized_route, readable_route, a
         connection = await store.connection(route["channel_id"])
         if not connection:
             raise ValueError("Channel is unavailable")
+        if any(part.upload for part in media) and connection["kind"] != "qq":
+            raise ValueError("Prepared media uploads require official QQ")
         if connection["kind"] in PLATFORMS:
             if native is not None or stream is not None:
                 raise ValueError("This adapter does not yet support native message options or streaming")
@@ -347,6 +359,7 @@ def install_tools(server, operations, store, authorized_route, readable_route, a
                         "filename": part.filename,
                         "data_base64": part.data_base64,
                         "url": part.url,
+                        "upload": part.upload.model_dump() if part.upload else None,
                         "caption": text,
                         "delivery": delivery,
                     },
@@ -393,6 +406,37 @@ def install_tools(server, operations, store, authorized_route, readable_route, a
             route_id,
         )
         return receipt(result, "message")
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
+    async def prepare_media_upload(
+        media_kind: MediaKind,
+        media_type: Annotated[str, Field(min_length=1, max_length=128)],
+        filename: Annotated[str, Field(min_length=1, max_length=255)],
+        size: Annotated[int, Field(gt=0, le=max(QQ_DIRECT_UPLOAD_LIMITS.values()))],
+        md5: MD5,
+        sha1: Annotated[str, Field(pattern=r"^[a-fA-F0-9]{40}$")],
+        md5_10m: MD5,
+        route_id: str | None = None,
+        delivery: Literal["passive", "proactive", "wakeup"] | None = None,
+    ) -> dict:
+        """Prepare a direct QQ media upload. Pass each signed PUT URL privately to the environment with the file.
+        After uploading, call send_message with the same route and delivery and upload={id,parts}.
+        md5_10m covers the first 10002432 bytes (or the entire file if smaller).
+        """
+        return await operations.call(
+            "prepare_media_upload",
+            {
+                "media_kind": media_kind,
+                "media_type": media_type,
+                "filename": filename,
+                "size": size,
+                "md5": md5,
+                "sha1": sha1,
+                "md5_10m": md5_10m,
+                "delivery": delivery,
+            },
+            route_id,
+        )
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
     async def send_message(

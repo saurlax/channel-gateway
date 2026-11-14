@@ -84,6 +84,11 @@ CREATE TABLE IF NOT EXISTS replies (
 CREATE TABLE IF NOT EXISTS reply_payloads (
  reply_id TEXT PRIMARY KEY, payload TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS qq_media_uploads (
+ id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, credential_hash TEXT NOT NULL, route_id TEXT NOT NULL,
+ plan TEXT NOT NULL, expires_at REAL NOT NULL, reply_id TEXT, request_hash TEXT
+);
+CREATE INDEX IF NOT EXISTS qq_media_upload_expiry ON qq_media_uploads(expires_at);
 CREATE TABLE IF NOT EXISTS host_failure_notices (event_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS qq_send_attempts (
  id INTEGER PRIMARY KEY, account_id TEXT NOT NULL, conversation_key TEXT NOT NULL, created_at REAL NOT NULL
@@ -159,6 +164,7 @@ class Store:
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA journal_mode=WAL")
         await self.db.executescript(SCHEMA)
+        await self.db.execute("DELETE FROM qq_media_uploads WHERE expires_at <= ?", (time.time(),))
         async with self.db.execute("PRAGMA table_info(events)") as cursor:
             event_columns = {row["name"] for row in await cursor.fetchall()}
         if "delivery_key" not in event_columns:
@@ -1572,13 +1578,75 @@ class Store:
                     (receipt["thread"].get("session_id"), event_id),
                 )
 
-    async def queue_reply(self, route: dict, text: str, *, payload: dict | None = None) -> dict:
+    async def save_qq_media_upload(
+        self, owner_id: str, credential_hash: str, route_id: str, plan: dict, expires_at: float
+    ) -> str:
+        upload_id = "upload_" + secrets.token_hex(16)
+        async with self.transaction() as db:
+            await db.execute("DELETE FROM qq_media_uploads WHERE expires_at <= ?", (time.time(),))
+            await db.execute(
+                "INSERT INTO qq_media_uploads(id,owner_id,credential_hash,route_id,plan,expires_at) VALUES (?,?,?,?,?,?)",
+                (upload_id, owner_id, credential_hash, route_id, json.dumps(plan), expires_at),
+            )
+        return upload_id
+
+    async def qq_media_upload(self, upload_id: str, credential_hash: str, route_id: str) -> dict:
+        rows = await self.rows(
+            "SELECT owner_id,plan FROM qq_media_uploads WHERE id=? AND credential_hash=? AND route_id=? AND expires_at>?",
+            (upload_id, credential_hash, route_id, time.time()),
+        )
+        if not rows:
+            raise ValueError("Upload is unavailable or expired for this route")
+        return {"owner_id": rows[0]["owner_id"], **json.loads(rows[0]["plan"])}
+
+    async def qq_upload_owner_active(self, owner_id: str, credential_hash: str, route: dict) -> bool:
+        owner = await self.route(owner_id)
+        if not owner or not owner["enabled"] or owner_id not in {route["id"], route.get("parent_route_id")}:
+            return False
+        rows = await self.rows(
+            "SELECT 1 FROM routes WHERE id=? AND token_hash=? AND json_extract(value,'$.enabled')",
+            (owner_id, credential_hash),
+        )
+        return bool(rows)
+
+    async def queue_reply(
+        self,
+        route: dict,
+        text: str,
+        *,
+        payload: dict | None = None,
+        upload: tuple[str, str] | None = None,
+    ) -> dict:
         row = {"id": new_id("reply"), "route_id": route["id"], "event_id": None, "text": text, "state": "queued"}
         async with self.transaction() as db:
+            if upload:
+                upload_id, credential_hash = upload
+                request_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+                async with db.execute(
+                    """SELECT u.reply_id,u.request_hash,p.state FROM qq_media_uploads u
+                    JOIN routes owner ON owner.id=u.owner_id AND owner.token_hash=u.credential_hash
+                    LEFT JOIN replies p ON p.id=u.reply_id
+                    WHERE u.id=? AND u.credential_hash=? AND u.route_id=? AND u.expires_at>?
+                      AND json_extract(owner.value,'$.enabled')""",
+                    (upload_id, credential_hash, route["id"], time.time()),
+                ) as cursor:
+                    claimed = await cursor.fetchone()
+                if not claimed:
+                    raise ValueError("Upload is unavailable or expired for this route")
+                if claimed["reply_id"]:
+                    if claimed["request_hash"] != request_hash:
+                        raise ValueError("Upload is already associated with a different send request")
+                    return {**row, "id": claimed["reply_id"], "state": claimed["state"]}
+                await db.execute(
+                    "UPDATE qq_media_uploads SET reply_id=?,request_hash=? WHERE id=?",
+                    (row["id"], request_hash, upload_id),
+                )
             cursor = await db.execute(
                 "INSERT OR IGNORE INTO replies(id,route_id,event_id,text,state) VALUES (?,?,?,?,?)",
                 tuple(row[key] for key in ["id", "route_id", "event_id", "text", "state"]),
             )
+            if upload and cursor.rowcount != 1:
+                raise RuntimeError("Could not enqueue the prepared upload")
             origin = verified_origin.get()
             if origin and cursor.rowcount == 1:
                 await db.execute("INSERT INTO message_provenance VALUES (?,?)", (row["id"], json.dumps(origin)))

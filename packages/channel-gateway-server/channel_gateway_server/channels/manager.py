@@ -17,7 +17,7 @@ from ..media import IMAGE_TYPES, decode_image
 from ..models import route_allows_sender, weixin_url
 from ..storage import Store
 from .actions import execute_action, tool_message_allowed
-from .common import MAX_EVENT_BYTES, SendBlocked, identifier
+from .common import MAX_EVENT_BYTES, OperationRejected, SendBlocked, identifier
 from .github import GitHubClient, authorized_context, poll_notifications
 from .ingress import ProjectionError, ingest_event
 from .onebot import OneBotSession, ReceiveMessage
@@ -26,7 +26,7 @@ from .platforms.discord import DiscordClient, DiscordGateway
 from .platforms.discord import gateway_url as discord_gateway_url
 from .platforms.lark import LarkClient
 from .platforms.slack import SlackClient
-from .qq import QQClient, QQGateway, gateway_url
+from .qq import QQClient, QQGateway, QQPartPending, gateway_url, qq_upload_destination
 from .weixin import WEIXIN_BASE, LoginRequired, WeixinClient, qr_image, weixin_message
 
 CLIENTS = {"slack": SlackClient, "lark": LarkClient, "discord": DiscordClient}
@@ -463,7 +463,11 @@ class ChannelManager:
                     saved = await self.store.event_reply_context(reply["event_id"])
                     context = saved or {**context, "message_id": source["message"]["source_message_id"]}
             file_info = None
-            if payload and payload["kind"] in {"image", "media"} and route["conversation_kind"] in {"private", "group"}:
+            if payload and payload.get("direct_upload"):
+                file_info = await self.finish_direct_qq_upload(connection, route, payload["direct_upload"])
+            elif (
+                payload and payload["kind"] in {"image", "media"} and route["conversation_kind"] in {"private", "group"}
+            ):
                 await self.check_action_access(connection, route)
                 file_info = (
                     await self.qq(connection).upload_image(route, payload)
@@ -479,6 +483,36 @@ class ChannelManager:
         return await WeixinClient(connection, self.http).send(
             route["conversation_id"], text, context["context_token"], reply["id"]
         )
+
+    async def finish_direct_qq_upload(self, connection: dict, route: dict, upload: dict) -> str:
+        if upload["destination"] != qq_upload_destination(route, connection):
+            raise SendBlocked("QQ upload destination changed before delivery")
+
+        async def check():
+            if not await self.store.qq_upload_owner_active(upload["owner_id"], upload["credential_hash"], route):
+                raise SendBlocked("QQ upload authority was revoked")
+            await self.check_action_access(connection, route)
+
+        qq = self.qq(connection)
+        try:
+            for part in upload["parts"]:
+                for attempt in range(3):
+                    await check()
+                    try:
+                        await qq.confirm_media_part(route, upload["provider_id"], part)
+                        break
+                    except QQPartPending:
+                        if attempt == 2:
+                            raise
+                        await asyncio.sleep(attempt + 1)
+            await check()
+            file_info = await qq.finish_media_upload(route, upload["provider_id"])
+        except SendBlocked:
+            raise
+        except (AdapterError, httpx.HTTPError, TimeoutError, OSError, ValueError):
+            raise OperationRejected("QQ media upload could not be finalized") from None
+        await check()
+        return file_info
 
     async def onebot_call(self, connection: dict, action: str, params: dict) -> dict:
         if transport(connection) in {"http", "http_reverse"}:

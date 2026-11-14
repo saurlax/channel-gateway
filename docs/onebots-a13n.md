@@ -213,12 +213,13 @@ The bridge works without MCP. Its MCP Streamable HTTP endpoint is
 
 - `discover`: list authorized conversations and inspect capability/operation schemas.
 - `read`: read messages, received images/attachments, sanitized events, and native resources.
+- `prepare_media_upload`: prepare a direct upload for an official QQ private or group route.
 - `send_message`: queue text, supported media/cards, or stream fragments.
 - `execute_action`: queue reactions, recalls, typing, and native mutations.
 - `get_operation`: inspect confirmed or uncertain outcomes in either durable ledger.
 
 See the [tool guide](agent-tools.md) for exact request examples and migration.
-Refresh the MCP inventory, enable these five tools, and update Agent instructions
+Refresh the MCP inventory, enable the tools listed above, and update Agent instructions
 that reference removed tool names. Existing credentials and route grants persist.
 
 See [images and reactions](images-and-reactions.md) for formats, bounds, native
@@ -247,7 +248,7 @@ token covers its configured sources, readable channels and action grants. Call
 `route_id` to reads, sends and actions. A single exact source may omit `route_id`;
 multi-source/wildcard routes require a concrete child. Read-only handles always
 require an explicit ID and cannot send. Adding conversations under the same
-route uses the same connection and five tools. Separate route configurations
+route uses the same connection and tool inventory. Separate route configurations
 need separate tokens, even when they share a Host or Agent.
 
 One concrete source can optionally record its dedicated a13n MCP connection ID

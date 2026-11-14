@@ -2,7 +2,7 @@
 
 Status: design contract for adapter expansion, requested 2026-10-21. The implementation
 progress below distinguishes the delivered slice from remaining targets. The current adapter baseline is
-owned by [Channel adapters](01-channel-adapters.md); the five-tool implementation
+owned by [Channel adapters](01-channel-adapters.md); the MCP implementation
 in the working tree is owned by [Agent tools](04-agent-tools.md).
 
 The dated [platform API reference](../docs/platform-api-reference.md) records API
@@ -503,7 +503,7 @@ reporting unsupported text/history as implemented.
 | Media | Image/video/audio/file receive and send separately; expiry/decryption/auth; exact quoted attachment; MIME/size failures; unsupported native voice |
 | Publishing | Text, quote/thread, card callback, reaction add/remove, edit/recall/pin where declared; unsupported combinations fail before queuing |
 | Lifecycle | Confirmed/explicit-rejected/unknown outcomes, rate limits, crash after upload or partial stream, no duplicate publication after restart |
-| MCP/Host | Exactly five tools across accounts/conversations; current schemas; one Host connection; typed media and sandbox paths; no prompt/permission rewrite |
+| MCP/Host | Shared tool inventory across accounts/conversations; current schemas; one Host connection; typed media and sandbox paths; no prompt/permission rewrite |
 
 Tests must include mocked protocol failures and scoped live acceptance in a
 designated test conversation. Native permission tests need least-privilege and

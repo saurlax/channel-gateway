@@ -2,7 +2,7 @@
 
 GitHub is an API-configured channel (`kind: github`) with two credential modes.
 The existing a13n Host API executes agent work; generic MCP Hosts can read inputs
-and use the same five tools. No GitHub credentials are delivered to either Host.
+and use the shared Agent tool inventory. No GitHub credentials are delivered to either Host.
 The console displays GitHub channels and supports credential rotation/deletion,
 but does not yet provide a GitHub creation or policy form; use authenticated
 management API requests, documented at `/api/docs`.

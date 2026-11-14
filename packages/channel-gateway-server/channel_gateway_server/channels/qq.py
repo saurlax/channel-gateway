@@ -18,12 +18,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from websockets.exceptions import ConnectionClosed
 
 from ..adapters import AdapterError
-from ..media import decode_media, image_attachments, image_url
+from ..media import decode_media, image_attachments, image_url, public_media_url
 from ..storage import Store
 from .common import OperationRejected, SendBlocked, identifier, response_object
 from .ingress import ProjectionError, begin_event, event_type, ingest_parsed
 from .qq_notifications import record_notification
 from .qq_operations import safe_result
+
+QQ_MEDIA_TYPES = {"image": 1, "video": 2, "audio": 3, "file": 4}
+QQ_HASH_PREFIX_BYTES = 10_002_432
+MAX_UPLOAD_PARTS = 256
 
 QQ_API = "https://api.sgroup.qq.com"
 QQ_TOKEN = "https://bots.qq.com/app/getAppAccessToken"
@@ -277,6 +281,19 @@ def qq_message(event: dict, connection: dict) -> Message | None:
     )
 
 
+def qq_upload_destination(route: dict, connection: dict) -> dict:
+    return {
+        "channel_id": connection["id"],
+        "app_id": connection["app_id"],
+        "conversation_kind": route["conversation_kind"],
+        "conversation_id": route["conversation_id"],
+    }
+
+
+class QQPartPending(OperationRejected):
+    """QQ has not yet observed a completed COS part."""
+
+
 class QQClient:
     def __init__(self, connection: dict, http: httpx.AsyncClient, media_http: httpx.AsyncClient | None = None):
         self.connection = connection
@@ -318,9 +335,11 @@ class QQClient:
         ) as response:
             if response.status_code == 401:
                 self.expires = 0
-            if 400 <= response.status_code < 500 and response.status_code != 408:
+            rejected = 400 <= response.status_code < 500 and response.status_code != 408
+            check_part_status = path.endswith("/upload_part_finish")
+            if rejected and not check_part_status:
                 raise OperationRejected(f"QQ rejected the operation (HTTP {response.status_code})")
-            if not response.is_success:
+            if not response.is_success and not rejected:
                 raise AdapterError(f"QQ returned HTTP {response.status_code}")
             if response.headers.get("content-encoding", "identity").lower() != "identity":
                 raise AdapterError("Compressed QQ API responses are not supported")
@@ -329,9 +348,18 @@ class QQClient:
                 if len(content) + len(chunk) > 4 * 1024 * 1024:
                     raise AdapterError("QQ returned an oversized response")
                 content.extend(chunk)
-            if not content:
-                return {}
-            value = json.loads(content)
+            try:
+                value = json.loads(content) if content else {}
+            except ValueError:
+                if rejected:
+                    raise OperationRejected(f"QQ rejected the operation (HTTP {response.status_code})") from None
+                raise AdapterError("QQ returned invalid JSON") from None
+            if check_part_status and isinstance(value, dict):
+                code = value.get("code", value.get("err_code"))
+                if str(code) == "40093001":
+                    raise QQPartPending("QQ has not yet confirmed the uploaded part")
+            if rejected:
+                raise OperationRejected(f"QQ rejected the operation (HTTP {response.status_code})")
         if not isinstance(value, (dict, list)):
             raise AdapterError("QQ returned an invalid receipt")
         if isinstance(value, dict) and value.get("code") not in {None, 0, "0"}:
@@ -365,11 +393,66 @@ class QQClient:
             raise AdapterError("QQ omitted the image upload receipt")
         return info
 
-    async def upload_media(self, route: dict, payload: dict, connection: dict, check_access) -> str:
+    async def prepare_media_upload(
+        self, route: dict, filename: str, media_kind: str, size: int, hashes: dict
+    ) -> tuple[str, list[dict]]:
         base = self.messages_path(route).removesuffix("/messages")
-        kind = payload["media_kind"]
+        value = await self.request(
+            "POST",
+            base + "/upload_prepare",
+            {"file_type": QQ_MEDIA_TYPES[media_kind], "file_name": filename, "file_size": size, **hashes},
+        )
+        try:
+            block_size = int(value["block_size"])
+            parts = value["parts"]
+            upload_id = identifier(value["upload_id"], max_length=1024)
+            if (
+                not 0 < block_size <= 100 * 1024 * 1024
+                or not isinstance(parts, list)
+                or len(parts) != (size + block_size - 1) // block_size
+                or len(parts) > MAX_UPLOAD_PARTS
+            ):
+                raise ValueError
+            plan = []
+            for index, part in enumerate(sorted(parts, key=lambda item: int(item["index"])), start=1):
+                offset = (index - 1) * block_size
+                length = min(block_size, size - offset)
+                if int(part["index"]) != index:
+                    raise ValueError
+                plan.append(
+                    {
+                        "index": index,
+                        "offset": offset,
+                        "length": length,
+                        "put_url": public_media_url(part["presigned_url"]),
+                    }
+                )
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise AdapterError("QQ returned an invalid multipart upload plan") from None
+        return upload_id, plan
+
+    async def confirm_media_part(self, route: dict, upload_id: str, part: dict) -> None:
+        base = self.messages_path(route).removesuffix("/messages")
+        await self.request(
+            "POST",
+            base + "/upload_part_finish",
+            {"upload_id": upload_id, "part_index": part["index"], "block_size": part["length"], "md5": part["md5"]},
+        )
+
+    async def media_file_info(self, route: dict, body: dict) -> str:
+        base = self.messages_path(route).removesuffix("/messages")
+        response = await self.request("POST", base + "/files", body)
+        info = response.get("file_info")
+        if not isinstance(info, str) or not 0 < len(info) <= 16384:
+            raise AdapterError("QQ omitted the media upload receipt")
+        return info
+
+    async def finish_media_upload(self, route: dict, upload_id: str) -> str:
+        return await self.media_file_info(route, {"upload_id": upload_id, "srv_send_msg": False})
+
+    async def upload_media(self, route: dict, payload: dict, connection: dict, check_access) -> str:
         body = {
-            "file_type": {"image": 1, "video": 2, "audio": 3, "file": 4}[kind],
+            "file_type": QQ_MEDIA_TYPES[payload["media_kind"]],
             "file_name": payload["filename"],
             "srv_send_msg": False,
         }
@@ -377,60 +460,36 @@ class QQClient:
             body["url"] = payload["url"]
         else:
             data = decode_media(payload["image_base64"])
-            if len(data) <= 4 * 1024 * 1024:
-                body["file_data"] = payload["image_base64"]
-            else:
-                prepared = await self.request(
-                    "POST",
-                    base + "/upload_prepare",
+            if len(data) > 4 * 1024 * 1024:
+                upload_id, parts = await self.prepare_media_upload(
+                    route,
+                    payload["filename"],
+                    payload["media_kind"],
+                    len(data),
                     {
-                        "file_type": body["file_type"],
-                        "file_name": payload["filename"],
-                        "file_size": str(len(data)),
                         "md5": hashlib.md5(data).hexdigest(),
                         "sha1": hashlib.sha1(data).hexdigest(),
-                        "md5_10m": hashlib.md5(data[:10002432]).hexdigest(),
+                        "md5_10m": hashlib.md5(data[:QQ_HASH_PREFIX_BYTES]).hexdigest(),
                     },
                 )
-                block = int(prepared["block_size"])
-                parts = prepared["parts"]
-                upload_id = identifier(prepared["upload_id"], max_length=1024)
-                if (
-                    not 0 < block <= 16 * 1024 * 1024
-                    or not isinstance(parts, list)
-                    or len(parts) != (len(data) + block - 1) // block
-                ):
-                    raise AdapterError("QQ returned an invalid multipart upload plan")
-                for index, part in enumerate(parts):
-                    url = image_url(part["presigned_url"])
-                    if not url or part["index"] != index or self.media_http is None:
-                        raise AdapterError("QQ returned an invalid upload destination")
-                    chunk = data[index * block : (index + 1) * block]
+                if self.media_http is None:
+                    raise AdapterError("QQ upload transport is unavailable")
+                for part in parts:
+                    chunk = data[part["offset"] : part["offset"] + part["length"]]
                     await check_access(connection, route)
-                    request = self.media_http.build_request("PUT", url, content=chunk)
+                    request = self.media_http.build_request("PUT", part["put_url"], content=chunk)
                     request.headers.pop("authorization", None)
                     request.headers.pop("cookie", None)
                     response = await self.media_http.send(request, auth=None, follow_redirects=False)
                     if not response.is_success:
                         raise AdapterError("QQ multipart upload was not confirmed")
                     await check_access(connection, route)
-                    await self.request(
-                        "POST",
-                        base + "/upload_part_finish",
-                        {
-                            "upload_id": upload_id,
-                            "part_index": index,
-                            "block_size": str(len(chunk)),
-                            "md5": hashlib.md5(chunk).hexdigest(),
-                        },
-                    )
-                body["upload_id"] = upload_id
+                    await self.confirm_media_part(route, upload_id, {**part, "md5": hashlib.md5(chunk).hexdigest()})
+                await check_access(connection, route)
+                return await self.finish_media_upload(route, upload_id)
+            body["file_data"] = payload["image_base64"]
         await check_access(connection, route)
-        response = await self.request("POST", base + "/files", body)
-        info = response.get("file_info")
-        if not isinstance(info, str) or not 0 < len(info) <= 16384:
-            raise AdapterError("QQ omitted the media upload receipt")
-        return info
+        return await self.media_file_info(route, body)
 
     @staticmethod
     def messages_path(route: dict) -> str:

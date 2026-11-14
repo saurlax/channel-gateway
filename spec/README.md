@@ -37,7 +37,7 @@ unverified capabilities.
 | [Agent tools](04-agent-tools.md)                   | MCP reads/actions and a13n tool binding                           |
 | [Images and reactions](05-images-and-reactions.md) | Image projection, authorized media reads/sends, and optional reactions |
 | [QQ platform](06-qq-platform.md) | Guild/DM identity, resource action grants, operation catalog, and action lifecycle |
-| [Multi-platform integration](07-channel-integration.md) | Target adapter expansion, channel/thread identity, capability evidence, five-tool mappings and release gates; not an implementation claim |
+| [Multi-platform integration](07-channel-integration.md) | Target adapter expansion, channel/thread identity, capability evidence, tool mappings and release gates; not an implementation claim |
 | [Session context and memory](09-session-context-and-memory.md) | Session lifetime, environment selection, context assembly, memory scope, queued-message provenance and subagent follow-ups |
 
 Start with architecture; read the owning contract before changing its behavior.

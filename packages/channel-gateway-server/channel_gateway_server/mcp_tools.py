@@ -270,7 +270,7 @@ def create_mcp(store: Store, bridge: Bridge, media: MediaReader) -> FastMCP:
 
     from .mcp_platform import install_platform_operations
 
-    install_platform_operations(operations, store, bridge, media, authorized_route, readable_route)
+    install_platform_operations(operations, store, bridge, media, authorized_route, readable_route, current_token)
 
     from .mcp_platform_adapters import install_adapter_operations
 

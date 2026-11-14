@@ -21,7 +21,7 @@ conversation. These adapters have not been deployed or configured automatically.
 | Typing | Unsupported | Unsupported | Native typing indicator |
 | Search, cards, native catalogs, streams | Not yet implemented | Not yet implemented | Not yet implemented |
 
-All accounts expose the same [five MCP tools](agent-tools.md). Unsupported
+All accounts expose the same [MCP tools](agent-tools.md). Unsupported
 combinations fail before queuing. Socket Mode, Lark WebSocket workers, Discord
 interaction callbacks, thread inheritance, native search, cards, edits, pins,
 and streams remain follow-up slices; official platform support is not a claim

@@ -1,6 +1,6 @@
 # Agent communication tools
 
-CG exposes five tools over authenticated Streamable HTTP at `/mcp/`. The same
+CG exposes six tools over authenticated Streamable HTTP at `/mcp/`. The same
 inventory serves all authorized conversations. A new group or channel does not
 create another tool or MCP connection. Supported adapters are OneBot, QQ official
 Bot, Weixin iLink, Slack, Feishu/Lark and Discord. Each exposes only its implemented
@@ -10,6 +10,7 @@ capabilities; see the [new adapter setup guide](slack-lark-discord.md).
 | --- | --- |
 | `discover` | Select conversation handles and inspect capabilities/schemas |
 | `read` | Read history, received media, notifications, or native resources |
+| `prepare_media_upload` | Prepare a client-side direct upload for an authorized QQ private or group conversation |
 | `send_message` | Queue text, supported media/cards, or a stream fragment |
 | `execute_action` | Queue reactions, recall, typing, or native mutations |
 | `get_operation` | Inspect message/action outcomes |
@@ -81,8 +82,8 @@ Default `"content"` reads return typed bytes as before. Other platforms and
 
 One text part and at most one media part are supported. Media types are `image`,
 `audio`, `video`, and `file`, subject to the adapter and conversation. Provide
-exactly one of `data_base64` or `url`. QQ allows public HTTPS sources and up to
-16 MiB inline data; guild conversations allow image sends. OneBot allows inline
+one source: base64, an HTTPS URL, or a [QQ prepared upload](qq-platform.md#upload-a-file-directly-to-qq).
+QQ allows public HTTPS sources and up to 16 MiB inline data; guild conversations allow image sends. OneBot allows inline
 images up to 4 MiB. QQ images are PNG/JPEG; OneBot also allows GIF/WebP. Weixin is
 text-only. Unsupported combinations fail before anything is queued.
 QQ audio/video/file sends must contain only the media part. Send any description
@@ -139,7 +140,7 @@ are not deduplicated automatically.
 
 ## Update an existing client
 
-Refresh the MCP tool inventory and enable the five tools in the Agent Host.
+Refresh the MCP tool inventory and enable the tools the Agent uses.
 Replace old tool names in Agent instructions and saved calls:
 
 | Previous calls | Replacement |
@@ -159,6 +160,6 @@ MCP boundary. CG does not rewrite the Host's enabled tools or Agent prompt.
 The [adapter guide](slack-lark-discord.md) covers the first new-platform slice,
 including `history.read`, `source: "platform"` history/assets, explicit thread
 addresses, typed reactions, inline media and upload effects. The public tool
-inventory remains five. Earlier QQ-specific format restrictions in this guide
+inventory is shared. Earlier QQ-specific format restrictions in this guide
 must not be inferred as support for new-platform cards, native search or streams.
 Those features remain unimplemented for the new adapters.
